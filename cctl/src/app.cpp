@@ -1,33 +1,23 @@
+#include "can_bus.hpp"
 #include "lcd_aqm1602.h"
 #include "main.h"
+#include "robot_config.hpp"
+#include "rthetaz_controller.hpp"
 
-#include <cstddef>
 #include <cstdint>
-#include <cstring>
+#include <cstdio>
 
 extern "C" {
-extern FDCAN_HandleTypeDef hfdcan1;
-extern FDCAN_HandleTypeDef hfdcan2;
-extern FDCAN_HandleTypeDef hfdcan3;
+extern FDCAN_HandleTypeDef hfdcan1;  // モータ用バス
 extern I2C_HandleTypeDef hi2c1;
-extern I2C_HandleTypeDef hi2c3;
-extern I2C_HandleTypeDef hi2c4;
 extern TIM_HandleTypeDef htim15;
-extern UART_HandleTypeDef huart3;
-extern PCD_HandleTypeDef hpcd_USB_FS;
 extern TIM_HandleTypeDef htim2;
 }
 
 namespace {
 Aqm1602 lcd(&hi2c1);
-
-constexpr std::size_t kLcdColumns = 16;
-constexpr std::size_t kControllerLineMax = 96;
-
-char rx_line[kControllerLineMax] = {};
-std::size_t rx_line_length = 0;
-char pending_controller_line[kControllerLineMax] = {};
-volatile bool controller_line_ready = false;
+CanBus motor_bus(&hfdcan1);
+RThetaZController controller(motor_bus);
 
 void playTone(uint32_t frequency_hz, uint32_t duration_ms) {
     const uint32_t period = (1000000U / frequency_hz) - 1U;
@@ -40,67 +30,30 @@ void playTone(uint32_t frequency_hz, uint32_t duration_ms) {
     HAL_TIM_PWM_Stop(&htim15, TIM_CHANNEL_2);
 }
 
-void printLcdSegment(const char *text, std::size_t offset) {
-    char line[kLcdColumns + 1] = {};
-    std::memset(line, ' ', kLcdColumns);
-    line[kLcdColumns] = '\0';
-
-    const std::size_t length = std::strlen(text);
-    if (offset < length) {
-        const std::size_t copy_length = (length - offset) < kLcdColumns ? (length - offset) : kLcdColumns;
-        std::memcpy(line, text + offset, copy_length);
-    }
-
-    lcd.print(line);
-}
-
 void showStartupLcd() {
     lcd.clear();
     lcd.setCursor(0, 0);
     lcd.print("DRC-CCTL2026");
     lcd.setCursor(0, 1);
-    lcd.print("Controller input");
+    lcd.print("rtheta-z ctrl");
 }
 
-void showControllerInput(const char *text) {
+void updateStatusLcd() {
+    char line0[17] = {};
+    char line1[17] = {};
+
+    std::snprintf(line0, sizeof(line0), "r%-4d th%-4d",
+                  static_cast<int>(controller.targetR()),
+                  static_cast<int>(controller.targetTheta()));
+    std::snprintf(line1, sizeof(line1), "z%-4d dmE%X",
+                  static_cast<int>(controller.targetZ()),
+                  controller.z().errorState() & 0x0F);
+
     lcd.clear();
     lcd.setCursor(0, 0);
-    printLcdSegment(text, 0);
+    lcd.print(line0);
     lcd.setCursor(0, 1);
-    printLcdSegment(text, kLcdColumns);
-}
-
-void commitControllerLine() {
-    rx_line[rx_line_length] = '\0';
-
-    __disable_irq();
-    std::strncpy(pending_controller_line, rx_line, sizeof(pending_controller_line) - 1);
-    pending_controller_line[sizeof(pending_controller_line) - 1] = '\0';
-    controller_line_ready = true;
-    __enable_irq();
-
-    rx_line_length = 0;
-}
-
-void acceptControllerByte(uint8_t value) {
-    if (value == '\r') {
-        return;
-    }
-
-    if (value == '\n') {
-        if (rx_line_length > 0) {
-            commitControllerLine();
-        }
-        return;
-    }
-
-    if (value < 0x20 || value > 0x7e) {
-        return;
-    }
-
-    if (rx_line_length < sizeof(rx_line) - 1) {
-        rx_line[rx_line_length++] = static_cast<char>(value);
-    }
+    lcd.print(line1);
 }
 
 void updateLedPattern(uint32_t tick_ms) {
@@ -113,7 +66,7 @@ void updateLedPattern(uint32_t tick_ms) {
     HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, led2_on ? GPIO_PIN_SET : GPIO_PIN_RESET);
     HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, led3_on ? GPIO_PIN_SET : GPIO_PIN_RESET);
 }
-} // namespace
+}  // namespace
 
 extern "C" void setup(void) {
     lcd.begin();
@@ -123,41 +76,38 @@ extern "C" void setup(void) {
     playTone(1319, 120);
 
     HAL_TIM_Base_Start_IT(&htim2);
+
+    motor_bus.begin();
+    controller.begin();
+
+    // 指令I/F 未接続のため、単体動作確認用の内蔵テストシーケンスを有効化する。
+    controller.enableTestSequence(true);
 }
 
 extern "C" void loop(void) {
-    char controller_line[kControllerLineMax] = {};
-    bool update_lcd = false;
-
-    uint8_t rx;
-    if (HAL_UART_Receive(&huart3, &rx, 1, 0) == HAL_OK) {
-        HAL_UART_Transmit(&huart3, &rx, 1, 10);
-        acceptControllerByte(rx);
+    // 受信フレームを全て取り込んで各モータへ振り分ける。
+    FDCAN_RxHeaderTypeDef rx_header = {};
+    uint8_t rx_data[8] = {};
+    while (motor_bus.receive(rx_header, rx_data)) {
+        controller.dispatchRx(rx_header, rx_data);
     }
 
-    __disable_irq();
-    if (controller_line_ready) {
-        controller_line_ready = false;
-        std::strncpy(controller_line, pending_controller_line, sizeof(controller_line) - 1);
-        update_lcd = true;
-    }
-    __enable_irq();
+    // 各軸の指令送信・テスト動作。
+    controller.update();
 
-    if (update_lcd) {
-        showControllerInput(controller_line);
+    // 状態表示（200ms 間隔）。
+    static uint32_t last_lcd_ms = 0;
+    const uint32_t now = HAL_GetTick();
+    if (now - last_lcd_ms >= config::period::LCD_MS) {
+        last_lcd_ms = now;
+        updateStatusLcd();
     }
-
-    HAL_Delay(1);
 }
 
 extern "C" void cctl_usbcdc_receive(const uint8_t *data, uint32_t length) {
-    if (data == nullptr) {
-        return;
-    }
-
-    for (uint32_t i = 0; i < length; ++i) {
-        acceptControllerByte(data[i]);
-    }
+    // 上位指令I/F は未定。将来ここで r/θ/z 目標値を受信して controller.setTarget を呼ぶ。
+    (void)data;
+    (void)length;
 }
 
 extern "C" void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {

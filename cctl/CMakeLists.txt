@@ -52,6 +52,12 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # 追加: C++のコードをビルド対象にする
     ${CMAKE_CURRENT_SOURCE_DIR}/src/lcd_aqm1602.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/can_bus.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/pid.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/dm_motor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/el05_motor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/m3508_motor.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/rthetaz_controller.cpp
 )
 
 # Add include paths
