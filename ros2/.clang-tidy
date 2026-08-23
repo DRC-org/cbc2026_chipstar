@@ -1,0 +1,37 @@
+---
+# clang-tidy configuration for the ROS 2 workspace.
+# Placed at the workspace root so it applies to every package under src/ and is
+# also picked up by clangd for in-editor diagnostics.
+#
+# Runs against the compilation database produced by:
+#   colcon build --cmake-args -DCMAKE_EXPORT_COMPILE_COMMANDS=ON
+#
+# Practical, moderate check set: bug detection, performance and readability,
+# with the noisiest checks disabled so existing code stays workable.
+Checks: >
+  -*,
+  bugprone-*,
+  performance-*,
+  modernize-*,
+  readability-*,
+  misc-*,
+  clang-analyzer-*,
+  -bugprone-easily-swappable-parameters,
+  -modernize-use-trailing-return-type,
+  -readability-identifier-length,
+  -readability-magic-numbers,
+  -readability-function-cognitive-complexity,
+  -readability-implicit-bool-conversion,
+  -misc-non-private-member-variables-in-classes,
+  -misc-no-recursion
+
+# Only analyze headers that belong to this workspace's packages, not ROS or
+# system headers.
+HeaderFilterRegex: '.*(dualsense_teleop|my_test)/.*'
+
+# Do not fail the build on findings; treat them as warnings.
+WarningsAsErrors: ''
+
+# Use the workspace .clang-format when applying --fix.
+FormatStyle: file
+...
