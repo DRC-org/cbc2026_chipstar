@@ -1,0 +1,97 @@
+//! ブリッジ処理スレッド。
+//!
+//! gilrs でコントローラを読み、設定された周期で cctl へシリアル送信する。
+//! GUI とは [`Shared`] を介して設定・状態をやり取りする。
+
+use std::sync::Arc;
+use std::thread;
+use std::time::Duration;
+
+use gilrs::Gilrs;
+
+use crate::app_state::Shared;
+use crate::{controller, frame, serial::SerialLink};
+
+fn period_from_hz(rate_hz: f64) -> Duration {
+    let hz = if rate_hz > 0.0 { rate_hz } else { 1.0 };
+    Duration::from_secs_f64(1.0 / hz)
+}
+
+pub fn run(shared: Arc<Shared>) {
+    let mut gilrs = match Gilrs::new() {
+        Ok(gilrs) => gilrs,
+        Err(err) => {
+            shared.update_status(|s| s.last_error = Some(format!("gilrs 初期化失敗: {err}")));
+            // 入力が扱えないため待機のみ。GUI は継続動作させる。
+            while shared.is_running() {
+                thread::sleep(Duration::from_millis(200));
+            }
+            return;
+        }
+    };
+
+    let mut cfg = shared.config();
+    let mut last_gen = shared.config_generation();
+    let mut link = SerialLink::new(cfg.serial_device.clone(), cfg.baud_rate);
+    let mut period = period_from_hz(cfg.rate_hz);
+
+    while shared.is_running() {
+        // 設定変更を検知したらシリアルを開き直す。
+        let generation = shared.config_generation();
+        if generation != last_gen {
+            last_gen = generation;
+            cfg = shared.config();
+            link = SerialLink::new(cfg.serial_device.clone(), cfg.baud_rate);
+            period = period_from_hz(cfg.rate_hz);
+        }
+
+        // イベントを消費して各ゲームパッドの状態を最新化する。
+        while let Some(event) = gilrs.next_event() {
+            gilrs.update(&event);
+        }
+
+        let gamepad = gilrs.gamepads().find(|(_, pad)| pad.is_connected());
+
+        match gamepad {
+            Some((_, pad)) => {
+                let state = controller::read(&pad);
+                let name = pad.name().to_owned();
+
+                let line = frame::format_controller_input(&state);
+                let send_result = if shared.sending_enabled() {
+                    Some(link.write_line(&line))
+                } else {
+                    None
+                };
+
+                shared.update_status(|s| {
+                    s.gamepad_connected = true;
+                    s.gamepad_name = Some(name);
+                    s.axes = state.axes;
+                    s.buttons = state.buttons;
+                    match send_result {
+                        Some(Ok(())) => {
+                            s.serial_connected = true;
+                            s.last_error = None;
+                            s.last_line = line;
+                            s.tx_count = s.tx_count.wrapping_add(1);
+                        }
+                        Some(Err(err)) => {
+                            s.serial_connected = false;
+                            s.last_error = Some(format!("{err:#}"));
+                        }
+                        None => {}
+                    }
+                });
+            }
+            None => {
+                shared.update_status(|s| {
+                    s.gamepad_connected = false;
+                    s.gamepad_name = None;
+                });
+            }
+        }
+
+        thread::sleep(period);
+    }
+}

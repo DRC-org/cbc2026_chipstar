@@ -1,73 +1,71 @@
 //! DualSense コントローラの入力を読み取り、cctl (STM32) へ USB-CDC シリアルで
-//! 送信するスタンドアロンブリッジ。
-//!
-//! 従来の ROS2 3 ノード（joy_node → dualsense_teleop → cctl_usb_cdc_bridge）を
-//! 単一バイナリに統合したもので、cctl 側のシリアル行フォーマットは維持している。
+//! 送信するブリッジ。起動と同時に egui の GUI を表示し、ステータス確認・設定・
+//! 操作を行う。実際のブリッジ処理はワーカースレッドで動作する。
 
+mod app_state;
 mod controller;
 mod frame;
+mod gui;
 mod serial;
+mod worker;
 
+use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
 
-use anyhow::{Result, anyhow};
 use clap::Parser;
-use gilrs::Gilrs;
+use eframe::egui;
 
-use crate::serial::SerialLink;
+use crate::app_state::{BridgeConfig, Shared};
 
 #[derive(Parser)]
-#[command(about = "DualSense controller to cctl USB-CDC bridge")]
+#[command(about = "DualSense controller to cctl USB-CDC bridge (GUI)")]
 struct Args {
-    /// 送信先シリアルデバイス。
+    /// 送信先シリアルデバイス（GUI の初期値）。
     #[arg(short, long, default_value = "/dev/ttyACM0")]
     serial_device: String,
 
-    /// ボーレート。
+    /// ボーレート（GUI の初期値）。
     #[arg(short, long, default_value_t = 115200)]
     baud_rate: u32,
 
-    /// 送信周期（Hz）。
+    /// 送信周期（Hz、GUI の初期値）。
     #[arg(short, long, default_value_t = 20.0)]
     rate_hz: f64,
 }
 
-fn main() -> Result<()> {
+fn main() -> eframe::Result<()> {
     let args = Args::parse();
 
-    let mut gilrs = Gilrs::new().map_err(|err| anyhow!("failed to initialize gilrs: {err}"))?;
-    let mut link = SerialLink::new(args.serial_device.clone(), args.baud_rate);
+    let shared = Arc::new(Shared::new(BridgeConfig {
+        serial_device: args.serial_device,
+        baud_rate: args.baud_rate,
+        rate_hz: args.rate_hz,
+    }));
 
-    let period = Duration::from_secs_f64(1.0 / args.rate_hz);
-    let mut serial_ok = true;
+    // ブリッジ処理をワーカースレッドで起動する。
+    let worker_shared = shared.clone();
+    let worker = thread::spawn(move || worker::run(worker_shared));
 
-    loop {
-        // イベントを消費して各ゲームパッドの状態を最新化する。
-        while let Some(event) = gilrs.next_event() {
-            gilrs.update(&event);
-        }
+    let options = eframe::NativeOptions {
+        viewport: egui::ViewportBuilder::default()
+            .with_inner_size([840.0, 520.0])
+            .with_title("host - controller bridge"),
+        ..Default::default()
+    };
 
-        if let Some((_, gamepad)) = gilrs.gamepads().find(|(_, pad)| pad.is_connected()) {
-            let state = controller::read(&gamepad);
-            let line = frame::format_controller_input(&state);
+    let app_shared = shared.clone();
+    let result = eframe::run_native(
+        "host",
+        options,
+        Box::new(move |cc| {
+            gui::install_japanese_font(&cc.egui_ctx);
+            Ok(Box::new(gui::BridgeApp::new(app_shared)))
+        }),
+    );
 
-            match link.write_line(&line) {
-                Ok(()) => {
-                    if !serial_ok {
-                        eprintln!("serial link to {} restored", args.serial_device);
-                        serial_ok = true;
-                    }
-                }
-                Err(err) => {
-                    if serial_ok {
-                        eprintln!("{err:#}");
-                        serial_ok = false;
-                    }
-                }
-            }
-        }
+    // GUI 終了後、ワーカーを停止させて回収する。
+    shared.request_stop();
+    let _ = worker.join();
 
-        thread::sleep(period);
-    }
+    result
 }
