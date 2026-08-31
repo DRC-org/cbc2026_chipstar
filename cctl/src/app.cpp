@@ -177,10 +177,9 @@ extern "C" void setup(void) {
 
 extern "C" void loop(void) {
     // 受信フレームを全て取り込んで各モータへ振り分ける。
-    FDCAN_RxHeaderTypeDef rx_header = {};
-    uint8_t rx_data[8] = {};
-    while (motor_bus.receive(rx_header, rx_data)) {
-        controller.dispatchRx(rx_header, rx_data);
+    domain::CanFrame frame;
+    while (motor_bus.receive(frame)) {
+        controller.dispatchRx(frame);
     }
 
     updateManualControl();

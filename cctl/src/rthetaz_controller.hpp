@@ -2,6 +2,7 @@
 
 #include "can_bus.hpp"
 #include "dm_motor.hpp"
+#include "domain/can_frame.hpp"
 #include "el05_motor.hpp"
 #include "m3508_motor.hpp"
 
@@ -21,7 +22,7 @@ class RThetaZController {
   void setTarget(float r_mm, float theta_deg, float z_mm);
 
   // 受信フレームを各モータへ振り分ける。loop で毎回呼ぶ。
-  void dispatchRx(const FDCAN_RxHeaderTypeDef& header, const uint8_t data[8]);
+  void dispatchRx(const domain::CanFrame& frame);
 
   // 周期処理（各軸の指令送信・内蔵テスト動作）。loop で毎回呼ぶ。
   void update();

@@ -48,9 +48,19 @@ bool CanBus::sendExt(uint32_t id, const uint8_t* data, uint8_t len) {
   return send(id, FDCAN_EXTENDED_ID, data, len);
 }
 
-bool CanBus::receive(FDCAN_RxHeaderTypeDef& header, uint8_t data[8]) {
+bool CanBus::receive(domain::CanFrame& frame) {
   if (HAL_FDCAN_GetRxFifoFillLevel(hcan_, FDCAN_RX_FIFO0) == 0U) {
     return false;
   }
-  return HAL_FDCAN_GetRxMessage(hcan_, FDCAN_RX_FIFO0, &header, data) == HAL_OK;
+
+  FDCAN_RxHeaderTypeDef header = {};
+  if (HAL_FDCAN_GetRxMessage(hcan_, FDCAN_RX_FIFO0, &header, frame.data) != HAL_OK) {
+    return false;
+  }
+
+  frame.id = header.Identifier;
+  frame.extended = header.IdType == FDCAN_EXTENDED_ID;
+  // Classic CAN の DataLength はバイト数そのもの。
+  frame.length = static_cast<uint8_t>(header.DataLength);
+  return true;
 }

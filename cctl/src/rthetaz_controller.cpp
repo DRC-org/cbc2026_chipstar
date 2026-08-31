@@ -74,16 +74,19 @@ void RThetaZController::setTarget(float r_mm, float theta_deg, float z_mm) {
   theta_.setTargetMotorDeg(motor_deg);
 }
 
-void RThetaZController::dispatchRx(const FDCAN_RxHeaderTypeDef& header, const uint8_t data[8]) {
-  if (header.IdType == FDCAN_EXTENDED_ID) {
-    r_.onFeedback(header.Identifier, data);
-    return;
-  }
-  const uint16_t id = static_cast<uint16_t>(header.Identifier);
-  if (id == theta_.feedbackId()) {
-    theta_.onFeedback(id, data);
-  } else if (id == z_.feedbackId()) {
-    z_.onFeedback(data);
+void RThetaZController::dispatchRx(const domain::CanFrame& frame) {
+  switch (domain::classifyFeedback(frame, theta_.feedbackId(), z_.feedbackId())) {
+    case domain::Axis::R:
+      r_.onFeedback(frame.id, frame.data);
+      break;
+    case domain::Axis::Theta:
+      theta_.onFeedback(static_cast<uint16_t>(frame.id), frame.data);
+      break;
+    case domain::Axis::Z:
+      z_.onFeedback(frame.data);
+      break;
+    case domain::Axis::None:
+      break;
   }
 }
 
