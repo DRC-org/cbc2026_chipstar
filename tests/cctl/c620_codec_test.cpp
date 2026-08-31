@@ -122,3 +122,68 @@ TEST_CASE("半回転ちょうどの移動は前進として扱われる") {
 
     CHECK(counter.counts() == COUNTS_PER_REV / 2);
 }
+
+TEST_CASE("生値と電流は往復する") {
+    // テレメトリで実電流を mA に戻すため、逆変換を用意する。
+    CHECK(rawToCurrent(16384) == 20000);
+    CHECK(rawToCurrent(-16384) == -20000);
+    CHECK(rawToCurrent(0) == 0);
+    CHECK(rawToCurrent(currentToRaw(5000)) == doctest::Approx(5000).epsilon(0.001));
+}
+
+TEST_CASE("ESC ID で載る指令フレームが決まる") {
+    CHECK(groupCommandId(1) == COMMAND_ID_1_TO_4);
+    CHECK(groupCommandId(4) == COMMAND_ID_1_TO_4);
+    CHECK(groupCommandId(5) == COMMAND_ID_5_TO_8);
+    CHECK(groupCommandId(8) == COMMAND_ID_5_TO_8);
+}
+
+TEST_CASE("範囲外の ESC ID はどのフレームにも属さない") {
+    CHECK(groupCommandId(0) == 0);
+    CHECK(groupCommandId(9) == 0);
+}
+
+TEST_CASE("5..8 のスロットは 1..4 と同じ並び") {
+    uint8_t frame[8] = {};
+    writeCommandSlot(frame, 5, 0x1234);
+
+    CHECK(frame[0] == 0x12);
+    CHECK(frame[1] == 0x34);
+}
+
+TEST_CASE("指令フレームは 4 台分を保持する") {
+    // 1 台ずつ別フレームで送ると、後のフレームが他台を 0 で上書きしてしまう。
+    CommandFrame frame(COMMAND_ID_1_TO_4);
+    frame.clear();
+
+    CHECK(frame.set(1, 0x0111));
+    CHECK(frame.set(2, 0x0222));
+    CHECK(frame.set(3, 0x0333));
+    CHECK(frame.set(4, 0x0444));
+
+    const uint8_t* data = frame.data();
+    CHECK(data[0] == 0x01);
+    CHECK(data[1] == 0x11);
+    CHECK(data[6] == 0x04);
+    CHECK(data[7] == 0x44);
+}
+
+TEST_CASE("担当外の ESC ID は書き込めない") {
+    CommandFrame frame(COMMAND_ID_1_TO_4);
+    CHECK_FALSE(frame.set(5, 0x1234));
+    CHECK_FALSE(frame.set(0, 0x1234));
+
+    CommandFrame upper(COMMAND_ID_5_TO_8);
+    CHECK(upper.set(5, 0x1234));
+    CHECK_FALSE(upper.set(1, 0x1234));
+}
+
+TEST_CASE("clear で書かれなかった台は 0 電流になる") {
+    CommandFrame frame(COMMAND_ID_1_TO_4);
+    frame.set(1, 0x7FFF);
+    frame.clear();
+
+    for (int i = 0; i < 8; ++i) {
+        CHECK(frame.data()[i] == 0);
+    }
+}

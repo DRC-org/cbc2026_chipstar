@@ -1,5 +1,6 @@
 #pragma once
 
+#include "c620_group.hpp"
 #include "can_bus.hpp"
 #include "dm_motor.hpp"
 #include "domain/can_frame.hpp"
@@ -76,6 +77,8 @@ class RThetaZController {
   DmMotor z_;
   El05Motor r_;
   M3508Motor theta_;
+  // θ は 1 台だが、同じ指令フレームに他の C620 を足せるようにまとめて送る。
+  C620Group theta_group_;
 
   // 目標値（軸座標）
   float target_r_mm_ = 0.0f;

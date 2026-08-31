@@ -20,7 +20,10 @@ RThetaZController::RThetaZController(CanBus& bus)
       theta_(bus, config::can_id::C620_ESC_ID, config::can_id::C620_COMMAND,
              config::m3508::POS_KP, config::m3508::POS_KI, config::m3508::POS_KD,
              config::m3508::MAX_RPM, config::m3508::VEL_KP, config::m3508::VEL_KI,
-             config::m3508::VEL_KD, config::m3508::MAX_CURRENT_MA) {}
+             config::m3508::VEL_KD, config::m3508::MAX_CURRENT_MA),
+      theta_group_(bus, domain::c620::groupCommandId(config::can_id::C620_ESC_ID)) {
+  theta_group_.add(theta_);
+}
 
 void RThetaZController::begin() {
   // z: DM を Position-Velocity モードに設定する。トルクはまだ入れない。
@@ -161,7 +164,7 @@ void RThetaZController::update() {
   // θ は無効時も 0 電流を送り続ける。送信を止めると ESC 側の状態が読めない。
   if (now - last_m3508_ms_ >= config::period::M3508_MS) {
     last_m3508_ms_ = now;
-    theta_.sendCurrentCommand();
+    theta_group_.send();
   }
   if (axisActive(domain::axis_bit::Z) && now - last_dm_ms_ >= config::period::DM_MS) {
     last_dm_ms_ = now;

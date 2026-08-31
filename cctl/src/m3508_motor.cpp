@@ -4,12 +4,12 @@
 
 #include <algorithm>
 
-M3508Motor::M3508Motor(CanBus& bus, uint8_t esc_id, uint16_t command_id,
+M3508Motor::M3508Motor(CanBus& bus, uint8_t esc_id, uint16_t feedback_base,
                        float pos_kp, float pos_ki, float pos_kd, float max_rpm,
                        float vel_kp, float vel_ki, float vel_kd, float max_current_ma)
     : bus_(bus),
       esc_id_(esc_id),
-      command_id_(command_id),
+      feedback_base_(feedback_base),
       pos_pid_(pos_kp, pos_ki, pos_kd, max_rpm),
       vel_pid_(vel_kp, vel_ki, vel_kd, max_current_ma),
       max_rpm_(max_rpm),
@@ -42,8 +42,30 @@ void M3508Motor::resetOrigin() {
   timer_.reset();
 }
 
+void M3508Motor::setDirectCurrent(float milli_amp) {
+  direct_current_ = true;
+  direct_current_ma_ = std::clamp(milli_amp, -max_current_ma_, max_current_ma_);
+}
+
+void M3508Motor::clearDirectCurrent() {
+  direct_current_ = false;
+  pos_pid_.reset();
+  vel_pid_.reset();
+  timer_.reset();
+}
+
+int32_t M3508Motor::currentMilliAmp() const {
+  return domain::c620::rawToCurrent(last_feedback_.current_raw);
+}
+
 int16_t M3508Motor::computeCurrentMilliAmp() {
-  if (!enabled_ || !hasFeedback()) {
+  if (!enabled_) {
+    return 0;
+  }
+  if (direct_current_) {
+    return static_cast<int16_t>(direct_current_ma_);
+  }
+  if (!hasFeedback()) {
     return 0;
   }
   // 2 つのループは同じ周期で回るので、経過時間は 1 回だけ測って共有する。
@@ -58,10 +80,6 @@ int16_t M3508Motor::computeCurrentMilliAmp() {
   return static_cast<int16_t>(clamped);
 }
 
-bool M3508Motor::sendCurrentCommand() {
-  const int16_t raw = domain::c620::currentToRaw(computeCurrentMilliAmp());
-
-  uint8_t tx[8] = {};
-  domain::c620::writeCommandSlot(tx, esc_id_, raw);
-  return bus_.sendStd(command_id_, tx, 8);
+int16_t M3508Motor::commandRaw() {
+  return domain::c620::currentToRaw(computeCurrentMilliAmp());
 }
