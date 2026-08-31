@@ -58,6 +58,10 @@ jobs:
         working-directory: host
         run: cargo build --locked
 
+      - name: Test
+        working-directory: host
+        run: cargo test --locked
+
       - name: Clippy
         working-directory: host
         run: cargo clippy --all-targets --locked -- -D warnings
