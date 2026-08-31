@@ -1,23 +1,15 @@
 #pragma once
 
+#include "domain/sts3215_protocol.hpp"
 #include "main.h"
 
 #include <cstddef>
 #include <cstdint>
 
-// STS プロトコルのレジスタアドレス。
-namespace sts3215_reg {
-constexpr uint8_t ID = 5;
-constexpr uint8_t BAUD_RATE = 6;
-constexpr uint8_t TORQUE_ENABLE = 40;
-constexpr uint8_t ACCELERATION = 41;
-constexpr uint8_t GOAL_POSITION = 42;
-constexpr uint8_t GOAL_TIME = 44;
-constexpr uint8_t GOAL_SPEED = 46;
-constexpr uint8_t PRESENT_POSITION = 56;
-}  // namespace sts3215_reg
-
-// Feetech STS3215 シリアルバスサーボのプロトコルドライバ。
+// Feetech STS3215 シリアルバスサーボのドライバ。
+// パケットの組立・検証は domain::sts3215 が担い、本クラスは UART との
+// やり取りとタイムアウト管理を受け持つ。
+//
 // 基板上の絶縁回路が半二重の送受信方向を自動で切り替えるため、
 // MCU 側で方向制御 GPIO を操作する必要はない。
 // 通信は HAL の Blocking API によるポーリングで行う。
@@ -33,21 +25,12 @@ class Sts3215 {
     ServoError,
   };
 
-  // 加速度・目標位置・目標時間・目標速度をまとめた指令値。
-  // アドレス41から連続する4レジスタに対応する。
-  struct Target {
-    uint8_t id;
-    uint8_t acceleration;
-    uint16_t position;
-    uint16_t time;
-    uint16_t speed;
-  };
+  using Target = domain::sts3215::Target;
 
-  static constexpr uint8_t BROADCAST_ID = 0xFE;
-  static constexpr uint16_t MAX_POSITION = 4095;
-  static constexpr uint8_t BAUD_CODE_115200 = 4;
-  // syncWriteTargets() で一度に指定できるサーボ数。
-  static constexpr std::size_t MAX_SYNC_TARGETS = 16;
+  static constexpr uint8_t BROADCAST_ID = domain::sts3215::BROADCAST_ID;
+  static constexpr uint16_t MAX_POSITION = domain::sts3215::MAX_POSITION;
+  static constexpr uint8_t BAUD_CODE_115200 = domain::sts3215::BAUD_CODE_115200;
+  static constexpr std::size_t MAX_SYNC_TARGETS = domain::sts3215::MAX_SYNC_TARGETS;
 
   // wait_for_write_status: 書き込み命令のステータス応答を待つか。
   // false にすると指令の往復待ちがなくなる代わりに、書き込みの成否は検出できない。
