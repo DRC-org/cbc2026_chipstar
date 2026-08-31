@@ -1,5 +1,7 @@
 #include "m3508_motor.hpp"
 
+#include "main.h"
+
 #include <algorithm>
 
 M3508Motor::M3508Motor(CanBus& bus, uint8_t esc_id, uint16_t command_id,
@@ -26,10 +28,14 @@ int16_t M3508Motor::computeCurrentMilliAmp() {
   if (!hasFeedback()) {
     return 0;
   }
+  // 2 つのループは同じ周期で回るので、経過時間は 1 回だけ測って共有する。
+  const float dt_s = timer_.update(HAL_GetTick());
+
   // 外側: 位置 → 目標rpm
-  const float target_rpm = pos_pid_.update(target_motor_deg_, angle_.degrees());
+  const float target_rpm = pos_pid_.update(target_motor_deg_, angle_.degrees(), dt_s);
   // 内側: 速度 → 電流[mA]
-  const float current_ma = vel_pid_.update(target_rpm, static_cast<float>(last_feedback_.rpm));
+  const float current_ma =
+      vel_pid_.update(target_rpm, static_cast<float>(last_feedback_.rpm), dt_s);
   const float clamped = std::clamp(current_ma, -max_current_ma_, max_current_ma_);
   return static_cast<int16_t>(clamped);
 }

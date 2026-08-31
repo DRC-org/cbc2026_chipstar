@@ -35,5 +35,9 @@ add_firmware_tests(serial_svmd_tests ${REPO_ROOT}/serial_svmd/src
 add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     cctl/robot_config_test.cpp
     cctl/c620_codec_test.cpp
+    cctl/pid_test.cpp
+    cctl/delta_timer_test.cpp
     ${REPO_ROOT}/cctl/src/domain/c620_codec.cpp
+    ${REPO_ROOT}/cctl/src/domain/pid.cpp
+    ${REPO_ROOT}/cctl/src/domain/delta_timer.cpp
 )

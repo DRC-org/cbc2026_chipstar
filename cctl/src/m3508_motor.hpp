@@ -2,7 +2,8 @@
 
 #include "can_bus.hpp"
 #include "domain/c620_codec.hpp"
-#include "pid.hpp"
+#include "domain/delta_timer.hpp"
+#include "domain/pid.hpp"
 
 #include <cstdint>
 
@@ -38,8 +39,9 @@ class M3508Motor {
   uint8_t esc_id_;       // 1..4
   uint16_t command_id_;  // 0x200
 
-  Pid pos_pid_;
-  Pid vel_pid_;
+  domain::Pid pos_pid_;
+  domain::Pid vel_pid_;
+  domain::DeltaTimer timer_;
   float max_rpm_;
   float max_current_ma_;
 
