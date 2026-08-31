@@ -1,8 +1,9 @@
 # モータ CAN プロトコル要点（DM / EL05 / M3508）
 
 rθz 各軸で用いるモータの CAN プロトコルをまとめる。全て **1 Mbps / Classic CAN(2.0B)**。
-出典: DM-S3519 ユーザマニュアル、参考実装
-（`kotek-7/dm3520_test`, `DRC-org/edulite05-test`, `kotek-7/robo_central_controller`）。
+**この文書は要点の抜粋**。一次資料は [datasheets/](datasheets/README.md) の
+公式マニュアルで、記載のない詳細はそちらに当たること。
+参考実装: `kotek-7/dm3520_test`, `DRC-org/edulite05-test`, `kotek-7/robo_central_controller`。
 cctl 側実装は `cctl/src/{dm_motor,el05_motor,m3508_motor}.{hpp,cpp}`。
 
 ---
