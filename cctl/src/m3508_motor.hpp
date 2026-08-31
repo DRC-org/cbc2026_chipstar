@@ -1,6 +1,7 @@
 #pragma once
 
 #include "can_bus.hpp"
+#include "domain/c620_codec.hpp"
 #include "pid.hpp"
 
 #include <cstdint>
@@ -8,6 +9,7 @@
 // θ軸: M3508 + C620。C620 は電流指令のみ受け付けるため、位置制御は本クラスで
 // 位置PID→速度PID の 2 段カスケードにより電流指令を生成する。
 // C620 の角度(0..8191)から多回転角を積算し、モータ多回転角[deg]を追従させる。
+// フレームの符号化・復号と多回転の積算は domain::c620 が担う。
 class M3508Motor {
  public:
   M3508Motor(CanBus& bus, uint8_t esc_id, uint16_t command_id,
@@ -25,9 +27,9 @@ class M3508Motor {
   // カスケードPIDで電流を計算し、C620 コマンドフレームを送信する。
   bool sendCurrentCommand();
 
-  float motorDeg() const { return motor_deg_; }
-  int16_t rpm() const { return rpm_; }
-  bool hasFeedback() const { return has_feedback_; }
+  float motorDeg() const { return angle_.degrees(); }
+  int16_t rpm() const { return last_feedback_.rpm; }
+  bool hasFeedback() const { return angle_.hasReference(); }
 
  private:
   int16_t computeCurrentMilliAmp();
@@ -42,14 +44,8 @@ class M3508Motor {
   float max_current_ma_;
 
   // フィードバック状態
-  bool has_feedback_ = false;
-  uint16_t last_raw_angle_ = 0;
-  int32_t total_counts_ = 0;  // 多回転カウント（原点補正後）
-  int32_t origin_counts_ = 0;
-  float motor_deg_ = 0.0f;
-  int16_t rpm_ = 0;
-  int16_t amp_ = 0;
-  uint8_t temp_ = 0;
+  domain::c620::MultiTurnCounter angle_;
+  domain::c620::Feedback last_feedback_ = {};
 
   float target_motor_deg_ = 0.0f;
 };

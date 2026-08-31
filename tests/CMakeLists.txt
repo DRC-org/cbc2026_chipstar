@@ -29,4 +29,6 @@ endfunction()
 
 add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     cctl/robot_config_test.cpp
+    cctl/c620_codec_test.cpp
+    ${REPO_ROOT}/cctl/src/domain/c620_codec.cpp
 )

@@ -58,6 +58,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/el05_motor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/m3508_motor.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/rthetaz_controller.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/c620_codec.cpp
 )
 
 # Add include paths
