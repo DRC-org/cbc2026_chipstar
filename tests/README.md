@@ -29,6 +29,11 @@ ctest --preset default
 | 実行ファイル | 対象 |
 |---|---|
 | `cctl_tests` | `cctl/src` |
+| `serial_svmd_tests` | `serial_svmd/src` |
+
+テスト対象は各ファームの `src/domain/` に置く。`domain/` は HAL を含まない
+純粋なロジックだけを入れる場所で、そこから外側（HAL ラッパやアプリ層）を
+参照してはいけない。
 
 テストフレームワークは [doctest](https://github.com/doctest/doctest) を
 `vendor/doctest.h` に単一ヘッダで置いている。ビルド時のネットワーク接続は不要。
