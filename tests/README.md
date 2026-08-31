@@ -38,6 +38,15 @@ ctest --preset default
 テストフレームワークは [doctest](https://github.com/doctest/doctest) を
 `vendor/doctest.h` に単一ヘッダで置いている。ビルド時のネットワーク接続は不要。
 
+## CI
+
+`.github/workflows/ci.yml` が push / pull request で `ctest` を実行する。
+同じワークフローで `host`（Rust）と `svmd`（PlatformIO）もビルドする。
+
+`cctl` と `serial_svmd` のファームウェアは CI でビルドしない。CubeMX が生成する
+`Drivers/` と `Middlewares/` を `.gitignore` しているため、クリーンクローンでは
+ソースが揃わない。両者のロジックはこのテストがホスト側で受け持つ。
+
 ## 書き方
 
 新しいテストファイルは `tests/<プロジェクト名>/` に置き、

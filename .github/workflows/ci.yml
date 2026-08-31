@@ -1,0 +1,80 @@
+name: CI
+
+# cctl と serial_svmd のファームウェアはここでビルドしない。
+# CubeMX が生成する Drivers/ と Middlewares/ を .gitignore しているため、
+# クリーンクローンではソースが揃わない。両者のロジックは tests ジョブが
+# ホスト側で検証する。ros2 は archived のため対象外。
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+jobs:
+  tests:
+    name: domain tests
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build
+
+      - name: Configure
+        working-directory: tests
+        run: cmake --preset default
+
+      - name: Build
+        working-directory: tests
+        run: cmake --build --preset default
+
+      - name: Test
+        working-directory: tests
+        run: ctest --preset default
+
+  host:
+    name: host (Rust)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install system libraries
+        # serialport と gilrs が libudev、eframe が X11/Wayland/OpenGL を要求する。
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libudev-dev \
+            libxkbcommon-dev \
+            libwayland-dev \
+            libx11-dev \
+            libxrandr-dev \
+            libxi-dev \
+            libxcursor-dev \
+            libgl1-mesa-dev
+
+      - name: Build
+        working-directory: host
+        run: cargo build --locked
+
+      - name: Clippy
+        working-directory: host
+        run: cargo clippy --all-targets --locked -- -D warnings
+
+  svmd:
+    name: svmd (PlatformIO)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.x'
+
+      - name: Install PlatformIO
+        run: pip install --upgrade platformio
+
+      - name: Build
+        working-directory: svmd
+        run: pio run
