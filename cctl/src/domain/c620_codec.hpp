@@ -25,6 +25,9 @@ class MultiTurnCounter {
 public:
     void update(uint16_t raw_angle);
 
+    // 原点を取り直す。次に受け取った角度が新しい 0 になる。
+    void reset();
+
     bool hasReference() const { return has_reference_; }
     int32_t counts() const { return counts_; }
     float degrees() const;

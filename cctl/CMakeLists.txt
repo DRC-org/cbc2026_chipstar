@@ -63,6 +63,11 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/can_frame.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/line_reader.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/stick_command.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/telemetry.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/command.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/command_queue.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/kinematics.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/led_pattern.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui.cpp
 )
 

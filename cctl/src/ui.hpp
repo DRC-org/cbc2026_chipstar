@@ -1,5 +1,6 @@
 #pragma once
 
+#include "domain/run_state.hpp"
 #include "lcd_aqm1602.h"
 #include "main.h"
 
@@ -18,8 +19,8 @@ class Ui {
   // 目標値と z 軸のエラー状態を 2 行で表示する。
   void showStatus(float r_mm, float theta_deg, float z_mm, uint8_t z_error);
 
-  // 3 つの LED を巡回させる。tick_ms は 1ms 周期の通し番号。
-  void updateLeds(uint32_t tick_ms);
+  // 運転状態と有効な軸を LED1..3 に映す。tick_ms は 1ms 周期の通し番号。
+  void updateLeds(uint32_t tick_ms, domain::RunMode mode, uint8_t enabled_axes);
 
  private:
   void playTone(uint32_t frequency_hz, uint32_t duration_ms);

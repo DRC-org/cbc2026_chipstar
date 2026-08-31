@@ -25,6 +25,13 @@ class M3508Motor {
   // 目標: モータ多回転角[deg]。
   void setTargetMotorDeg(float deg) { target_motor_deg_ = deg; }
 
+  // 無効にすると電流指令 0 を送り続ける。PID は積分を溜めない。
+  void setEnabled(bool enabled);
+  bool enabled() const { return enabled_; }
+
+  // 現在位置を新しい原点にする。
+  void resetOrigin();
+
   // カスケードPIDで電流を計算し、C620 コマンドフレームを送信する。
   bool sendCurrentCommand();
 
@@ -48,6 +55,7 @@ class M3508Motor {
   // フィードバック状態
   domain::c620::MultiTurnCounter angle_;
   domain::c620::Feedback last_feedback_ = {};
+  bool enabled_ = false;
 
   float target_motor_deg_ = 0.0f;
 };

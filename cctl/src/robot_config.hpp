@@ -96,6 +96,7 @@ constexpr uint32_t M3508_MS = 1;   // 電流ループ 1kHz
 constexpr uint32_t DM_MS = 10;     // 位置速度指令 再送
 constexpr uint32_t EL05_MS = 20;   // LOC_REF 更新
 constexpr uint32_t LCD_MS = 200;   // 状態表示
+constexpr uint32_t TELEMETRY_MS = 50;  // ホストへの状態送信
 } // namespace period
 
 // ---- 手動操作 ----------------------------------------------------------

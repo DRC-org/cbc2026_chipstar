@@ -40,6 +40,9 @@ add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     cctl/stick_command_test.cpp
     cctl/telemetry_test.cpp
     cctl/command_test.cpp
+    cctl/kinematics_test.cpp
+    cctl/command_queue_test.cpp
+    cctl/led_pattern_test.cpp
     cctl/pid_test.cpp
     cctl/delta_timer_test.cpp
     ${REPO_ROOT}/cctl/src/domain/c620_codec.cpp
@@ -48,6 +51,9 @@ add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     ${REPO_ROOT}/cctl/src/domain/stick_command.cpp
     ${REPO_ROOT}/cctl/src/domain/telemetry.cpp
     ${REPO_ROOT}/cctl/src/domain/command.cpp
+    ${REPO_ROOT}/cctl/src/domain/kinematics.cpp
+    ${REPO_ROOT}/cctl/src/domain/command_queue.cpp
+    ${REPO_ROOT}/cctl/src/domain/led_pattern.cpp
     ${REPO_ROOT}/cctl/src/domain/pid.cpp
     ${REPO_ROOT}/cctl/src/domain/delta_timer.cpp
 )

@@ -1,5 +1,7 @@
 #include "ui.hpp"
 
+#include "domain/led_pattern.hpp"
+
 #include <cstdio>
 
 void Ui::playTone(uint32_t frequency_hz, uint32_t duration_ms) {
@@ -42,13 +44,14 @@ void Ui::showStatus(float r_mm, float theta_deg, float z_mm, uint8_t z_error) {
   lcd_.print(line1);
 }
 
-void Ui::updateLeds(uint32_t tick_ms) {
-  const auto cycle_ms = tick_ms % 300U;
-  const bool led1_on = cycle_ms < 100U || cycle_ms >= 285U;
-  const bool led2_on = cycle_ms >= 85U && cycle_ms < 200U;
-  const bool led3_on = cycle_ms >= 185U && cycle_ms < 300U;
+void Ui::updateLeds(uint32_t tick_ms, domain::RunMode mode, uint8_t enabled_axes) {
+  const uint8_t bits = domain::ledPattern(tick_ms, mode, enabled_axes);
 
-  HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, led1_on ? GPIO_PIN_SET : GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, led2_on ? GPIO_PIN_SET : GPIO_PIN_RESET);
-  HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, led3_on ? GPIO_PIN_SET : GPIO_PIN_RESET);
+  const auto state = [bits](uint8_t bit) {
+    return (bits & bit) != 0 ? GPIO_PIN_SET : GPIO_PIN_RESET;
+  };
+
+  HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, state(domain::axis_bit::R));
+  HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, state(domain::axis_bit::THETA));
+  HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, state(domain::axis_bit::Z));
 }

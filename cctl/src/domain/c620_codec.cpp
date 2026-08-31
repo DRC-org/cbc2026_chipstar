@@ -37,6 +37,12 @@ void MultiTurnCounter::update(uint16_t raw_angle) {
     last_raw_angle_ = raw_angle;
 }
 
+void MultiTurnCounter::reset() {
+    has_reference_ = false;
+    last_raw_angle_ = 0;
+    counts_ = 0;
+}
+
 float MultiTurnCounter::degrees() const {
     return static_cast<float>(counts_) * 360.0f / static_cast<float>(COUNTS_PER_REV);
 }

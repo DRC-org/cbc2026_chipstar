@@ -24,8 +24,26 @@ void M3508Motor::onFeedback(uint16_t rx_id, const uint8_t data[8]) {
   angle_.update(last_feedback_.raw_angle);
 }
 
+void M3508Motor::setEnabled(bool enabled) {
+  if (enabled_ == enabled) {
+    return;
+  }
+  enabled_ = enabled;
+  // 止めている間に積分が伸びると、再開した瞬間に飛び出す。
+  pos_pid_.reset();
+  vel_pid_.reset();
+  timer_.reset();
+}
+
+void M3508Motor::resetOrigin() {
+  angle_.reset();
+  pos_pid_.reset();
+  vel_pid_.reset();
+  timer_.reset();
+}
+
 int16_t M3508Motor::computeCurrentMilliAmp() {
-  if (!hasFeedback()) {
+  if (!enabled_ || !hasFeedback()) {
     return 0;
   }
   // 2 つのループは同じ周期で回るので、経過時間は 1 回だけ測って共有する。
