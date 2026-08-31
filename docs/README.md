@@ -12,6 +12,10 @@
 - [board_cctl.md](board_cctl.md) — cctl(STM32G474) のクロック、ペリフェラルとハンドル、ピン割当、ハード固有の注意点
 - [board_serial_svmd.md](board_serial_svmd.md) — serial_svmd(STM32F303K8T6) のクロック、ペリフェラルとハンドル、ピン割当、サーボ通信回路
 
+## 実機作業
+
+- [bringup.md](bringup.md) — cctl の立ち上げ手順、指令とテレメトリ、LED の読み方、調整値の場所
+
 ## 機体・制御
 
 - [rtheta_z_machine.md](rtheta_z_machine.md) — rθz 3軸機構の構成、各軸の駆動系、座標定義、原点方針、要実測パラメータ
