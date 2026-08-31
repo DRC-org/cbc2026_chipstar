@@ -29,7 +29,7 @@ void RThetaZController::begin() {
   // z: DM を Position-Velocity モードに設定する。トルクはまだ入れない。
   z_.disable();
   HAL_Delay(50);
-  z_.setModePositionVelocity();
+  z_.setControlMode(DmMotor::ControlMode::PositionVelocity);
   HAL_Delay(50);
 
   // r: EL05 を Position モードに設定し、リミット/ゲイン、原点まで。

@@ -3,61 +3,80 @@
 #include <cstring>
 
 namespace {
-constexpr uint16_t kConfigWriteId = 0x7FF;  // レジスタ設定フレームID
-constexpr uint8_t kWriteCmd = 0x55;         // 書込コマンド
-constexpr uint8_t kRidCtrlMode = 0x0A;      // 制御モードレジスタ
-constexpr uint32_t kModePositionVelocity = 2;
-constexpr uint16_t kPosVelCmdBase = 0x100;  // 位置速度指令 = 0x100 + can_id
-
-// N bit 整数 → 対称レンジ float への線形マッピング（マニュアル準拠）
-float rawToFloat(uint32_t raw, uint32_t full_scale, float range) {
-  return static_cast<float>(raw) * (2.0f * range) / static_cast<float>(full_scale) - range;
-}
+namespace codec = domain::dm;
 }  // namespace
 
-bool DmMotor::writeRegisterU32(uint8_t rid, uint32_t value) {
+bool DmMotor::sendConfig(uint8_t command, uint8_t rid, uint32_t value) {
   uint8_t data[8] = {};
-  data[0] = static_cast<uint8_t>(can_id_ & 0xFF);
-  data[1] = static_cast<uint8_t>((can_id_ >> 8) & 0xFF);
-  data[2] = kWriteCmd;
-  data[3] = rid;
-  data[4] = static_cast<uint8_t>(value & 0xFF);
-  data[5] = static_cast<uint8_t>((value >> 8) & 0xFF);
-  data[6] = static_cast<uint8_t>((value >> 16) & 0xFF);
-  data[7] = static_cast<uint8_t>((value >> 24) & 0xFF);
-  return bus_.sendStd(kConfigWriteId, data, 8);
+  codec::encodeConfig(can_id_, command, rid, value, data);
+  return bus_.sendStd(codec::CONFIG_ID, data, 8);
 }
 
 bool DmMotor::sendSpecialCommand(uint8_t command) {
-  // DM 特殊コマンド (0xFC:Enable / 0xFD:Disable / 0xFE:Zero)
-  uint8_t data[8] = {0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, command};
+  uint8_t data[8] = {};
+  codec::encodeSpecial(command, data);
   return bus_.sendStd(can_id_, data, 8);
 }
 
-bool DmMotor::setModePositionVelocity() {
-  return writeRegisterU32(kRidCtrlMode, kModePositionVelocity);
+bool DmMotor::setControlMode(ControlMode mode) {
+  return sendConfig(codec::CONFIG_WRITE, codec::reg::CTRL_MODE, static_cast<uint32_t>(mode));
 }
 
-bool DmMotor::enable() { return sendSpecialCommand(0xFC); }
-bool DmMotor::disable() { return sendSpecialCommand(0xFD); }
-bool DmMotor::setZero() { return sendSpecialCommand(0xFE); }
+bool DmMotor::enable() { return sendSpecialCommand(codec::SPECIAL_ENABLE); }
+bool DmMotor::disable() { return sendSpecialCommand(codec::SPECIAL_DISABLE); }
+bool DmMotor::setZero() { return sendSpecialCommand(codec::SPECIAL_ZERO); }
 
 bool DmMotor::sendPositionVelocity(float pos_rad, float vel_limit) {
   uint8_t data[8] = {};
-  std::memcpy(&data[0], &pos_rad, sizeof(float));
-  std::memcpy(&data[4], &vel_limit, sizeof(float));
-  return bus_.sendStd(static_cast<uint16_t>(kPosVelCmdBase + can_id_), data, 8);
+  codec::encodePositionVelocity(pos_rad, vel_limit, data);
+  return bus_.sendStd(static_cast<uint16_t>(codec::POS_VEL_CMD_BASE + can_id_), data, 8);
+}
+
+bool DmMotor::sendVelocity(float vel_rad_s) {
+  uint8_t data[8] = {};
+  codec::encodeVelocity(vel_rad_s, data);
+  return bus_.sendStd(static_cast<uint16_t>(codec::VELOCITY_CMD_BASE + can_id_), data, 8);
+}
+
+bool DmMotor::sendMit(float pos_rad, float vel_rad_s, float kp, float kd, float torque_nm) {
+  uint8_t data[8] = {};
+  codec::encodeMit(pos_rad, vel_rad_s, kp, kd, torque_nm, range_, data);
+  return bus_.sendStd(static_cast<uint16_t>(codec::MIT_CMD_BASE + can_id_), data, 8);
+}
+
+bool DmMotor::writeRegister(uint8_t rid, uint32_t value) {
+  return sendConfig(codec::CONFIG_WRITE, rid, value);
+}
+
+bool DmMotor::writeRegisterFloat(uint8_t rid, float value) {
+  uint32_t bits = 0;
+  std::memcpy(&bits, &value, sizeof(bits));
+  return writeRegister(rid, bits);
+}
+
+bool DmMotor::requestRegister(uint8_t rid) {
+  return sendConfig(codec::CONFIG_READ, rid, 0);
+}
+
+bool DmMotor::storeParameters() {
+  return sendConfig(codec::CONFIG_STORE, 0, 0);
 }
 
 void DmMotor::onFeedback(const uint8_t data[8]) {
-  // D0: ID|ERR<<4, D1-2: POS(16), D3: VEL[11:4], D4: VEL[3:0]|T[11:8], D5: T[7:0]
-  error_state_ = (data[0] >> 4) & 0x0F;
+  // レジスタ応答はフィードバックと同じ ID で届く。
+  // 取り違えると位置や温度に設定値が化けて入る。
+  if (codec::isConfigReply(can_id_, data)) {
+    has_register_reply_ = true;
+    last_register_id_ = codec::configReplyRegister(data);
+    last_register_raw_ = codec::configReplyValue(data);
+    return;
+  }
 
-  const uint16_t pos_raw = (static_cast<uint16_t>(data[1]) << 8) | data[2];      // 16bit
-  const uint16_t vel_raw = (static_cast<uint16_t>(data[3]) << 4) | (data[4] >> 4);  // 12bit
-  const uint16_t tau_raw = (static_cast<uint16_t>(data[4] & 0x0F) << 8) | data[5];  // 12bit
+  feedback_ = codec::decodeFeedback(data, range_);
+}
 
-  position_rad_ = rawToFloat(pos_raw, 65535u, p_max_);
-  velocity_rad_s_ = rawToFloat(vel_raw, 4095u, v_max_);
-  torque_nm_ = rawToFloat(tau_raw, 4095u, t_max_);
+float DmMotor::lastRegisterFloat() const {
+  float value = 0.0f;
+  std::memcpy(&value, &last_register_raw_, sizeof(value));
+  return value;
 }
