@@ -2,6 +2,10 @@
 
 キャチロボ2026 機体・回路・制御のドメイン知識。
 
+## 開発
+
+- [ai_workflow.md](ai_workflow.md) — AI エージェントの作業分割とコミットの規約
+
 ## 基板
 
 - [board_cctl.md](board_cctl.md) — cctl(STM32G474) のクロック、ペリフェラルとハンドル、ピン割当、ハード固有の注意点
