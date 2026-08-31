@@ -15,3 +15,5 @@
 機体・回路・制御のドメイン知識は [docs/](docs/README.md) を参照。
 
 各基板のペリフェラルを単体で動かして確認するコードは [samples/](samples/README.md) にある。
+
+HAL 非依存ロジックのホスト側テストは [tests/](tests/README.md) にある。

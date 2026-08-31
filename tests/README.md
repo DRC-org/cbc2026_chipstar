@@ -1,0 +1,39 @@
+# tests
+
+ファームウェアの HAL 非依存ロジックを、ホストのコンパイラで検証する。
+
+実機もデバッガも使わずに動かせる範囲 — 単位換算、プロトコルの符号化・復号、
+制御則、入力の解釈 — をここで固定する。
+
+## 実行
+
+```sh
+cd tests
+cmake --preset default
+cmake --build --preset default
+ctest --preset default
+```
+
+失敗した assertion だけを詳しく見たい場合は、実行ファイルを直接叩く。
+
+```sh
+./build/cctl_tests
+```
+
+## 構成
+
+プロジェクトごとに実行ファイルを分けている。インクルードパスを対象ファームの
+`src/` だけに絞ってあるため、テスト対象が HAL や他プロジェクトのヘッダに
+依存し始めるとビルドが通らなくなる。依存の向きはこの仕組みで守る。
+
+| 実行ファイル | 対象 |
+|---|---|
+| `cctl_tests` | `cctl/src` |
+
+テストフレームワークは [doctest](https://github.com/doctest/doctest) を
+`vendor/doctest.h` に単一ヘッダで置いている。ビルド時のネットワーク接続は不要。
+
+## 書き方
+
+新しいテストファイルは `tests/<プロジェクト名>/` に置き、
+`CMakeLists.txt` の `add_firmware_tests` の引数に追加する。
