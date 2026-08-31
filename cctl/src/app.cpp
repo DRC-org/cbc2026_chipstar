@@ -4,6 +4,7 @@
 #include "robot_config.hpp"
 #include "rthetaz_controller.hpp"
 
+#include <algorithm>
 #include <cstdint>
 #include <cstdio>
 
@@ -18,6 +19,97 @@ namespace {
 Aqm1602 lcd(&hi2c1);
 CanBus motor_bus(&hfdcan1);
 RThetaZController controller(motor_bus);
+
+constexpr uint32_t kUsbLineCapacity = 96;
+char usb_line[kUsbLineCapacity] = {};
+uint32_t usb_line_length = 0;
+bool usb_line_overflow = false;
+
+volatile int8_t pending_lx_percent = 0;
+volatile int8_t pending_ly_percent = 0;
+volatile uint32_t pending_input_sequence = 0;
+
+bool parsePercent(const char *text, int8_t &value) {
+    if ((text[0] != '+' && text[0] != '-') ||
+        text[1] < '0' || text[1] > '9' ||
+        text[2] < '0' || text[2] > '9' ||
+        text[3] < '0' || text[3] > '9') {
+        return false;
+    }
+
+    int parsed = (text[1] - '0') * 100 + (text[2] - '0') * 10 + (text[3] - '0');
+    if (text[0] == '-') {
+        parsed = -parsed;
+    }
+    if (parsed < -100 || parsed > 100) {
+        return false;
+    }
+
+    value = static_cast<int8_t>(parsed);
+    return true;
+}
+
+void publishControllerLine(const char *line, uint32_t length) {
+    // host の形式: "LX+000 LY+000 ..."。手動操作に必要な2軸だけを取り込む。
+    if (length < 13 || line[0] != 'L' || line[1] != 'X' ||
+        line[6] != ' ' || line[7] != 'L' || line[8] != 'Y') {
+        return;
+    }
+
+    int8_t lx = 0;
+    int8_t ly = 0;
+    if (!parsePercent(&line[2], lx) || !parsePercent(&line[9], ly)) {
+        return;
+    }
+
+    pending_lx_percent = lx;
+    pending_ly_percent = ly;
+    ++pending_input_sequence;
+}
+
+float applyDeadzone(float value) {
+    const float magnitude = value < 0.0f ? -value : value;
+    if (magnitude <= config::manual_control::STICK_DEADZONE) {
+        return 0.0f;
+    }
+
+    const float scaled = (magnitude - config::manual_control::STICK_DEADZONE) /
+                         (1.0f - config::manual_control::STICK_DEADZONE);
+    return value < 0.0f ? -scaled : scaled;
+}
+
+void updateManualControl() {
+    static uint32_t consumed_sequence = 0;
+    static uint32_t last_input_ms = 0;
+
+    const uint32_t sequence = pending_input_sequence;
+    if (sequence == consumed_sequence) {
+        return;
+    }
+
+    const float lx = static_cast<float>(pending_lx_percent) / 100.0f;
+    const float ly = static_cast<float>(pending_ly_percent) / 100.0f;
+    consumed_sequence = sequence;
+
+    const uint32_t now = HAL_GetTick();
+    if (last_input_ms == 0) {
+        last_input_ms = now;
+        return;
+    }
+
+    const uint32_t interval_ms = std::min(now - last_input_ms,
+        config::manual_control::MAX_INPUT_INTERVAL_MS);
+    last_input_ms = now;
+    const float interval_s = static_cast<float>(interval_ms) / 1000.0f;
+
+    const float r_delta = applyDeadzone(ly) *
+        config::manual_control::R_SPEED_MM_S * interval_s;
+    const float theta_delta = applyDeadzone(lx) *
+        config::manual_control::THETA_SPEED_DEG_S * interval_s;
+    controller.setTarget(controller.targetR() + r_delta,
+                         controller.targetTheta() + theta_delta,
+                         controller.targetZ());
+}
 
 void playTone(uint32_t frequency_hz, uint32_t duration_ms) {
     const uint32_t period = (1000000U / frequency_hz) - 1U;
@@ -80,8 +172,7 @@ extern "C" void setup(void) {
     motor_bus.begin();
     controller.begin();
 
-    // 指令I/F 未接続のため、単体動作確認用の内蔵テストシーケンスを有効化する。
-    controller.enableTestSequence(true);
+    controller.enableTestSequence(false);
 }
 
 extern "C" void loop(void) {
@@ -92,7 +183,9 @@ extern "C" void loop(void) {
         controller.dispatchRx(rx_header, rx_data);
     }
 
-    // 各軸の指令送信・テスト動作。
+    updateManualControl();
+
+    // 各軸の指令送信。
     controller.update();
 
     // 状態表示（200ms 間隔）。
@@ -105,9 +198,26 @@ extern "C" void loop(void) {
 }
 
 extern "C" void cctl_usbcdc_receive(const uint8_t *data, uint32_t length) {
-    // 上位指令I/F は未定。将来ここで r/θ/z 目標値を受信して controller.setTarget を呼ぶ。
-    (void)data;
-    (void)length;
+    for (uint32_t i = 0; i < length; ++i) {
+        const char ch = static_cast<char>(data[i]);
+        if (ch == '\n') {
+            if (!usb_line_overflow) {
+                uint32_t line_length = usb_line_length;
+                if (line_length > 0 && usb_line[line_length - 1] == '\r') {
+                    --line_length;
+                }
+                publishControllerLine(usb_line, line_length);
+            }
+            usb_line_length = 0;
+            usb_line_overflow = false;
+        } else if (!usb_line_overflow) {
+            if (usb_line_length < kUsbLineCapacity) {
+                usb_line[usb_line_length++] = ch;
+            } else {
+                usb_line_overflow = true;
+            }
+        }
+    }
 }
 
 extern "C" void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim) {

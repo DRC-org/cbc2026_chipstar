@@ -98,4 +98,13 @@ constexpr uint32_t EL05_MS = 20;   // LOC_REF 更新
 constexpr uint32_t LCD_MS = 200;   // 状態表示
 } // namespace period
 
+// ---- 手動操作 ----------------------------------------------------------
+namespace manual_control {
+constexpr float STICK_DEADZONE = 0.10f;
+constexpr float R_SPEED_MM_S = 100.0f;
+constexpr float THETA_SPEED_DEG_S = 90.0f;
+// 通信再開時に、途切れていた時間分を一度に移動しないための上限。
+constexpr uint32_t MAX_INPUT_INTERVAL_MS = 100;
+} // namespace manual_control
+
 } // namespace config
