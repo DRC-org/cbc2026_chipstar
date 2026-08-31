@@ -1,0 +1,5 @@
+{
+    "clangd.arguments": [
+        "--query-driver=${userHome}/.platformio/packages/toolchain-*/bin/arm-none-eabi-*"
+    ]
+}

@@ -5,5 +5,8 @@
     ],
     "cmake.preferredGenerators": [
         "Ninja"
+    ],
+    "clangd.arguments": [
+        "--query-driver=/opt/st/stm32cubeclt_*/GNU-tools-for-STM32/bin/arm-none-eabi-*,/usr/bin/arm-none-eabi-*"
     ]
 }

@@ -5,6 +5,7 @@
 ## 開発
 
 - [ai_workflow.md](ai_workflow.md) — AI エージェントの作業分割とコミットの規約
+- [clangd.md](clangd.md) — clangd(LSP) の設定、compile_commands.json の生成、クロスコンパイラの扱い
 
 ## 基板
 
