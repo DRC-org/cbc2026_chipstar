@@ -38,12 +38,16 @@ add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     cctl/can_frame_test.cpp
     cctl/line_reader_test.cpp
     cctl/stick_command_test.cpp
+    cctl/telemetry_test.cpp
+    cctl/command_test.cpp
     cctl/pid_test.cpp
     cctl/delta_timer_test.cpp
     ${REPO_ROOT}/cctl/src/domain/c620_codec.cpp
     ${REPO_ROOT}/cctl/src/domain/can_frame.cpp
     ${REPO_ROOT}/cctl/src/domain/line_reader.cpp
     ${REPO_ROOT}/cctl/src/domain/stick_command.cpp
+    ${REPO_ROOT}/cctl/src/domain/telemetry.cpp
+    ${REPO_ROOT}/cctl/src/domain/command.cpp
     ${REPO_ROOT}/cctl/src/domain/pid.cpp
     ${REPO_ROOT}/cctl/src/domain/delta_timer.cpp
 )
