@@ -53,8 +53,7 @@ pub fn run(shared: Arc<Shared>) {
 
         // 指令はコントローラの有無にも送信停止にも関係なく送る。
         // 立ち上げ中はコントローラを繋がないこともあり、STOP は常に届く必要がある。
-        for command in shared.take_commands() {
-            let line = command.to_line();
+        for line in shared.take_commands() {
             if let Err(err) = link.write_line(&line) {
                 shared.update_status(|s| {
                     s.serial_connected = false;

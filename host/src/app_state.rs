@@ -41,8 +41,8 @@ pub struct Shared {
     sending_enabled: AtomicBool,
     running: AtomicBool,
     status: Mutex<Status>,
-    /// GUI が積み、ワーカーが送る指令。
-    commands: Mutex<VecDeque<Command>>,
+    /// GUI が積み、ワーカーが送る指令行。
+    commands: Mutex<VecDeque<String>>,
 }
 
 impl Shared {
@@ -93,11 +93,16 @@ impl Shared {
 
     /// 指令を送信待ちに積む。送信停止中でも送るので、STOP は必ず届く。
     pub fn queue_command(&self, command: Command) {
-        self.commands.lock().unwrap().push_back(command);
+        self.queue_line(command.to_line());
     }
 
-    /// 送信待ちの指令を全て取り出す。
-    pub fn take_commands(&self) -> Vec<Command> {
+    /// cctl へそのまま送る行を積む。コマンドラインからの入力に使う。
+    pub fn queue_line(&self, line: String) {
+        self.commands.lock().unwrap().push_back(line);
+    }
+
+    /// 送信待ちの行を全て取り出す。
+    pub fn take_commands(&self) -> Vec<String> {
         self.commands.lock().unwrap().drain(..).collect()
     }
 

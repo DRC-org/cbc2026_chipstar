@@ -6,6 +6,7 @@ mod app_state;
 mod controller;
 mod frame;
 mod gui;
+mod keymap;
 mod serial;
 mod telemetry;
 mod worker;
