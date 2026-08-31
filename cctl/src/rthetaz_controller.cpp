@@ -35,13 +35,13 @@ void RThetaZController::begin() {
   // r: EL05 を Position モードに設定し、リミット/ゲイン、原点まで。
   r_.disable(true);
   HAL_Delay(50);
-  r_.setRunModePosition();
+  r_.setRunMode(El05Motor::RunMode::Position);
   HAL_Delay(20);
-  r_.writeParamFloat(0x7017 /*LIMIT_SPD*/, config::el05::LIMIT_SPD);
+  r_.writeParamFloat(domain::el05::param::LIMIT_SPD, config::el05::LIMIT_SPD);
   HAL_Delay(20);
-  r_.writeParamFloat(0x7018 /*LIMIT_CUR*/, config::el05::LIMIT_CUR);
+  r_.writeParamFloat(domain::el05::param::LIMIT_CUR, config::el05::LIMIT_CUR);
   HAL_Delay(20);
-  r_.writeParamFloat(0x701E /*LOC_KP*/, config::el05::LOC_KP);
+  r_.writeParamFloat(domain::el05::param::LOC_KP, config::el05::LOC_KP);
   HAL_Delay(20);
   r_.setZero();
   HAL_Delay(200);

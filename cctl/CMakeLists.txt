@@ -69,6 +69,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/kinematics.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/led_pattern.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/dm_codec.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/el05_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/c620_group.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/ui.cpp
 )
