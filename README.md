@@ -7,8 +7,9 @@
 ### RA4M1 シリーズ
 一部の基板は Renesas の R7FA4M1AB3CFM (通称 R4 マイコン) を搭載している。R4 マイコンでは、 PlatformIO + C++ で原則開発する。
 
-### ROS2
-中央制御はノートPC上の ROS2 が担当する。言語は C++ を使用する。
+### ROS2（archived）
+`ros2/` は archived。開発・ビルド検証の対象外で、参照用に残している。
+コントローラ入力の中継は `host/`（Rust）が担当する。
 
 ## ドキュメント
 機体・回路・制御のドメイン知識は [docs/](docs/README.md) を参照。
