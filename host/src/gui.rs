@@ -9,6 +9,8 @@ use std::time::Duration;
 use eframe::egui::{self, FontData};
 
 use crate::app_state::{BridgeConfig, Shared};
+use crate::frame::Command;
+use crate::telemetry::{axis_bit, RunMode, Telemetry};
 
 /// 画面（タブ）。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -110,6 +112,15 @@ impl BridgeApp {
         ));
         ui.add_space(8.0);
         ui.monospace(format!("last line: {}", status.last_line));
+
+        ui.separator();
+        ui.label("機体の状態");
+        match &status.telemetry {
+            Some(telemetry) => telemetry_ui(ui, telemetry, status.telemetry_count),
+            None => {
+                ui.label("cctl からのテレメトリを受信していません。");
+            }
+        }
     }
 
     fn config_ui(&mut self, ui: &mut egui::Ui) {
@@ -165,14 +176,76 @@ impl BridgeApp {
         ui.heading("操作");
         ui.separator();
 
-        let mut sending = self.shared.sending_enabled();
-        if ui.checkbox(&mut sending, "送信を有効化").changed() {
-            self.shared.set_sending_enabled(sending);
+        let status = self.shared.status_snapshot();
+
+        // 非常停止。押した瞬間に送るため、送信停止中でも効く。
+        let stop = egui::Button::new(egui::RichText::new("STOP").size(22.0).strong())
+            .fill(egui::Color32::from_rgb(160, 40, 40))
+            .min_size(egui::vec2(200.0, 56.0));
+        if ui.add(stop).clicked() {
+            self.shared.queue_command(Command::Stop);
+        }
+        ui.label("全軸のトルクを切ります。送信を停止していても届きます。");
+
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if ui.button("RUN（運転開始）").clicked() {
+                self.shared.queue_command(Command::Run);
+            }
+            if ui.button("SAFE（待機へ）").clicked() {
+                self.shared.queue_command(Command::Safe);
+            }
+            if ui.button("HOME（原点取り直し）").clicked() {
+                self.shared.queue_command(Command::Home);
+            }
+        });
+
+        ui.add_space(12.0);
+        ui.label("軸ごとの有効・無効");
+        ui.label("1 軸ずつ確かめながら立ち上げるために使います。");
+        let enabled_axes = status.telemetry.as_ref().map(|t| t.enabled_axes);
+        for (bit, label) in [
+            (axis_bit::R, "r 軸 (EL05)"),
+            (axis_bit::THETA, "θ 軸 (M3508)"),
+            (axis_bit::Z, "z 軸 (DM)"),
+        ] {
+            ui.horizontal(|ui| {
+                ui.label(label);
+                if ui.button("有効").clicked() {
+                    self.shared.queue_command(Command::Enable {
+                        axes: bit,
+                        enabled: true,
+                    });
+                }
+                if ui.button("無効").clicked() {
+                    self.shared.queue_command(Command::Enable {
+                        axes: bit,
+                        enabled: false,
+                    });
+                }
+                ui.label(match enabled_axes {
+                    Some(axes) if axes & bit != 0 => "現在: 有効",
+                    Some(_) => "現在: 無効",
+                    None => "現在: 不明",
+                });
+            });
         }
 
-        ui.add_space(8.0);
-        if ui.button("緊急停止（送信停止）").clicked() {
-            self.shared.set_sending_enabled(false);
+        ui.add_space(12.0);
+        ui.horizontal(|ui| {
+            if ui.button("テスト動作 開始").clicked() {
+                self.shared.queue_command(Command::Test(true));
+            }
+            if ui.button("テスト動作 停止").clicked() {
+                self.shared.queue_command(Command::Test(false));
+            }
+        });
+
+        ui.add_space(12.0);
+        ui.separator();
+        let mut sending = self.shared.sending_enabled();
+        if ui.checkbox(&mut sending, "コントローラ入力の送信を有効化").changed() {
+            self.shared.set_sending_enabled(sending);
         }
     }
 
@@ -236,4 +309,51 @@ pub fn install_japanese_font(ctx: &egui::Context) {
         .or_default()
         .insert(0, "source_han_code_jp".to_owned());
     ctx.set_fonts(fonts);
+}
+
+/// 目標値と実測値を並べて表示する。
+fn telemetry_ui(ui: &mut egui::Ui, telemetry: &Telemetry, count: u64) {
+    let mode_color = match telemetry.mode {
+        RunMode::Safe => egui::Color32::from_rgb(200, 170, 60),
+        RunMode::Run => egui::Color32::from_rgb(90, 180, 90),
+        RunMode::Stop => egui::Color32::from_rgb(200, 80, 80),
+    };
+    ui.colored_label(mode_color, egui::RichText::new(telemetry.mode.label()).strong());
+
+    egui::Grid::new("telemetry_grid")
+        .num_columns(4)
+        .spacing([16.0, 6.0])
+        .striped(true)
+        .show(ui, |ui| {
+            ui.label("軸");
+            ui.label("目標");
+            ui.label("実測");
+            ui.label("誤差");
+            ui.end_row();
+
+            for (bit, name, axis, unit) in [
+                (axis_bit::R, "r", telemetry.r, "mm"),
+                (axis_bit::THETA, "θ", telemetry.theta, "deg"),
+                (axis_bit::Z, "z", telemetry.z, "mm"),
+            ] {
+                let enabled = telemetry.axis_enabled(bit);
+                ui.label(format!("{name} {}", if enabled { "●" } else { "○" }));
+                ui.monospace(format!("{:+8.3} {unit}", axis.target));
+                ui.monospace(format!("{:+8.3} {unit}", axis.measured));
+                ui.monospace(format!("{:+8.3}", axis.error()));
+                ui.end_row();
+            }
+        });
+
+    ui.add_space(4.0);
+    ui.monospace(format!(
+        "uptime: {} ms / err: {:02X} / 受信: {} 行",
+        telemetry.uptime_ms, telemetry.error_bits, count
+    ));
+    if telemetry.error_bits != 0 {
+        ui.colored_label(
+            egui::Color32::from_rgb(200, 80, 80),
+            "z 軸ドライバがエラーを報告しています。",
+        );
+    }
 }

@@ -10,6 +10,7 @@ use std::time::Duration;
 use gilrs::Gilrs;
 
 use crate::app_state::Shared;
+use crate::telemetry::parse_telemetry;
 use crate::{controller, frame, serial::SerialLink};
 
 fn period_from_hz(rate_hz: f64) -> Duration {
@@ -50,6 +51,23 @@ pub fn run(shared: Arc<Shared>) {
             gilrs.update(&event);
         }
 
+        // 指令はコントローラの有無にも送信停止にも関係なく送る。
+        // 立ち上げ中はコントローラを繋がないこともあり、STOP は常に届く必要がある。
+        for command in shared.take_commands() {
+            let line = command.to_line();
+            if let Err(err) = link.write_line(&line) {
+                shared.update_status(|s| {
+                    s.serial_connected = false;
+                    s.last_error = Some(format!("{err:#}"));
+                });
+            } else {
+                shared.update_status(|s| {
+                    s.serial_connected = true;
+                    s.last_line = line;
+                });
+            }
+        }
+
         let gamepad = gilrs.gamepads().find(|(_, pad)| pad.is_connected());
 
         match gamepad {
@@ -88,6 +106,16 @@ pub fn run(shared: Arc<Shared>) {
                 shared.update_status(|s| {
                     s.gamepad_connected = false;
                     s.gamepad_name = None;
+                });
+            }
+        }
+
+        // cctl からのテレメトリを取り込む。
+        for line in link.read_lines() {
+            if let Some(telemetry) = parse_telemetry(&line) {
+                shared.update_status(|s| {
+                    s.telemetry = Some(telemetry);
+                    s.telemetry_count = s.telemetry_count.wrapping_add(1);
                 });
             }
         }

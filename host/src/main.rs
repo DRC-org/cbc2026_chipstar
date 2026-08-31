@@ -7,6 +7,7 @@ mod controller;
 mod frame;
 mod gui;
 mod serial;
+mod telemetry;
 mod worker;
 
 use std::sync::Arc;

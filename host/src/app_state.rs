@@ -3,8 +3,12 @@
 //! - 設定は `Mutex<BridgeConfig>`。変更時に `config_gen` を進め、ワーカーが再接続する。
 //! - 実行状況は `Mutex<Status>` にスナップショットとして書き込む。
 
+use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+
+use crate::frame::Command;
+use crate::telemetry::Telemetry;
 
 /// シリアルブリッジの設定。
 #[derive(Clone)]
@@ -25,6 +29,9 @@ pub struct Status {
     pub last_line: String,
     pub axes: [f32; 6],
     pub buttons: [u8; 17],
+    /// cctl から受け取った最新のテレメトリ。未受信なら None。
+    pub telemetry: Option<Telemetry>,
+    pub telemetry_count: u64,
 }
 
 /// スレッド間共有ハンドル。`Arc<Shared>` で持ち回る。
@@ -34,6 +41,8 @@ pub struct Shared {
     sending_enabled: AtomicBool,
     running: AtomicBool,
     status: Mutex<Status>,
+    /// GUI が積み、ワーカーが送る指令。
+    commands: Mutex<VecDeque<Command>>,
 }
 
 impl Shared {
@@ -44,6 +53,7 @@ impl Shared {
             sending_enabled: AtomicBool::new(true),
             running: AtomicBool::new(true),
             status: Mutex::new(Status::default()),
+            commands: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -79,6 +89,16 @@ impl Shared {
 
     pub fn status_snapshot(&self) -> Status {
         self.status.lock().unwrap().clone()
+    }
+
+    /// 指令を送信待ちに積む。送信停止中でも送るので、STOP は必ず届く。
+    pub fn queue_command(&self, command: Command) {
+        self.commands.lock().unwrap().push_back(command);
+    }
+
+    /// 送信待ちの指令を全て取り出す。
+    pub fn take_commands(&self) -> Vec<Command> {
+        self.commands.lock().unwrap().drain(..).collect()
     }
 
     /// ワーカーから状態を更新する。
