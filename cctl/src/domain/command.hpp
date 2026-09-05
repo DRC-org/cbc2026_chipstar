@@ -18,11 +18,14 @@ enum class CommandKind : uint8_t {
     Home,
     Target,
     CanTx,
+    InputRead,
+    InputGuard,
 };
 
 struct Command {
     CommandKind kind = CommandKind::None;
     uint8_t mask = 0;
+    uint8_t input_high = 0;
     uint8_t slot = 0;
     uint8_t protocol_version = 0;
     bool value = false;

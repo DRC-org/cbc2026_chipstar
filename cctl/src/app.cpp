@@ -6,6 +6,7 @@
 #include "domain/command_queue.hpp"
 #include "domain/line_reader.hpp"
 #include "domain/telemetry.hpp"
+#include "domain/digital_inputs.hpp"
 #include "main.h"
 #include "ui.hpp"
 #include "usbd_cdc_if.h"
@@ -33,6 +34,22 @@ domain::CommandQueue commands;
 volatile uint32_t last_contact_ms = 0;
 bool protocol_ready = false;
 bool peripheral_bus_ready = false;
+domain::DigitalInputs inputs(7);
+
+void sampleInputs() {
+    const uint8_t raw = (HAL_GPIO_ReadPin(SW1_GPIO_Port, SW1_Pin) == GPIO_PIN_RESET ? 1 : 0) |
+        (HAL_GPIO_ReadPin(SW2_GPIO_Port, SW2_Pin) == GPIO_PIN_RESET ? 2 : 0) |
+        (HAL_GPIO_ReadPin(SW3_GPIO_Port, SW3_Pin) == GPIO_PIN_RESET ? 4 : 0);
+    const uint8_t dip = (HAL_GPIO_ReadPin(DIP1_GPIO_Port, DIP1_Pin) == GPIO_PIN_RESET ? 1 : 0) |
+        (HAL_GPIO_ReadPin(DIP2_GPIO_Port, DIP2_Pin) == GPIO_PIN_RESET ? 2 : 0) |
+        (HAL_GPIO_ReadPin(DIP3_GPIO_Port, DIP3_Pin) == GPIO_PIN_RESET ? 4 : 0) |
+        (HAL_GPIO_ReadPin(DIP4_GPIO_Port, DIP4_Pin) == GPIO_PIN_RESET ? 8 : 0);
+    inputs.sample(raw, dip, HAL_GetTick());
+    if (inputs.tripped() && (controller.mode() == domain::RunMode::Run || controller.enabledSlots())) {
+        controller.setMode(domain::RunMode::Stop);
+        controller.setSlotsEnabled(7, false);
+    }
+}
 
 bool usbReady() {
     const auto* cdc = static_cast<const USBD_CDC_HandleTypeDef*>(hUsbDeviceFS.pClassData);
@@ -50,7 +67,16 @@ void sendText(const char* text) {
     CDC_Transmit_FS(buffer, static_cast<uint16_t>(length + 1));
 }
 
+void sendInputs() {
+    uint8_t data[8]; inputs.encode(data);
+    char text[96];
+    std::snprintf(text, sizeof(text), "INPUT_STATE raw=%u stable=%u dip=%u guard=%u high=%u trip=%u available=%u",
+        data[1], data[2], data[3], data[4], data[5], data[6], data[7]);
+    sendText(text);
+}
+
 void applyCommand(const domain::Command& command) {
+    sampleInputs();
     switch (command.kind) {
         case domain::CommandKind::Hello:
             protocol_ready = command.protocol_version == 1;
@@ -61,7 +87,8 @@ void applyCommand(const domain::Command& command) {
             controller.setMode(domain::RunMode::Stop);
             break;
         case domain::CommandKind::Run:
-            if (protocol_ready) controller.setMode(domain::RunMode::Run);
+            if (inputs.tripped()) sendText("ERR code=INPUT_ACTIVE");
+            else if (protocol_ready) controller.setMode(domain::RunMode::Run);
             else sendText("ERR code=NOT_READY");
             break;
         case domain::CommandKind::Safe:
@@ -91,6 +118,12 @@ void applyCommand(const domain::Command& command) {
             }
             break;
         case domain::CommandKind::None:
+            break;
+        case domain::CommandKind::InputRead: sendInputs(); break;
+        case domain::CommandKind::InputGuard:
+            if (controller.mode() == domain::RunMode::Run) sendText("ERR code=BUSY");
+            else if (!inputs.configure(command.mask, command.input_high)) sendText("ERR code=OUT_OF_RANGE");
+            else sendInputs();
             break;
     }
 }
@@ -147,6 +180,7 @@ extern "C" void setup(void) {
 }
 
 extern "C" void loop(void) {
+    sampleInputs();
     domain::CanFrame frame;
     while (motor_bus.receive(frame)) controller.dispatchRx(frame);
     while (peripheral_bus.receive(frame)) sendCanFrame(frame);

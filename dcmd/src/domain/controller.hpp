@@ -1,15 +1,16 @@
 #pragma once
 #include <cstddef>
 #include <cstdint>
+#include "domain/digital_inputs.hpp"
 
 namespace dcmd {
 constexpr uint16_t COMMAND_ID = 0x310;
 constexpr uint16_t STATUS_ID = 0x311;
 constexpr int16_t MAX_DUTY = 900;  // permille
 constexpr uint32_t WATCHDOG_MS = 250;
-enum class Op : uint8_t { Hello, Safe, Run, Stop, Target, Heartbeat };
+enum class Op : uint8_t { Hello, Safe, Run, Stop, Target, Heartbeat, InputRead, InputGuard };
 enum class Mode : uint8_t { Safe, Run, Stop };
-struct Command { Op op = Op::Stop; uint8_t channel = 0; int16_t duty = 0; };
+struct Command { Op op = Op::Stop; uint8_t channel = 0; int16_t duty = 0; uint8_t input_high = 0; };
 bool parse(const uint8_t* data, std::size_t size, Command& out);
 
 // HAL非依存の指令検証、通信期限、Dutyランプと方向反転待ち。
@@ -21,7 +22,13 @@ class Controller {
   int16_t output(uint8_t channel) const { return output_[channel]; }
   uint8_t enabled() const { return enabled_; }
   bool timedOut() const { return timed_out_; }
+  void updateInputs(uint8_t raw, uint8_t dip, uint32_t now) {
+    inputs_.sample(raw, dip, now);
+    if (inputs_.tripped()) stop(Mode::Stop, now);
+  }
+  const domain::DigitalInputs& inputs() const { return inputs_; }
  private:
+  domain::DigitalInputs inputs_{7};
   void stop(Mode mode, uint32_t now);
   Mode mode_ = Mode::Safe;
   bool ready_ = false;

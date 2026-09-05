@@ -14,6 +14,12 @@ dcmd::Controller controller;
 bool bus_ready = false;
 dcmd::Encoder encoder;
 volatile uint16_t index_count = 0;
+void sampleInputs() {
+  const uint16_t a = GPIOA->IDR;
+  const uint16_t b = GPIOB->IDR;
+  const uint8_t dip = (!(a & GPIO_PIN_7) ? 1 : 0) | (!(a & GPIO_PIN_5) ? 2 : 0);
+  controller.updateInputs(static_cast<uint8_t>((~b >> 3) & 7), dip, HAL_GetTick());
+}
 void output(TIM_HandleTypeDef* timer, int16_t duty) {
   // CCRプリロードを同じupdateイベントで反映し、方向切替を一括適用する。
   timer->Instance->CR1 |= TIM_CR1_UDIS;
@@ -82,6 +88,7 @@ extern "C" void setup(void) {
 }
 
 extern "C" void loop(void) {
+  sampleInputs();
   encoder.sample(static_cast<uint16_t>(__HAL_TIM_GET_COUNTER(&htim3)));
   controller.tick(HAL_GetTick());
   for (uint8_t n = 0; n < 3 && HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0); ++n) {
@@ -89,10 +96,13 @@ extern "C" void loop(void) {
     uint8_t data[8] = {};
     if (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &header, data) != HAL_OK) break;
     dcmd::Command cmd;
+    sampleInputs();
     const bool accepted = header.IDE == CAN_ID_STD && header.RTR == CAN_RTR_DATA &&
         header.StdId == dcmd::COMMAND_ID && dcmd::parse(data, header.DLC, cmd) &&
         controller.apply(cmd, HAL_GetTick());
-    status(accepted ? 0 : 1);
+    if (accepted && (cmd.op == dcmd::Op::InputRead || cmd.op == dcmd::Op::InputGuard)) {
+      uint8_t report[8]; controller.inputs().encode(report); send(0x313, report);
+    } else status(accepted ? 0 : 1);
   }
   output(&htim2, controller.output(0));
   static uint32_t last_status = 0;
