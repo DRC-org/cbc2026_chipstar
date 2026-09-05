@@ -7,10 +7,12 @@ mod controller;
 mod frame;
 mod gui;
 mod keymap;
+mod machine;
 mod serial;
 mod telemetry;
 mod worker;
 
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::thread;
 
@@ -18,6 +20,7 @@ use clap::Parser;
 use eframe::egui;
 
 use crate::app_state::{BridgeConfig, Shared};
+use crate::machine::MachineProfile;
 
 #[derive(Parser)]
 #[command(about = "DualSense controller to cctl USB-CDC bridge (GUI)")]
@@ -33,15 +36,22 @@ struct Args {
     /// 送信周期（Hz、GUI の初期値）。
     #[arg(short, long, default_value_t = 20.0)]
     rate_hz: f64,
+
+    /// 機体固有の軸構成。省略時は内蔵のrthetaプロファイルを使う。
+    #[arg(long)]
+    machine_profile: Option<PathBuf>,
 }
 
 fn main() -> eframe::Result<()> {
     let args = Args::parse();
+    let machine = MachineProfile::load(args.machine_profile.as_deref())
+        .unwrap_or_else(|err| panic!("{err:#}"));
 
     let shared = Arc::new(Shared::new(BridgeConfig {
         serial_device: args.serial_device,
         baud_rate: args.baud_rate,
         rate_hz: args.rate_hz,
+        machine,
     }));
 
     // ブリッジ処理をワーカースレッドで起動する。

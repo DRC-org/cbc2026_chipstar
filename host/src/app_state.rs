@@ -8,6 +8,7 @@ use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
 use crate::frame::Command;
+use crate::machine::MachineProfile;
 use crate::telemetry::Telemetry;
 
 /// シリアルブリッジの設定。
@@ -16,6 +17,7 @@ pub struct BridgeConfig {
     pub serial_device: String,
     pub baud_rate: u32,
     pub rate_hz: f64,
+    pub machine: MachineProfile,
 }
 
 /// GUI 表示用の実行状況スナップショット。

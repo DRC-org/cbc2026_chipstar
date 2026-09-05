@@ -10,6 +10,7 @@ use std::time::Duration;
 use gilrs::Gilrs;
 
 use crate::app_state::Shared;
+use crate::machine::MachineController;
 use crate::telemetry::parse_telemetry;
 use crate::{controller, frame, serial::SerialLink};
 
@@ -35,6 +36,8 @@ pub fn run(shared: Arc<Shared>) {
     let mut last_gen = shared.config_generation();
     let mut link = SerialLink::new(cfg.serial_device.clone(), cfg.baud_rate);
     let mut period = period_from_hz(cfg.rate_hz);
+    let mut machine = MachineController::new(cfg.machine.clone());
+    shared.queue_line(machine.hello_line());
 
     while shared.is_running() {
         // 設定変更を検知したらシリアルを開き直す。
@@ -44,6 +47,8 @@ pub fn run(shared: Arc<Shared>) {
             cfg = shared.config();
             link = SerialLink::new(cfg.serial_device.clone(), cfg.baud_rate);
             period = period_from_hz(cfg.rate_hz);
+            machine = MachineController::new(cfg.machine.clone());
+            shared.queue_line(machine.hello_line());
         }
 
         // イベントを消費して各ゲームパッドの状態を最新化する。
@@ -76,7 +81,19 @@ pub fn run(shared: Arc<Shared>) {
 
                 let line = frame::format_controller_input(&state);
                 let send_result = if shared.sending_enabled() {
-                    Some(link.write_line(&line))
+                    // 移行中は新しいslot指令と旧入力行を併送する。旧FWはTARGETを、
+                    // 汎用FWはLX行を無視するため、片側ずつ更新しても操作を維持できる。
+                    let mut result = Ok(());
+                    for target in machine.update(&state, period.as_secs_f32()) {
+                        if let Err(err) = link.write_line(&target) {
+                            result = Err(err);
+                            break;
+                        }
+                    }
+                    if result.is_ok() {
+                        result = link.write_line(&line);
+                    }
+                    Some(result)
                 } else {
                     None
                 };

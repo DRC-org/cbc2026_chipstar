@@ -358,6 +358,7 @@ impl BridgeApp {
                     serial_device: self.edit_device.clone(),
                     baud_rate: self.edit_baud,
                     rate_hz: self.edit_rate,
+                    machine: self.shared.config().machine,
                 });
             }
             if ui.button("現在値に戻す").clicked() {

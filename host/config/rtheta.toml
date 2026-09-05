@@ -1,0 +1,35 @@
+protocol_version = 1
+
+[[axes]]
+name = "r"
+unit = "mm"
+slot = 0
+input_axis = 1
+input_sign = 1.0
+speed_per_second = 100.0
+native_per_unit = 0.10005072
+minimum = 0.0
+maximum = 250.0
+initial = 0.0
+
+[[axes]]
+name = "theta"
+unit = "deg"
+slot = 1
+input_axis = 0
+input_sign = 1.0
+speed_per_second = 90.0
+native_per_unit = 140.82353
+minimum = -180.0
+maximum = 180.0
+initial = 0.0
+
+[[axes]]
+name = "z"
+unit = "mm"
+slot = 2
+speed_per_second = 0.0
+native_per_unit = 0.15707964
+minimum = 0.0
+maximum = 300.0
+initial = 0.0
