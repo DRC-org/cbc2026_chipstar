@@ -34,6 +34,11 @@ add_firmware_tests(serial_svmd_tests ${REPO_ROOT}/serial_svmd/src
     ${REPO_ROOT}/serial_svmd/src/domain/servo_command.cpp
 )
 
+add_firmware_tests(svmd_tests ${REPO_ROOT}/svmd/src
+    svmd/servo_can_protocol_test.cpp
+    ${REPO_ROOT}/svmd/src/domain/servo_can_protocol.cpp
+)
+
 add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     cctl/device_config_test.cpp
     cctl/c620_codec_test.cpp

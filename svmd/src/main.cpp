@@ -2,104 +2,115 @@
 #include <Arduino_CAN.h>
 #include <Servo.h>
 
-constexpr uint32_t CAN_ID = 0x300;
-constexpr uint8_t SV0_PIN = 3;
-constexpr uint8_t SV1_PIN = 6;
-constexpr uint8_t SV2_PIN = 10;
-constexpr uint8_t SV3_PIN = 9;
+#include "domain/servo_can_protocol.hpp"
 
-Servo servo0;
-Servo servo1;
-Servo servo2;
-Servo servo3;
+namespace proto = domain::servo_can;
 
-void log_every_n(const uint32_t n, const String &str) {
-    static uint32_t counter = 0;
-    counter++;
-    if (counter % n == 0) {
-        Serial.println(str);
+namespace {
+constexpr uint32_t COMMAND_CAN_ID = 0x300;
+constexpr uint32_t STATUS_CAN_ID = 0x301;
+constexpr uint32_t WATCHDOG_MS = 250;
+constexpr uint8_t SERVO_PINS[proto::CHANNEL_COUNT] = {3, 6, 10, 9};
+
+enum class Status : uint8_t { Ok = 0, BadCommand = 1, Timeout = 2 };
+
+Servo servos[proto::CHANNEL_COUNT];
+bool enabled[proto::CHANNEL_COUNT] = {};
+uint16_t target_us[proto::CHANNEL_COUNT] = {1500, 1500, 1500, 1500};
+uint32_t last_contact_ms = 0;
+bool timeout_reported = false;
+
+uint8_t enabledMask() {
+    uint8_t mask = 0;
+    for (uint8_t channel = 0; channel < proto::CHANNEL_COUNT; ++channel) {
+        if (enabled[channel]) mask |= static_cast<uint8_t>(1U << channel);
+    }
+    return mask;
+}
+
+void setEnabled(uint8_t channel, bool value) {
+    if (enabled[channel] == value) return;
+    enabled[channel] = value;
+    if (value) {
+        servos[channel].attach(SERVO_PINS[channel], proto::MIN_PULSE_US, proto::MAX_PULSE_US);
+        servos[channel].writeMicroseconds(target_us[channel]);
+    } else {
+        servos[channel].detach();
     }
 }
 
-bool read_can_data(uint64_t *out_command, uint64_t *out_value, uint64_t *out_omake) {
-    CanMsg const msg = CAN.read();
-    int id = msg.id; // IDを取得
-    int length = msg.data_length;
-    log_every_n(3, String(id) + ", " + String(length));
-
-    if (id != CAN_ID || length != 8) {
-        return false;
+void stopAll() {
+    for (uint8_t channel = 0; channel < proto::CHANNEL_COUNT; ++channel) {
+        setEnabled(channel, false);
     }
-
-    uint32_t command = msg.data[0];
-    uint32_t value = static_cast<uint32_t>(msg.data[1]) << 24 | static_cast<uint32_t>(msg.data[2]) << 16 |
-                     static_cast<uint32_t>(msg.data[3]) << 8 | static_cast<uint32_t>(msg.data[4]);
-    uint32_t omake = static_cast<uint32_t>(msg.data[5]) << 16 | static_cast<uint32_t>(msg.data[6]) << 8 |
-                     static_cast<uint32_t>(msg.data[7]);
-
-    *out_command = command;
-    *out_value = value;
-    *out_omake = omake;
-
-    return true;
 }
+
+void sendStatus(Status status, const proto::Command& command) {
+    const uint8_t channel = command.channel < proto::CHANNEL_COUNT ? command.channel : 0;
+    const uint16_t pulse = target_us[channel];
+    const uint8_t data[8] = {
+        proto::PROTOCOL_VERSION,
+        static_cast<uint8_t>(status),
+        static_cast<uint8_t>(command.kind),
+        channel,
+        enabledMask(),
+        static_cast<uint8_t>(pulse >> 8),
+        static_cast<uint8_t>(pulse & 0xFF),
+        0,
+    };
+    CAN.write(CanMsg(CanStandardId(STATUS_CAN_ID), sizeof(data), data));
+}
+
+void apply(const proto::Command& command) {
+    switch (command.kind) {
+        case proto::CommandKind::Stop:
+            stopAll();
+            break;
+        case proto::CommandKind::Set:
+            target_us[command.channel] = command.pulse_us;
+            if (enabled[command.channel]) {
+                servos[command.channel].writeMicroseconds(command.pulse_us);
+            }
+            break;
+        case proto::CommandKind::Enable:
+            setEnabled(command.channel, command.enabled);
+            break;
+        case proto::CommandKind::Heartbeat:
+            break;
+        case proto::CommandKind::Invalid:
+            return;
+    }
+    sendStatus(Status::Ok, command);
+}
+}  // namespace
 
 void setup() {
     Serial.begin(115200);
-
-    servo0.attach(SV0_PIN);
-    servo1.attach(SV1_PIN);
-    servo2.attach(SV2_PIN);
-    servo3.attach(SV3_PIN);
-
-    // サーボに角度を送信
-    servo0.write(0);
-    servo1.write(0);
-    servo2.write(0);
-    servo3.write(0);
-
-    // CANの初期設定（周波数は1MHz）
+    stopAll();
     CAN.begin(CanBitRate::BR_1000k);
+    last_contact_ms = millis();
 }
 
 void loop() {
-    static uint64_t command = 0;
-    static uint64_t value = 0;
-    static uint64_t omake = 0;
+    while (CAN.available()) {
+        const CanMsg message = CAN.read();
+        if (message.id != COMMAND_CAN_ID) continue;
 
-    // CAN受信かつid一致で受信データ読み出し
-    if (CAN.available()) {
-        // CANメッセージを読み取る
-        if (read_can_data(&command, &value, &omake)) {
-            // CANで受信した値を0～270度に変換
-            uint32_t angle = value * 270 / std::numeric_limits<uint32_t>::max();
-            log_every_n(1, "Angle: " + String(angle));
-
-            // 0～270度をサーボのマイクロ秒に変換
-            const uint32_t scaled_angle =
-                static_cast<uint32_t>(static_cast<float>(angle) * 180 / 270.0f); // 0～180度にスケーリング
-
-            // サーボに角度を送信
-            servo0.write(scaled_angle);
-            servo1.write(scaled_angle);
-            servo2.write(scaled_angle);
-            servo3.write(scaled_angle);
-        } else {
-            log_every_n(10, "Invalid CAN message received");
+        proto::Command command;
+        if (!proto::parse(message.data, message.data_length, command)) {
+            sendStatus(Status::BadCommand, command);
+            continue;
         }
+
+        last_contact_ms = millis();
+        timeout_reported = false;
+        apply(command);
     }
 
-    // if (Serial.available()) {
-    //     angle = Serial.parseInt();
-    //     servo0.write(angle);
-    //     servo1.write(angle);
-    //     servo2.write(angle);
-    //     servo3.write(angle);
-
-    //     while (Serial.available()) {
-    //         Serial.read();
-    //     }
-    // }
-
-    delay(10);
+    if (!timeout_reported && millis() - last_contact_ms > WATCHDOG_MS) {
+        stopAll();
+        proto::Command timeout;
+        sendStatus(Status::Timeout, timeout);
+        timeout_reported = true;
+    }
 }
