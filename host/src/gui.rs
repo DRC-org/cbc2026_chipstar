@@ -23,15 +23,20 @@ enum Screen {
     Operation,
     Help,
     Test,
+    Wiring,
 }
 
-const SCREENS: [(Screen, &str); 5] = [
+const SCREENS: [(Screen, &str); 6] = [
     (Screen::Status, "1 ステータス"),
     (Screen::Config, "2 設定"),
     (Screen::Operation, "3 操作"),
     (Screen::Help, "4 ヘルプ"),
     (Screen::Test, "5 動作テスト"),
+    (Screen::Wiring, "6 配線"),
 ];
+
+/// 配線ガイドは docs/wiring.md を唯一の出典として埋め込む。
+const WIRING_GUIDE: &str = include_str!("../../docs/wiring.md");
 
 /// 操作画面で選べる項目。
 #[derive(Clone, Copy)]
@@ -572,7 +577,7 @@ impl BridgeApp {
             ("gg / G", "選択を先頭 / 末尾へ"),
             ("Enter", "選択中の項目を実行"),
             ("gt / gT", "次 / 前の画面へ"),
-            ("1 - 5", "画面を直接選ぶ"),
+            ("1 - 6", "画面を直接選ぶ"),
             ("i", "設定画面で編集を始める"),
             ("Esc", "編集・コマンドラインを抜ける"),
             (
@@ -685,6 +690,7 @@ impl eframe::App for BridgeApp {
                 Screen::Operation => self.operation_ui(ui),
                 Screen::Help => self.help_ui(ui),
                 Screen::Test => self.test_panel.ui(ui, &self.shared),
+                Screen::Wiring => wiring_ui(ui),
             });
         });
     }
@@ -731,6 +737,58 @@ fn take_keys(ctx: &egui::Context) -> Vec<Key> {
 
         keys
     })
+}
+
+/// 配線ガイド。docs/wiring.md を見出し・表・図に分けて描くだけの簡易表示。
+fn wiring_ui(ui: &mut egui::Ui) {
+    ui.heading("配線ガイド");
+    ui.label("出典は docs/wiring.md。回路図から起こした想定配線です。");
+    ui.separator();
+
+    let mut in_block = false;
+    for raw in WIRING_GUIDE.lines() {
+        if raw.starts_with("```") {
+            in_block = !in_block;
+            continue;
+        }
+        if in_block {
+            ui.monospace(raw);
+            continue;
+        }
+        let line = plain_text(raw);
+        if raw.starts_with('|') {
+            ui.monospace(line);
+        } else if let Some(text) = line.strip_prefix("### ") {
+            ui.add_space(6.0);
+            ui.label(egui::RichText::new(text).strong());
+        } else if let Some(text) = line.strip_prefix("## ") {
+            ui.add_space(10.0);
+            ui.heading(text);
+            ui.separator();
+        } else if line.starts_with("# ") {
+            // 文書題名は画面見出しと重複するので出さない。
+        } else if line.trim().is_empty() {
+            ui.add_space(4.0);
+        } else {
+            ui.label(line);
+        }
+    }
+}
+
+/// 強調とリンク記法を落として読み文にする。
+fn plain_text(line: &str) -> String {
+    let mut out = line.replace("**", "");
+    while let Some(open) = out.find('[') {
+        let Some(close) = out[open..].find("](") else {
+            break;
+        };
+        let Some(end) = out[open + close..].find(')') else {
+            break;
+        };
+        let label = out[open + 1..open + close].to_owned();
+        out.replace_range(open..open + close + end + 1, &label);
+    }
+    out
 }
 
 fn mode_color(mode: RunMode) -> egui::Color32 {
@@ -808,4 +866,27 @@ pub fn install_japanese_font(ctx: &egui::Context) {
         .or_default()
         .insert(0, "source_han_code_jp".to_owned());
     ctx.set_fonts(fonts);
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn wiring_guide_is_embedded_and_covers_every_board() {
+        for board in ["cctl", "serial_svmd", "DCMD", "svmd"] {
+            assert!(WIRING_GUIDE.contains(board), "{board} が配線ガイドにない");
+        }
+        assert!(WIRING_GUIDE.contains("FDCAN2"));
+    }
+
+    #[test]
+    fn strips_markdown_emphasis_and_links() {
+        assert_eq!(plain_text("**J12**（USB CDC）"), "J12（USB CDC）");
+        assert_eq!(
+            plain_text("詳細は [board_dcmd.md](board_dcmd.md) を参照"),
+            "詳細は board_dcmd.md を参照"
+        );
+        assert_eq!(plain_text("素の行"), "素の行");
+    }
 }
