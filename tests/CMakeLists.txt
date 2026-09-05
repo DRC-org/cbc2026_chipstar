@@ -29,7 +29,9 @@ endfunction()
 
 add_firmware_tests(serial_svmd_tests ${REPO_ROOT}/serial_svmd/src
     serial_svmd/sts3215_protocol_test.cpp
+    serial_svmd/servo_command_test.cpp
     ${REPO_ROOT}/serial_svmd/src/domain/sts3215_protocol.cpp
+    ${REPO_ROOT}/serial_svmd/src/domain/servo_command.cpp
 )
 
 add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
