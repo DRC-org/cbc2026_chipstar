@@ -15,6 +15,7 @@ cargo run --bin host
 2. 基板、接続先、baud、自動OFF時間を指定し、「テスト接続を開始」を押す。
 3. 「接続確認済み」になったら、出力目標を設定して各行のONを切り替える。
 4. 状態読取り・ENC1読取り・位置読取り・通信確認を必要に応じてONにし、受信ログを確認する。
+   「スイッチ・DIP読取り」をONにすると接点状態を表示し、停止入力の割当を設定できる。
 5. 「全出力STOP」で停止、「停止してテスト終了」でポートを通常操作へ戻す。
 
 目標変更後は「適用」で値と自動OFF期限を更新する。serial_svmdは「ID行を追加」で
@@ -71,6 +72,7 @@ serial_svmdはSTOP/SAFE時に有効設定と保持目標を解除するFWを使�
 | DCMD | `motor0` | `on motor0 50` | PWM0/J10。±100 permille（±10%）以内 |
 | DCMD | `encoder` | `on encoder` | ENC1/J6の符号付きカウント・X信号の累積回数 |
 | DCMD | `status` | `on status` | CAN返信、モード、有効状態、実際に適用されたduty |
+| 全基板 | `inputs` | `on inputs` | 接点の生値・10ms安定値、DIP、設定中の停止条件 |
 | 全基板 | `communication` | `on communication` | 能力照会/応答またはCANの定期疎通と受信行の表示 |
 
 `off motor0`、`off encoder` などで個別にOFFにする。
@@ -89,6 +91,24 @@ Ctrl+C・プロセス強制終了・通信切断時はFWの250ms Watchdogに依�
 
 `off communication` は疎通テストと全受信ログ表示だけをOFFにする。
 出力維持に必要な通信や有効な読取りは継続する。物理通信の遮断ではない。
+
+## 接点入力の確認
+
+`on inputs` で接点とDIPの状態を周期表示する。接点はGNDへ閉じたときを1とし、
+`raw` は生値、`stable` は10msの安定値。svmdは外部接点を持たずDIPだけを返す。
+どの接点がどのコネクタかは [cctl](board_cctl.md)、
+[serial_svmd](board_serial_svmd.md)、[DCMD](board_dcmd.md) を参照。
+
+まず出力OFFのまま接点を手で開閉し、`raw` の該当bitが追従することと、機構側の
+リミットが意図した向きで成立することを確認する。そのうえで停止条件を設定する。
+
+`guard <mask> <high>` は対象基板の全出力を停止してから停止条件を設定する。
+`mask` は監視する接点bit、`high` はそのうち開接点を停止条件とするbit。B接点で
+断線も検出したい配線では `high` に含める。`guard 0 0` は監視をやめ、成立の
+ラッチも解除する。GUIでは接点ごとのチェックボックスで同じ指定を行う。
+
+成立するとFWはSTOPへ遷移し、hostも出力設定を解除する。復帰には原因を取り除いてから
+`guard` を再送する。接点が戻っただけでは出力を再開できない。設定は電源再投入で消える。
 
 ## 配線確認例：DCMD
 

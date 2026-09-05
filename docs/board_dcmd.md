@@ -13,6 +13,11 @@
 | CAN | PA11 / PA12 | RX / TX、MCP2562 |
 | ENC0 A/B/X | PA0 / PA1 / PB6 | 現在のFWでは未使用 |
 | ENC1 A/B/X | PA4 / PA6 / PB7 | TIM3 CH2 / CH1、EXTI7、J6 |
+| SW_A / SW_B / SW_C | PB3 / PB4 / PB5 | 接点入力、J12 / J4 / J3。pin 1が信号、pin 2がGND |
+| DIP1 / DIP2 | PA7 / PA5 | 基板上のSW6（2回路DIP）、ONでGNDへ閉じる |
+
+接点入力とDIPは内蔵プルアップで受け、閉じたときLOWになる。外部プルはないため、
+コネクタを開放したままでも読み値は安定する。
 
 HSI 8MHz、CAN 1Mbps（1+5+2 TQ）、PWM 20kHz（PSC=0、ARR=399）。
 TLP2348で信号が反転するためPWMはアクティブLow。Dutyゼロは両出力Highとなり、
@@ -42,9 +47,9 @@ cctl FDCAN2に接続する。指令は標準ID `0x310`（784）、状態は`0x31
 | byte | 内容 |
 |---|---|
 | 0 | version=1 |
-| 1 | 0=HELLO、1=SAFE、2=RUN、3=STOP、4=TARGET、5=HEARTBEAT |
-| 2 | TARGETはchannel 0、RUNは有効mask 1、それ以外は0 |
-| 3 | 0 |
+| 1 | 0=HELLO、1=SAFE、2=RUN、3=STOP、4=TARGET、5=HEARTBEAT、6=INPUT READ、7=INPUT GUARD |
+| 2 | TARGETはchannel 0、RUNは有効mask 1、INPUT GUARDは監視mask、それ以外は0 |
+| 3 | INPUT GUARDは開接点で停止するbit、それ以外は0 |
 | 4..5 | TARGETの符号付き16bit Duty [permille]、big endian。それ以外は0 |
 | 6..7 | 0 |
 
@@ -56,6 +61,11 @@ countは起動時ゼロの符号付き32bit累積値、indexはX相立ち上が�
 どちらも周回する。各値はbig endian。ENC通知と状態通知は50msずらして送信する。
 cctlの`CAN_RX`通知はUSB混雑時に欠落し得るため、
 通知一件だけを到達保証として扱わない。
+
+`INPUT READ`と`INPUT GUARD`の応答は標準ID `0x313`（787）で返し、`0x311`の状態通知は
+伴わない。接点の意味とラッチの解除条件は
+[device_protocol.md](device_protocol.md)の接点入力に従う。SW_A〜SW_Cを停止条件に
+設定すると、成立時にランプを待たずDutyをゼロにしてSTOPへ遷移する。
 
 ## ビルドとhost
 

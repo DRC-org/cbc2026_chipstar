@@ -12,6 +12,8 @@ host と各基板の間で使う、改行区切りASCIIプロトコル。1行は
 | `RUN` | 構成済みで有効な出力を開始する |
 | `STOP` | 即時停止して出力を切る |
 | `HEARTBEAT` | Watchdogを更新する |
+| `INPUT READ` | 接点入力とDIPの状態を返す |
+| `INPUT GUARD <mask> <high>` | 停止条件とする接点と極性を設定する |
 
 応答の先頭語は、能力通知が `DEVICE`、状態通知が `STATE`、正常応答が `OK`、拒否が
 `ERR` である。未知のフィールドを受信側が読み飛ばせるよう、応答の値は
@@ -22,6 +24,50 @@ DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250
 ERR code=BAD_COMMAND
 ERR code=OUT_OF_RANGE
 ```
+
+## 接点入力
+
+各基板は接点入力とDIPスイッチを読み取り、指定した接点を出力の停止条件にできる。
+接点は内蔵プルアップで受け、GNDへ閉じたときを1とする。どの接点をどの機構の
+リミットとして使うかはhost側の機体構成であり、FWは番号のまま扱う。
+
+| 基板 | 接点 | `available` | DIP |
+|---|---|---|---|
+| cctl | SW1〜SW3 | 7 | DIP1〜4 |
+| serial_svmd | SW1〜SW6 | 63 | DIP1〜4 |
+| DCMD | SW_A〜SW_C | 7 | DIP1〜2 |
+| svmd | なし | 0 | A0〜A3 |
+
+`mask` は停止条件として監視する接点のbit、`high` はそのうち開接点を停止条件とする
+bitである。B接点（NC）で断線も検出したい配線では `high` に含める。`mask` に
+含まれない接点は監視だけで、状態には現れるが出力を止めない。`available` にない
+bitや、`mask` の外を指す `high` は `ERR code=OUT_OF_RANGE` で拒否する。
+
+停止条件が成立するとFWはSTOPへ遷移して出力を切り、成立をラッチする。ラッチは
+接点が復帰しただけでは解除されず、`INPUT GUARD` を再送するまで残る。ラッチ中の
+`RUN` は `ERR code=INPUT_ACTIVE`、RUN中の `INPUT GUARD` は `ERR code=BUSY` になる。
+判定にはデバウンス前の生値を使い、10msの安定値は表示だけに用いる。設定はRAMだけに
+保持し、電源再投入で監視なしへ戻る。
+
+cctlとserial_svmdは `INPUT READ`・`INPUT GUARD` の応答を1行で返す。
+
+```text
+INPUT_STATE raw=3 stable=1 dip=5 guard=1 high=0 trip=1 available=7
+```
+
+DCMDとsvmdは同じ内容を8 byteのCANフレームで返す。IDはDCMDが `0x313`（787）、
+svmdが `0x302`（770）。
+
+| byte | 内容 |
+|---|---|
+| 0 | protocol version (`1`) |
+| 1 | raw（生値） |
+| 2 | stable（10ms安定値） |
+| 3 | dip |
+| 4 | guard（監視mask） |
+| 5 | high（開接点で停止するbit） |
+| 6 | trip（`0|1`、ラッチ状態） |
+| 7 | available |
 
 ## cctl
 
@@ -82,7 +128,7 @@ CAN標準ID `0x300` を指令、`0x301` を状態通知に使用する。8 byte�
 | byte | 内容 |
 |---|---|
 | 0 | protocol version (`1`) |
-| 1 | command (`0=STOP`, `1=SET`, `2=ENABLE`, `3=HEARTBEAT`) |
+| 1 | command (`0=STOP`, `1=SET`, `2=ENABLE`, `3=HEARTBEAT`, `4=INPUT READ`) |
 | 2 | channel (`0..3`) |
 | 3 | flags / enable (`0|1`) |
 | 4..5 | pulse width [us]、big endian |
@@ -90,6 +136,9 @@ CAN標準ID `0x300` を指令、`0x301` を状態通知に使用する。8 byte�
 
 SETで許容するパルス幅は安全上限内に限定する。Watchdogを超過した場合は全チャネルを
 detachして状態通知にtimeoutを設定する。
+
+`INPUT READ` はbyte 2..5を0にする。svmdに外部接点入力はなく、応答はDIPだけを載せた
+`0x302` のフレームで、`0x301` の状態通知は返さない。停止条件は設定できない。
 
 状態通知はCAN標準ID `0x301`、8 byteで返す。
 
