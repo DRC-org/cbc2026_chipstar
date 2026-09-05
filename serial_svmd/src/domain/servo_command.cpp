@@ -78,15 +78,6 @@ ServoCommand parseServoCommand(const char* line, std::size_t length) {
         command.kind = ServoCommandKind::InputRead;
         return command;
     }
-    if (count == 4 && equal(tokens[0], "INPUT") && equal(tokens[1], "GUARD")) {
-        uint32_t high = 0;
-        if (number(tokens[2], 63, value) && number(tokens[3], 63, high) && !(high & ~value)) {
-            command.kind = ServoCommandKind::InputGuard;
-            command.input_mask = static_cast<uint8_t>(value);
-            command.input_high = static_cast<uint8_t>(high);
-        }
-        return command;
-    }
     if (count == 2 && equal(tokens[0], "HELLO") && number(tokens[1], 255, value) && value > 0) {
         command.kind = ServoCommandKind::Hello;
         command.protocol_version = static_cast<uint8_t>(value);

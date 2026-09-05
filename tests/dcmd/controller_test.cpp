@@ -3,36 +3,34 @@
 #include "domain/encoder.hpp"
 using namespace dcmd;
 
-TEST_CASE("DCMD input guard stops output and blocks RUN until explicit reconfiguration") {
+TEST_CASE("接点は報告するだけで出力に作用しない") {
   Controller c;
   c.updateInputs(0, 0, 0);
-  CHECK(c.apply({Op::InputGuard, 1, 0, 0}, 0));
   CHECK(c.apply({Op::Hello}, 0));
   CHECK(c.apply({Op::Target, 0, 100}, 0));
-  CHECK(c.apply({Op::Run, 1, 0}, 0));
-  CHECK_FALSE(c.apply({Op::InputGuard, 0, 0, 0}, 0));
+  CHECK(c.apply({Op::Run, 1}, 0));
   c.tick(10);
   CHECK(c.output(0) == 1);
   c.updateInputs(1, 2, 11);
-  CHECK(c.output(0) == 0);
-  CHECK(c.mode() == Mode::Stop);
-  CHECK(c.inputs().tripped());
-  c.updateInputs(0, 2, 12);
-  CHECK(c.apply({Op::Target, 0, 100}, 12));
-  CHECK_FALSE(c.apply({Op::Run, 1, 0}, 12));
-  CHECK(c.apply({Op::InputGuard, 1, 0, 0}, 12));
-  CHECK(c.apply({Op::Run, 1, 0}, 12));
-  uint8_t data[8] = {1, 7, 3, 2, 0, 0, 0, 0};
-  Command command;
-  CHECK(parse(data, 8, command));
-  CHECK(command.input_high == 2);
-  data[3] = 4;
-  CHECK_FALSE(parse(data, 8, command));
-  data[1] = 6; data[2] = 0; data[3] = 0;
-  CHECK(parse(data, 8, command));
+  CHECK(c.output(0) == 1);
+  CHECK(c.mode() == Mode::Run);
+  CHECK(c.inputs().raw() == 1);
+  CHECK(c.inputs().dip() == 2);
 }
 
-TEST_CASE("DCMD validates wire bounds and reserved bytes") {
+TEST_CASE("INPUT READ はchannelとdutyを0に要求する") {
+  Command command;
+  uint8_t data[8] = {1, 6, 0, 0, 0, 0, 0, 0};
+  CHECK(parse(data, 8, command));
+  CHECK(command.op == Op::InputRead);
+  data[2] = 1;
+  CHECK_FALSE(parse(data, 8, command));
+  data[2] = 0;
+  data[1] = 7;
+  CHECK_FALSE(parse(data, 8, command));
+}
+
+TEST_CASE("指令の範囲と予約byteを検証する") {
   Command cmd;
   uint8_t data[8] = {1, 4, 0, 0, 0xFC, 0x7C, 0, 0};
   CHECK(parse(data, 8, cmd));
@@ -48,7 +46,7 @@ TEST_CASE("DCMD validates wire bounds and reserved bytes") {
   CHECK_FALSE(parse(data, 8, cmd));
 }
 
-TEST_CASE("Encoder extends forward and reverse timer wraps") {
+TEST_CASE("エンコーダは正逆どちらの周回も積算する") {
   Encoder encoder;
   encoder.sample(65535);
   CHECK(encoder.count() == UINT32_MAX);
@@ -62,7 +60,7 @@ TEST_CASE("Encoder extends forward and reverse timer wraps") {
   CHECK(encoder.count() == 60000);
 }
 
-TEST_CASE("DCMD requires handshake and targets and latches timeout") {
+TEST_CASE("HELLOと目標設定を要求しtimeoutをラッチする") {
   Controller c;
   CHECK(c.mode() == Mode::Safe);
   CHECK_FALSE(c.apply({Op::Run, 1, 0}, 0));
@@ -84,7 +82,7 @@ TEST_CASE("DCMD requires handshake and targets and latches timeout") {
   CHECK(c.output(0) == 0);
 }
 
-TEST_CASE("DCMD reverses only after ramp to zero and two seconds braking") {
+TEST_CASE("方向反転はゼロまで減速し2秒制動してから行う") {
   Controller c;
   c.apply({Op::Hello}, 0);
   c.apply({Op::Target, 0, 2}, 0);

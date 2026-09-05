@@ -64,7 +64,8 @@ std::size_t formatTelemetry(const Telemetry& telemetry, char* out, std::size_t c
              appendFixed3(out, capacity, length, telemetry.targets[slot]) && text("/") &&
              appendFixed3(out, capacity, length, telemetry.measured[slot]);
     }
-    ok = ok && append(" err=%02X", static_cast<unsigned>(telemetry.error_bits));
+    ok = ok && append(" err=%02X sw=%u", static_cast<unsigned>(telemetry.error_bits),
+                      static_cast<unsigned>(telemetry.contacts));
     return ok ? length : 0;
 }
 

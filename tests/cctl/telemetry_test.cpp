@@ -33,6 +33,7 @@ Telemetry sample() {
     telemetry.enabled_slots = domain::slot_bit::ALL;
     telemetry.mode = RunMode::Run;
     telemetry.error_bits = 0x0A;
+    telemetry.contacts = 5;
     return telemetry;
 }
 }  // namespace
@@ -48,10 +49,10 @@ TEST_CASE("有限でない値をnanと書く") {
     CHECK(fixed3(std::numeric_limits<float>::infinity()) == "nan");
 }
 
-TEST_CASE("slot単位の状態を出力する") {
+TEST_CASE("slot単位の状態と接点を出力する") {
     CHECK(line(sample()) ==
           "STATE t=12345 mode=RUN en=7 a0=1.200/1.100 a1=-45.000/-44.200 "
-          "a2=0.500/0.400 err=0A");
+          "a2=0.500/0.400 err=0A sw=5");
 }
 
 TEST_CASE("容量不足では出力しない") {
@@ -69,5 +70,6 @@ TEST_CASE("最大構成が規定容量に収まる") {
     telemetry.enabled_slots = domain::slot_bit::ALL;
     telemetry.mode = RunMode::Stop;
     telemetry.error_bits = 0xFF;
+    telemetry.contacts = 7;
     CHECK(!line(telemetry).empty());
 }

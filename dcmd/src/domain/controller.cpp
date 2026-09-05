@@ -2,17 +2,13 @@
 
 namespace dcmd {
 bool parse(const uint8_t* data, std::size_t size, Command& out) {
-  if (!data || size != 8 || data[0] != 1 || data[1] > 7 || data[6] || data[7]) return false;
+  if (!data || size != 8 || data[0] != 1 || data[1] > 6 || data[3] || data[6] || data[7]) return false;
   Command cmd;
   cmd.op = static_cast<Op>(data[1]);
   cmd.channel = data[2];
-  cmd.input_high = data[3];
   const int32_t raw = (static_cast<uint16_t>(data[4]) << 8) | data[5];
   cmd.duty = static_cast<int16_t>(raw >= 32768 ? raw - 65536 : raw);
-  if (cmd.op == Op::InputGuard) {
-    if (cmd.duty || cmd.channel > 7 || (cmd.input_high & ~cmd.channel)) return false;
-  } else if (cmd.input_high) return false;
-  else if (cmd.op == Op::Target) {
+  if (cmd.op == Op::Target) {
     if (cmd.channel != 0 || cmd.duty < -MAX_DUTY || cmd.duty > MAX_DUTY) return false;
   } else if (cmd.duty || (cmd.op == Op::Run ? cmd.channel != 1 : cmd.channel != 0)) {
     return false;
@@ -35,7 +31,7 @@ bool Controller::apply(const Command& cmd, uint32_t now) {
     case Op::Safe: stop(Mode::Safe, now); return true;
     case Op::Stop: stop(Mode::Stop, now); return true;
     case Op::Run:
-      if (inputs_.tripped() || !ready_ || cmd.channel != 1 ||
+      if (!ready_ || cmd.channel != 1 ||
           (configured_ & cmd.channel) != cmd.channel) return false;
       enabled_ = cmd.channel;
       mode_ = Mode::Run;
@@ -51,8 +47,6 @@ bool Controller::apply(const Command& cmd, uint32_t now) {
       return true;
     case Op::Heartbeat: contact_ = now; return true;
     case Op::InputRead: return true;
-    case Op::InputGuard:
-      return mode_ != Mode::Run && inputs_.configure(cmd.channel, cmd.input_high);
   }
   return false;
 }

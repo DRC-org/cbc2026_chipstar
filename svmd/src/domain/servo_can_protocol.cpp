@@ -15,7 +15,7 @@ bool parse(const uint8_t* data, std::size_t length, Command& command) {
     }
 
     const auto kind = static_cast<CommandKind>(data[1]);
-    if (kind == CommandKind::Stop || kind == CommandKind::Heartbeat || kind == CommandKind::InputRead) {
+    if (kind == CommandKind::Stop || kind == CommandKind::Heartbeat) {
         if (data[2] != 0 || data[3] != 0 || data[4] != 0 || data[5] != 0) return false;
         command.kind = kind;
         return true;

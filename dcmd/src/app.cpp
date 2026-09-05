@@ -51,7 +51,7 @@ void encoderStatus() {
   uint8_t data[8] = {1, 1, static_cast<uint8_t>(count >> 24),
     static_cast<uint8_t>(count >> 16), static_cast<uint8_t>(count >> 8),
     static_cast<uint8_t>(count), static_cast<uint8_t>(index >> 8), static_cast<uint8_t>(index)};
-  send(0x312, data);
+  send(dcmd::ENCODER_ID, data);
 }
 }
 
@@ -96,12 +96,13 @@ extern "C" void loop(void) {
     uint8_t data[8] = {};
     if (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &header, data) != HAL_OK) break;
     dcmd::Command cmd;
-    sampleInputs();
     const bool accepted = header.IDE == CAN_ID_STD && header.RTR == CAN_RTR_DATA &&
         header.StdId == dcmd::COMMAND_ID && dcmd::parse(data, header.DLC, cmd) &&
         controller.apply(cmd, HAL_GetTick());
-    if (accepted && (cmd.op == dcmd::Op::InputRead || cmd.op == dcmd::Op::InputGuard)) {
-      uint8_t report[8]; controller.inputs().encode(report); send(0x313, report);
+    if (accepted && cmd.op == dcmd::Op::InputRead) {
+      const domain::DigitalInputs& in = controller.inputs();
+      uint8_t report[8] = {1, in.raw(), in.stable(), in.dip(), in.available(), 0, 0, 0};
+      send(dcmd::INPUT_ID, report);
     } else status(accepted ? 0 : 1);
   }
   output(&htim2, controller.output(0));

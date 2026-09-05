@@ -3,7 +3,6 @@
 #include <Servo.h>
 
 #include "domain/servo_can_protocol.hpp"
-#include "domain/digital_inputs.hpp"
 
 namespace proto = domain::servo_can;
 
@@ -20,8 +19,6 @@ bool enabled[proto::CHANNEL_COUNT] = {};
 uint16_t target_us[proto::CHANNEL_COUNT] = {1500, 1500, 1500, 1500};
 uint32_t last_contact_ms = 0;
 bool timeout_reported = false;
-domain::DigitalInputs inputs(0);  // 外部SW入力なし。A0..A3は基板ID用DIP。
-const uint8_t DIP_PINS[] = {A0, A1, A2, A3};
 
 uint8_t enabledMask() {
     uint8_t mask = 0;
@@ -80,11 +77,6 @@ void apply(const proto::Command& command) {
             break;
         case proto::CommandKind::Heartbeat:
             break;
-        case proto::CommandKind::InputRead: {
-            uint8_t data[8]; inputs.encode(data);
-            CAN.write(CanMsg(CanStandardId(0x302), sizeof(data), data));
-            return;
-        }
         case proto::CommandKind::Invalid:
             return;
     }
@@ -93,7 +85,6 @@ void apply(const proto::Command& command) {
 }  // namespace
 
 void setup() {
-    for (auto pin : DIP_PINS) pinMode(pin, INPUT_PULLUP);
     Serial.begin(115200);
     stopAll();
     CAN.begin(CanBitRate::BR_1000k);
@@ -101,9 +92,6 @@ void setup() {
 }
 
 void loop() {
-    uint8_t dip = 0;
-    for (uint8_t i = 0; i < 4; ++i) if (digitalRead(DIP_PINS[i]) == LOW) dip |= 1U << i;
-    inputs.sample(0, dip, millis());
     while (CAN.available()) {
         const CanMsg message = CAN.read();
         if (message.id != COMMAND_CAN_ID) continue;

@@ -15,7 +15,6 @@ enum class CommandKind : uint8_t {
     Set = 1,
     Enable = 2,
     Heartbeat = 3,
-    InputRead = 4,
     Invalid = 0xFF,
 };
 

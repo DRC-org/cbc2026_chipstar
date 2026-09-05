@@ -20,7 +20,7 @@ enable_testing()
 # インクルードパスを 1 つのファームの src に限定することで、
 # HAL や他プロジェクトのヘッダに依存していないことがビルド時に保証される。
 function(add_firmware_tests name src_dir)
-    add_executable(${name} doctest_main.cpp digital_inputs_test.cpp ${ARGN})
+    add_executable(${name} doctest_main.cpp ${ARGN})
     target_link_libraries(${name} PRIVATE doctest)
     target_include_directories(${name} PRIVATE ${src_dir})
     target_compile_options(${name} PRIVATE -Wall -Wextra)
@@ -28,11 +28,13 @@ function(add_firmware_tests name src_dir)
 endfunction()
 
 add_firmware_tests(dcmd_tests ${REPO_ROOT}/dcmd/src
+    digital_inputs_test.cpp
     dcmd/controller_test.cpp
     ${REPO_ROOT}/dcmd/src/domain/controller.cpp
 )
 
 add_firmware_tests(serial_svmd_tests ${REPO_ROOT}/serial_svmd/src
+    digital_inputs_test.cpp
     serial_svmd/sts3215_protocol_test.cpp
     serial_svmd/servo_command_test.cpp
     ${REPO_ROOT}/serial_svmd/src/domain/sts3215_protocol.cpp
@@ -45,6 +47,7 @@ add_firmware_tests(svmd_tests ${REPO_ROOT}/svmd/src
 )
 
 add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
+    digital_inputs_test.cpp
     cctl/device_config_test.cpp
     cctl/c620_codec_test.cpp
     cctl/line_reader_test.cpp

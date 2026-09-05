@@ -88,22 +88,3 @@ TEST_CASE("範囲外または余分な引数を拒否する") {
     CHECK(parse("TARGET 0 1 extra").kind == CommandKind::None);
 }
 
-TEST_CASE("接点入力の読取りと停止条件を解釈する") {
-    CHECK(parse("INPUT READ").kind == CommandKind::InputRead);
-
-    const Command command = parse("INPUT GUARD 5 4");
-    CHECK(command.kind == CommandKind::InputGuard);
-    CHECK(command.mask == 5);
-    CHECK(command.input_high == 4);
-
-    const Command cleared = parse("INPUT GUARD 0 0");
-    CHECK(cleared.kind == CommandKind::InputGuard);
-    CHECK(cleared.mask == 0);
-}
-
-TEST_CASE("未実装の接点と監視外の極性指定を拒否する") {
-    CHECK(parse("INPUT GUARD 8 0").kind == CommandKind::None);
-    CHECK(parse("INPUT GUARD 1 2").kind == CommandKind::None);
-    CHECK(parse("INPUT GUARD 1").kind == CommandKind::None);
-    CHECK(parse("INPUT READ 1").kind == CommandKind::None);
-}

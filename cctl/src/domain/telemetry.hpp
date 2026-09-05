@@ -14,6 +14,7 @@ struct Telemetry {
     uint8_t enabled_slots = 0;
     RunMode mode = RunMode::Safe;
     uint8_t error_bits = 0;
+    uint8_t contacts = 0;  // SW1..SW3の10ms安定値。閉で1。
 };
 
 constexpr std::size_t TELEMETRY_LINE_CAPACITY = 144;

@@ -2,16 +2,19 @@
 #include <cstdint>
 
 namespace domain {
-// raw/stableは接点がGNDへ閉じたとき1。停止判定は生値、表示は10ms安定値を使う。
+// 接点はGNDへ閉じたとき1。10msのデバウンスまでを基板が受け持ち、
+// どの接点をリミットとして扱うかはhostが決める。
 class DigitalInputs {
  public:
   explicit DigitalInputs(uint8_t available) : available_(available) {}
+
   void sample(uint8_t closed, uint8_t dip, uint32_t now) {
     closed &= available_;
     dip_ = dip;
     if (!initialized_) {
       initialized_ = true;
       candidate_ = closed;
+      stable_ = closed;
       for (uint8_t bit = 0; bit < 8; ++bit) changed_[bit] = now;
     }
     raw_ = closed;
@@ -21,29 +24,21 @@ class DigitalInputs {
         candidate_ ^= mask;
         changed_[bit] = now;
       }
-      if (now - changed_[bit] >= 10) {
+      if (now - changed_[bit] >= DEBOUNCE_MS) {
         stable_ = static_cast<uint8_t>((stable_ & ~mask) | (candidate_ & mask));
       }
     }
-    if (active()) tripped_ = true;
   }
-  bool configure(uint8_t mask, uint8_t high) {
-    if (!initialized_ || (mask & ~available_) || (high & ~mask)) return false;
-    guard_ = mask;
-    high_ = high;
-    tripped_ = active();
-    return true;
-  }
-  bool tripped() const { return tripped_; }
-  void encode(uint8_t* out) const {
-    out[0] = 1; out[1] = raw_; out[2] = stable_; out[3] = dip_;
-    out[4] = guard_; out[5] = high_; out[6] = tripped_ ? 1 : 0; out[7] = available_;
-  }
+
+  uint8_t raw() const { return raw_; }
+  uint8_t stable() const { return stable_; }
+  uint8_t dip() const { return dip_; }
+  uint8_t available() const { return available_; }
+
  private:
-  bool active() const { return ((raw_ ^ high_) & guard_) != 0; }
+  static constexpr uint32_t DEBOUNCE_MS = 10;
   uint8_t available_, raw_ = 0, stable_ = 0, candidate_ = 0, dip_ = 0;
-  uint8_t guard_ = 0, high_ = 0;
-  bool initialized_ = false, tripped_ = false;
+  bool initialized_ = false;
   uint32_t changed_[8] = {};
 };
 }  // namespace domain

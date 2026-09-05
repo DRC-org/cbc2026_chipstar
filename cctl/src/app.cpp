@@ -45,10 +45,6 @@ void sampleInputs() {
         (HAL_GPIO_ReadPin(DIP3_GPIO_Port, DIP3_Pin) == GPIO_PIN_RESET ? 4 : 0) |
         (HAL_GPIO_ReadPin(DIP4_GPIO_Port, DIP4_Pin) == GPIO_PIN_RESET ? 8 : 0);
     inputs.sample(raw, dip, HAL_GetTick());
-    if (inputs.tripped() && (controller.mode() == domain::RunMode::Run || controller.enabledSlots())) {
-        controller.setMode(domain::RunMode::Stop);
-        controller.setSlotsEnabled(7, false);
-    }
 }
 
 bool usbReady() {
@@ -67,16 +63,7 @@ void sendText(const char* text) {
     CDC_Transmit_FS(buffer, static_cast<uint16_t>(length + 1));
 }
 
-void sendInputs() {
-    uint8_t data[8]; inputs.encode(data);
-    char text[96];
-    std::snprintf(text, sizeof(text), "INPUT_STATE raw=%u stable=%u dip=%u guard=%u high=%u trip=%u available=%u",
-        data[1], data[2], data[3], data[4], data[5], data[6], data[7]);
-    sendText(text);
-}
-
 void applyCommand(const domain::Command& command) {
-    sampleInputs();
     switch (command.kind) {
         case domain::CommandKind::Hello:
             protocol_ready = command.protocol_version == 1;
@@ -87,8 +74,7 @@ void applyCommand(const domain::Command& command) {
             controller.setMode(domain::RunMode::Stop);
             break;
         case domain::CommandKind::Run:
-            if (inputs.tripped()) sendText("ERR code=INPUT_ACTIVE");
-            else if (protocol_ready) controller.setMode(domain::RunMode::Run);
+            if (protocol_ready) controller.setMode(domain::RunMode::Run);
             else sendText("ERR code=NOT_READY");
             break;
         case domain::CommandKind::Safe:
@@ -118,12 +104,6 @@ void applyCommand(const domain::Command& command) {
             }
             break;
         case domain::CommandKind::None:
-            break;
-        case domain::CommandKind::InputRead: sendInputs(); break;
-        case domain::CommandKind::InputGuard:
-            if (controller.mode() == domain::RunMode::Run) sendText("ERR code=BUSY");
-            else if (!inputs.configure(command.mask, command.input_high)) sendText("ERR code=OUT_OF_RANGE");
-            else sendInputs();
             break;
     }
 }
@@ -161,6 +141,7 @@ void sendTelemetry() {
     telemetry.enabled_slots = controller.enabledSlots();
     telemetry.mode = controller.mode();
     telemetry.error_bits = controller.errorBits();
+    telemetry.contacts = inputs.stable();
 
     const std::size_t length = domain::formatTelemetry(
         telemetry, reinterpret_cast<char*>(line), domain::TELEMETRY_LINE_CAPACITY);

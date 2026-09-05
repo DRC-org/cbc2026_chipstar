@@ -84,7 +84,6 @@ void setMode(Mode next) {
     mode = next;
     return;
   }
-  if (inputs.tripped()) { reply("ERR code=INPUT_ACTIVE"); return; }
   if (!protocol_ready) {
     reply("ERR code=NOT_READY");
     return;
@@ -108,8 +107,6 @@ void reportPosition(uint8_t id, uint16_t position, bool enabled) {
 }
 
 void apply(const domain::ServoCommand& command) {
-  sampleInputs();
-  if (inputs.tripped() && mode == Mode::Run) setMode(Mode::Stop);
   switch (command.kind) {
     case domain::ServoCommandKind::Hello:
       protocol_ready = command.protocol_version == config::PROTOCOL_VERSION;
@@ -166,15 +163,10 @@ void apply(const domain::ServoCommand& command) {
     }
     case domain::ServoCommandKind::None:
       break;
-    case domain::ServoCommandKind::InputGuard:
-      if (mode == Mode::Run) { reply("ERR code=BUSY"); break; }
-      if (!inputs.configure(command.input_mask, command.input_high)) { reply("ERR code=OUT_OF_RANGE"); break; }
-      [[fallthrough]];
     case domain::ServoCommandKind::InputRead: {
-      uint8_t data[8]; inputs.encode(data);
       char text[96];
-      std::snprintf(text, sizeof(text), "INPUT_STATE raw=%u stable=%u dip=%u guard=%u high=%u trip=%u available=%u",
-          data[1], data[2], data[3], data[4], data[5], data[6], data[7]);
+      std::snprintf(text, sizeof(text), "INPUT_STATE raw=%u stable=%u dip=%u available=%u",
+                    inputs.raw(), inputs.stable(), inputs.dip(), inputs.available());
       reply(text);
       break;
     }
@@ -211,7 +203,6 @@ extern "C" void setup(void) {
 
 extern "C" void loop(void) {
   sampleInputs();
-  if (inputs.tripped() && mode == Mode::Run) setMode(Mode::Stop);
   for (uint8_t count = 0; count < 64; ++count) {
     uint8_t byte = 0;
     if (HAL_UART_Receive(&huart2, &byte, 1, 0) != HAL_OK) break;
