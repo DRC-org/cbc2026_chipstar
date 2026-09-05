@@ -53,3 +53,7 @@ ctest --preset default
 
 新しいテストファイルは `tests/<プロジェクト名>/` に置き、
 `CMakeLists.txt` の `add_firmware_tests` の引数に追加する。
+
+`domain/digital_inputs.hpp` のように、全ファームが同じ内容の複製を持つヘッダの
+テストは `tests/` 直下に置く。`add_firmware_tests` が全実行ファイルへ加えるため、
+各ファームのコピーが同じ振る舞いをすることを、実装を共有せずに確認できる。

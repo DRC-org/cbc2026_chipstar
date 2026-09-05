@@ -43,3 +43,21 @@ TEST_CASE("範囲外と余分な引数を拒否する") {
     CHECK(parse("SERVO ENABLE 1 9").kind == domain::ServoCommandKind::None);
     CHECK(parse("STOP NOW").kind == domain::ServoCommandKind::None);
 }
+
+TEST_CASE("接点入力の読取りと停止条件を解釈する") {
+    CHECK(parse("INPUT READ").kind == domain::ServoCommandKind::InputRead);
+
+    const auto guard = parse("INPUT GUARD 63 32");
+    CHECK(guard.kind == domain::ServoCommandKind::InputGuard);
+    CHECK(guard.input_mask == 63);
+    CHECK(guard.input_high == 32);
+
+    CHECK(parse("INPUT GUARD 0 0").kind == domain::ServoCommandKind::InputGuard);
+}
+
+TEST_CASE("6接点を超えるmaskと監視外の極性指定を拒否する") {
+    CHECK(parse("INPUT GUARD 64 0").kind == domain::ServoCommandKind::None);
+    CHECK(parse("INPUT GUARD 1 2").kind == domain::ServoCommandKind::None);
+    CHECK(parse("INPUT GUARD 1").kind == domain::ServoCommandKind::None);
+    CHECK(parse("INPUT READ 1").kind == domain::ServoCommandKind::None);
+}

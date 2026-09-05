@@ -3,6 +3,35 @@
 #include "domain/encoder.hpp"
 using namespace dcmd;
 
+TEST_CASE("DCMD input guard stops output and blocks RUN until explicit reconfiguration") {
+  Controller c;
+  c.updateInputs(0, 0, 0);
+  CHECK(c.apply({Op::InputGuard, 1, 0, 0}, 0));
+  CHECK(c.apply({Op::Hello}, 0));
+  CHECK(c.apply({Op::Target, 0, 100}, 0));
+  CHECK(c.apply({Op::Run, 1, 0}, 0));
+  CHECK_FALSE(c.apply({Op::InputGuard, 0, 0, 0}, 0));
+  c.tick(10);
+  CHECK(c.output(0) == 1);
+  c.updateInputs(1, 2, 11);
+  CHECK(c.output(0) == 0);
+  CHECK(c.mode() == Mode::Stop);
+  CHECK(c.inputs().tripped());
+  c.updateInputs(0, 2, 12);
+  CHECK(c.apply({Op::Target, 0, 100}, 12));
+  CHECK_FALSE(c.apply({Op::Run, 1, 0}, 12));
+  CHECK(c.apply({Op::InputGuard, 1, 0, 0}, 12));
+  CHECK(c.apply({Op::Run, 1, 0}, 12));
+  uint8_t data[8] = {1, 7, 3, 2, 0, 0, 0, 0};
+  Command command;
+  CHECK(parse(data, 8, command));
+  CHECK(command.input_high == 2);
+  data[3] = 4;
+  CHECK_FALSE(parse(data, 8, command));
+  data[1] = 6; data[2] = 0; data[3] = 0;
+  CHECK(parse(data, 8, command));
+}
+
 TEST_CASE("DCMD validates wire bounds and reserved bytes") {
   Command cmd;
   uint8_t data[8] = {1, 4, 0, 0, 0xFC, 0x7C, 0, 0};

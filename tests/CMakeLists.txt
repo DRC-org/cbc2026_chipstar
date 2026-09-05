@@ -20,7 +20,7 @@ enable_testing()
 # インクルードパスを 1 つのファームの src に限定することで、
 # HAL や他プロジェクトのヘッダに依存していないことがビルド時に保証される。
 function(add_firmware_tests name src_dir)
-    add_executable(${name} doctest_main.cpp ${ARGN})
+    add_executable(${name} doctest_main.cpp digital_inputs_test.cpp ${ARGN})
     target_link_libraries(${name} PRIVATE doctest)
     target_include_directories(${name} PRIVATE ${src_dir})
     target_compile_options(${name} PRIVATE -Wall -Wextra)

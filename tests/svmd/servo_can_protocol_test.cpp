@@ -49,3 +49,16 @@ TEST_CASE("不正なversion、長さ、範囲、予約bitを拒否する") {
     data[7] = 1;
     CHECK_FALSE(domain::servo_can::parse(data, sizeof(data), command));
 }
+
+TEST_CASE("DIP読取り指令を解釈する") {
+    Command command;
+    const uint8_t read[8] = {1, 4, 0, 0, 0, 0, 0, 0};
+    CHECK(domain::servo_can::parse(read, sizeof(read), command));
+    CHECK(command.kind == CommandKind::InputRead);
+
+    uint8_t with_channel[8] = {1, 4, 1, 0, 0, 0, 0, 0};
+    CHECK_FALSE(domain::servo_can::parse(with_channel, sizeof(with_channel), command));
+
+    uint8_t unknown[8] = {1, 5, 0, 0, 0, 0, 0, 0};
+    CHECK_FALSE(domain::servo_can::parse(unknown, sizeof(unknown), command));
+}
