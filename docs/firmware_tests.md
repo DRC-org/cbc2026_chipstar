@@ -47,8 +47,8 @@ cargo run --bin fw_test -- --board serial-svmd --serial-device /dev/ttyUSB0
 上記は対象ごとに1つずつ起動する。svmd/DCMDはcctlのFDCAN2を経由する。
 serial_svmdはUSART2のUSBシリアル変換器へ直接接続し、既定38400 baud。
 それ以外は既定115200 baud。必要なら `--baud-rate` で指定する。
-CANは1 Mbps、コネクタは [cctl](board_cctl.md)、
-[serial_svmd](board_serial_svmd.md)、[DCMD](board_dcmd.md) を参照。
+CANは1 Mbps、コネクタと接続の全体像は [wiring.md](wiring.md) を参照。
+GUIでは「6 配線」タブで同じ内容を見られる。
 
 起動時に接続先の能力を照会し、対象基板へSTOPを送る。
 svmd/DCMDはCAN先の応答も確認し、応答がなければ出力テストを開始せず終了する。
