@@ -25,6 +25,7 @@ pub struct BridgeConfig {
 /// GUI 表示用の実行状況スナップショット。
 #[derive(Clone, Default)]
 pub struct Status {
+    pub dcmd: Option<crate::dcmd::Status>,
     pub gamepad_connected: bool,
     pub gamepad_name: Option<String>,
     pub serial_connected: bool,
@@ -104,6 +105,13 @@ impl Shared {
     pub fn queue_command(&self, command: Command) -> bool {
         if command == Command::Run {
             let status = self.status.lock().unwrap();
+            if !self.config().machine.dc_motors.is_empty() && status.dcmd.is_none() {
+                drop(status);
+                self.update_status(|s| {
+                    s.last_error = Some("DCMDの状態応答を待っています".to_owned())
+                });
+                return false;
+            }
             let Some(device) = &status.device else {
                 drop(status);
                 self.update_status(|status| {
@@ -140,8 +148,24 @@ impl Shared {
             }
         }
         self.queue_line(command.to_line());
+        let config = self.config();
+        if !config.machine.dc_motors.is_empty() {
+            match command {
+                Command::Run => {
+                    self.queue_line(crate::dcmd::line(0, 0, 0));
+                    let mut mask = 0;
+                    for motor in &config.machine.dc_motors {
+                        self.queue_line(crate::dcmd::line(4, motor.channel, 0));
+                        mask |= 1 << motor.channel;
+                    }
+                    self.queue_line(crate::dcmd::line(2, mask, 0));
+                }
+                Command::Safe | Command::Stop => self.queue_line(crate::dcmd::line(3, 0, 0)),
+                _ => {}
+            }
+        }
         if matches!(command, Command::Stop | Command::Safe)
-            && self.config.lock().unwrap().machine.requires_can_bus_2()
+            && !self.config.lock().unwrap().machine.pwm_servos.is_empty()
         {
             self.queue_line(svmd::Command::Stop.to_cctl_line());
         }

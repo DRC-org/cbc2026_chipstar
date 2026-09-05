@@ -64,6 +64,7 @@ pub fn run(shared: Arc<Shared>) {
             shared.queue_line(machine.hello_line());
             shared.update_status(|s| {
                 s.device = None;
+                s.dcmd = None;
                 s.serial_svmd_device = None;
             });
             last_hello = Instant::now();
@@ -73,6 +74,9 @@ pub fn run(shared: Arc<Shared>) {
         // USBの抜き差しは明示イベントを持たないため、能力照会を定期再送する。
         if last_hello.elapsed() >= Duration::from_secs(1) {
             let _ = link.write_line(&machine.hello_line());
+            if !cfg.machine.dc_motors.is_empty() {
+                let _ = link.write_line(&crate::dcmd::line(0, 0, 0));
+            }
             last_hello = Instant::now();
         }
         if last_serial_svmd_hello.elapsed() >= Duration::from_secs(1) {
@@ -177,6 +181,9 @@ pub fn run(shared: Arc<Shared>) {
 
         // cctl からのテレメトリを取り込む。
         for line in link.read_lines() {
+            if let Some(status) = crate::dcmd::parse_status(&line) {
+                shared.update_status(|s| s.dcmd = Some(status));
+            }
             if let Some(device) = parse_device_info(&line) {
                 shared.update_status(|s| {
                     s.device = Some(device);

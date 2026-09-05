@@ -334,6 +334,12 @@ impl BridgeApp {
 
         ui.separator();
         ui.label("機体の状態");
+        if let Some(dcmd) = &status.dcmd {
+            ui.monospace(format!(
+                "DCMD mode={} enabled={} duty={:?} result={}",
+                dcmd.mode, dcmd.enabled, dcmd.duty, dcmd.result
+            ));
+        }
         match &status.telemetry {
             Some(telemetry) => telemetry_ui(
                 ui,

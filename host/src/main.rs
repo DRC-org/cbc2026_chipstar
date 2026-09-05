@@ -4,6 +4,7 @@
 
 mod app_state;
 mod controller;
+mod dcmd;
 mod device;
 mod frame;
 mod gui;

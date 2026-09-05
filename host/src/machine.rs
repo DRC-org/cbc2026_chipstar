@@ -87,6 +87,8 @@ fn one() -> f32 {
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct MachineProfile {
+    #[serde(default)]
+    pub dc_motors: Vec<crate::dcmd::MotorProfile>,
     pub protocol_version: u8,
     #[serde(default)]
     pub axes: Vec<AxisProfile>,
@@ -112,6 +114,7 @@ impl MachineProfile {
     }
 
     fn validate(&self) -> Result<()> {
+        crate::dcmd::validate(&self.dc_motors)?;
         if self.protocol_version != 1 {
             bail!(
                 "未対応のプロトコルバージョンです: {}",
@@ -124,7 +127,11 @@ impl MachineProfile {
         if self.pwm_servos.len() > PWM_CHANNEL_COUNT {
             bail!("PWMサーボ数は0..={PWM_CHANNEL_COUNT}で指定してください");
         }
-        if self.axes.is_empty() && self.pwm_servos.is_empty() && self.serial_svmd.is_none() {
+        if self.axes.is_empty()
+            && self.pwm_servos.is_empty()
+            && self.serial_svmd.is_none()
+            && self.dc_motors.is_empty()
+        {
             bail!("軸またはサーボを1つ以上指定してください");
         }
 
@@ -230,7 +237,7 @@ impl MachineProfile {
     }
 
     pub fn requires_can_bus_2(&self) -> bool {
-        !self.pwm_servos.is_empty()
+        !self.pwm_servos.is_empty() || !self.dc_motors.is_empty()
     }
 
     pub fn requires_serial_svmd(&self) -> bool {
@@ -309,6 +316,7 @@ impl MachineController {
                 .to_cctl_line(),
             );
         }
+        lines.extend(crate::dcmd::targets(&self.profile.dc_motors, &input.axes));
         lines
     }
 

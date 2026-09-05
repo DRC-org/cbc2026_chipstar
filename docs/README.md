@@ -14,6 +14,7 @@
 
 - [board_cctl.md](board_cctl.md) — cctl(STM32G474) のクロック、ペリフェラルとハンドル、ピン割当、ハード固有の注意点
 - [board_serial_svmd.md](board_serial_svmd.md) — serial_svmd(STM32F303K8T6) のクロック、ペリフェラルとハンドル、ピン割当、サーボ通信回路
+- [board_dcmd.md](board_dcmd.md) — DCMDのPWM駆動、CAN指令、エンコーダのタイマ共有制約
 
 ## 実機作業
 

@@ -31,6 +31,7 @@ ctest --preset default
 | `cctl_tests` | `cctl/src` |
 | `serial_svmd_tests` | `serial_svmd/src` |
 | `svmd_tests` | `svmd/src` |
+| `dcmd_tests` | `dcmd/src` |
 
 テスト対象は各ファームの `src/domain/` に置く。`domain/` は HAL を含まない
 純粋なロジックだけを入れる場所で、そこから外側（HAL ラッパやアプリ層）を

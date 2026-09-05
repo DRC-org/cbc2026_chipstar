@@ -72,6 +72,8 @@ SERVO_STATE id=12 position=2048 enabled=1 error=00
 
 ## svmd
 
+DCMDのCAN指令と状態通知は[board_dcmd.md](board_dcmd.md)に定める。
+
 CAN標準ID `0x300` を指令、`0x301` を状態通知に使用する。8 byteの指令形式は次の通り。
 
 | byte | 内容 |

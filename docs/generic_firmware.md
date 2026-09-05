@@ -57,6 +57,10 @@ hostはcctlのFDCAN2ゲートウェイ経由でsvmdへ指令する。serial_svmd
 
 ## セッションと安全状態
 
+DCMDは2chの符号付きDuty出力を提供する。Duty上限、ランプ、方向反転待ちと
+通信断時のブレーキ停止をFWが処理し、hostが入力割当と運用Duty上限を指定する。
+配線・CAN仕様は[board_dcmd.md](board_dcmd.md)を参照。
+
 1. 電源投入時は SAFE とし、出力を有効にしない。
 2. host は能力とプロトコルバージョンを確認する。
 3. host は運用設定と初期目標値を送る。
