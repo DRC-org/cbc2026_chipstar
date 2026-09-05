@@ -11,6 +11,7 @@ mod fw_test;
 mod fw_test_gui;
 mod fw_test_transport;
 mod gui;
+mod inputs;
 mod keymap;
 mod machine;
 mod serial;

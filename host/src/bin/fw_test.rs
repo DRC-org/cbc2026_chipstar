@@ -3,6 +3,8 @@
 mod device;
 #[path = "../fw_test.rs"]
 mod fw_test;
+#[path = "../inputs.rs"]
+mod inputs;
 #[path = "../serial.rs"]
 mod serial;
 
@@ -93,6 +95,12 @@ fn main() -> Result<()> {
                 println!("テスト出力ON（指令状態）: {:?}", session.active_outputs());
             }
             for line in link.read_lines() {
+                if inputs::parse(&line, args.board).is_some_and(|state| state.trip)
+                    && !session.active_outputs().is_empty()
+                {
+                    send(&mut link, session.stop())?;
+                    println!("入力保護作動：テスト出力を停止しました");
+                }
                 if line.starts_with("ERR ") {
                     bail!("FWが指令を拒否しました: {line}");
                 }

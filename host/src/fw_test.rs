@@ -21,6 +21,7 @@ pub struct Session {
     status: bool,
     encoder: bool,
     communication: bool,
+    inputs: bool,
     last_read: u8,
     silent_until: Option<Instant>,
 }
@@ -38,6 +39,7 @@ impl Session {
             ("status", self.status),
             ("encoder", self.encoder),
             ("communication", self.communication),
+            ("inputs", self.inputs),
         ] {
             if enabled {
                 switches.push(name.into());
@@ -61,6 +63,7 @@ impl Session {
             status: false,
             encoder: false,
             communication: false,
+            inputs: false,
             last_read: 0,
             silent_until: None,
         }
@@ -74,7 +77,7 @@ impl Session {
             Board::Dcmd => "motor0 <duty -100..100 permille>; encoder; status",
         };
         format!(
-            "on <機能> [値] / off <機能> / stop / watchdog / help / quit\n機能: {features}; communication\nwatchdog: 全送信を500ms止め、出力をOFF状態に戻す。自動再開なし。"
+            "on <機能> [値] / off <機能> / stop / watchdog / help / quit\n機能: {features}; communication; inputs (SW/DIP読取り)\nguard <mask> <high>: 対象基板を停止して入力停止条件を設定。high=0は閉接点で停止。\nwatchdog: 全送信を500ms止め、出力をOFF状態に戻す。自動再開なし。"
         )
     }
 
@@ -130,6 +133,29 @@ impl Session {
             );
             self.silent_until = Some(now + Duration::from_millis(500));
             return Ok(vec![]);
+        }
+        if tokens.first() == Some(&"guard") {
+            ensure!(tokens.len() == 3, "guard <mask> <high> を指定してください");
+            ensure!(self.board != Board::Svmd, "svmdには外部SW入力がありません");
+            let mask: u8 = tokens[1].parse()?;
+            let high: u8 = tokens[2].parse()?;
+            let available = if self.board == Board::SerialSvmd {
+                63
+            } else {
+                7
+            };
+            ensure!(
+                mask & !available == 0 && high & !mask == 0,
+                "入力mask/極性が範囲外です"
+            );
+            let mut lines = self.stop();
+            self.inputs = true;
+            lines.push(if self.board == Board::Dcmd {
+                can(784, 7, mask, high, 0)
+            } else {
+                format!("INPUT GUARD {mask} {high}")
+            });
+            return Ok(lines);
         }
         ensure!(
             tokens.len() == 2 || tokens.len() == 3,
@@ -202,6 +228,7 @@ impl Session {
         }
         ensure!(tokens.len() == 2, "この機能に値は不要です");
         match name {
+            "inputs" => self.inputs = enabled,
             "status" => {
                 ensure!(
                     self.board != Board::SerialSvmd,
@@ -265,6 +292,13 @@ impl Session {
             });
         }
         // 1周期1IDに制限し、出力のWatchdog更新を遅らせない。
+        if self.inputs {
+            lines.push(match self.board {
+                Board::Cctl | Board::SerialSvmd => "INPUT READ".into(),
+                Board::Dcmd => can(784, 6, 0, 0, 0),
+                Board::Svmd => can(768, 4, 0, 0, 0),
+            });
+        }
         if let Some(id) = self
             .reads
             .iter()
@@ -279,6 +313,9 @@ impl Session {
     }
 
     pub fn visible(&self, line: &str) -> bool {
+        if self.inputs && crate::inputs::parse(line, self.board).is_some() {
+            return true;
+        }
         if self.communication {
             return true;
         }
@@ -301,6 +338,11 @@ impl Session {
 
 /// CANの生フレームに配線確認用の値を併記する。
 pub fn describe(line: &str) -> String {
+    for board in [Board::Cctl, Board::SerialSvmd, Board::Dcmd, Board::Svmd] {
+        if let Some(state) = crate::inputs::parse(line, board) {
+            return crate::inputs::describe(&state);
+        }
+    }
     let Some((prefix, payload)) = line.split_once(" data=") else {
         return line.into();
     };
