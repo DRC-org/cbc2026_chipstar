@@ -45,6 +45,7 @@ pub struct Status {
 
 /// スレッド間共有ハンドル。`Arc<Shared>` で持ち回る。
 pub struct Shared {
+    pub tests: crate::fw_test_gui::Control,
     config: Mutex<BridgeConfig>,
     config_gen: AtomicU64,
     sending_enabled: AtomicBool,
@@ -58,6 +59,7 @@ pub struct Shared {
 impl Shared {
     pub fn new(config: BridgeConfig) -> Self {
         Self {
+            tests: crate::fw_test_gui::Control::default(),
             config: Mutex::new(config),
             config_gen: AtomicU64::new(0),
             sending_enabled: AtomicBool::new(true),
@@ -87,7 +89,15 @@ impl Shared {
     }
 
     pub fn set_sending_enabled(&self, enabled: bool) {
-        self.sending_enabled.store(enabled, Ordering::Relaxed);
+        self.sending_enabled
+            .store(enabled && !self.tests.enabled(), Ordering::Relaxed);
+    }
+
+    pub fn start_test(&self, config: crate::fw_test_gui::Config) {
+        self.set_sending_enabled(false);
+        self.tests.start(config);
+        self.take_commands();
+        self.take_serial_svmd_commands();
     }
 
     pub fn is_running(&self) -> bool {
@@ -104,6 +114,14 @@ impl Shared {
 
     /// 指令を送信待ちに積む。送信停止中でも送るので、STOP は必ず届く。
     pub fn queue_command(&self, command: Command) -> bool {
+        if self.tests.enabled() {
+            if matches!(command, Command::Stop | Command::Safe) {
+                self.tests.command("stop".into());
+                return true;
+            }
+            self.update_status(|s| s.last_error = Some("基板テスト中は通常操作できません".into()));
+            return false;
+        }
         if command == Command::Run {
             let status = self.status.lock().unwrap();
             if !self.config().machine.dc_motors.is_empty() && status.dcmd.is_none() {
@@ -194,6 +212,9 @@ impl Shared {
 
     /// cctl へそのまま送る行を積む。コマンドラインからの入力に使う。
     pub fn queue_line(&self, line: String) {
+        if self.tests.enabled() {
+            return;
+        }
         self.commands.lock().unwrap().push_back(line);
     }
 
@@ -219,6 +240,34 @@ impl Shared {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_session_blocks_normal_commands_and_does_not_resume_sending() {
+        let shared = Shared::new(BridgeConfig {
+            serial_device: "/dev/null".into(),
+            baud_rate: 115200,
+            rate_hz: 20.0,
+            machine: pwm_profile(),
+        });
+        shared.queue_line("RUN".into());
+        shared.start_test(crate::fw_test_gui::Config {
+            board: crate::fw_test::Board::Dcmd,
+            device: "/dev/null".into(),
+            baud: 115200,
+            seconds: 5,
+        });
+        assert!(shared.take_commands().is_empty());
+        shared.queue_line("TARGET 0 1".into());
+        assert!(shared.take_commands().is_empty());
+        assert!(!shared.queue_command(Command::Run));
+        assert!(shared.queue_command(Command::Stop));
+        assert!(shared.take_commands().is_empty());
+        shared.set_sending_enabled(true);
+        assert!(!shared.sending_enabled());
+        shared.tests.end();
+        shared.tests.finish();
+        assert!(!shared.sending_enabled());
+    }
 
     fn pwm_profile() -> MachineProfile {
         MachineProfile::parse(

@@ -22,13 +22,15 @@ enum Screen {
     Config,
     Operation,
     Help,
+    Test,
 }
 
-const SCREENS: [(Screen, &str); 4] = [
+const SCREENS: [(Screen, &str); 5] = [
     (Screen::Status, "1 ステータス"),
     (Screen::Config, "2 設定"),
     (Screen::Operation, "3 操作"),
     (Screen::Help, "4 ヘルプ"),
+    (Screen::Test, "5 基板テスト"),
 ];
 
 /// 操作画面で選べる項目。
@@ -62,6 +64,7 @@ const OPERATIONS: [(Operation, &str); 6] = [
 const CONFIG_FIELDS: usize = 3;
 
 pub struct BridgeApp {
+    test_panel: crate::fw_test_gui::Panel,
     shared: Arc<Shared>,
     screen: Screen,
     // 設定画面の編集バッファ（適用するまで共有設定へは反映しない）。
@@ -82,6 +85,7 @@ impl BridgeApp {
     pub fn new(shared: Arc<Shared>) -> Self {
         let cfg = shared.config();
         Self {
+            test_panel: crate::fw_test_gui::Panel::new(cfg.serial_device.clone(), cfg.baud_rate),
             shared,
             screen: Screen::Status,
             edit_device: cfg.serial_device,
@@ -121,6 +125,13 @@ impl BridgeApp {
     // ---- キー入力 ---------------------------------------------------------
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
+        if self.screen == Screen::Test {
+            // テスト画面では数値・接続先を通常のGUI入力として編集する。
+            if !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Space)) {
+                self.shared.queue_command(Command::Stop);
+            }
+            return;
+        }
         if self.mode != Mode::Normal {
             return;
         }
@@ -429,6 +440,15 @@ impl BridgeApp {
     }
 
     fn operation_ui(&mut self, ui: &mut egui::Ui) {
+        if self.shared.tests.enabled() {
+            ui.label(
+                "基板テスト中は通常操作を停止しています。「5 基板テスト」で終了してください。",
+            );
+            if ui.button("テスト出力STOP").clicked() {
+                self.shared.queue_command(Command::Stop);
+            }
+            return;
+        }
         ui.heading("操作");
         ui.separator();
 
@@ -607,6 +627,7 @@ impl eframe::App for BridgeApp {
                 Screen::Config => self.config_ui(ui),
                 Screen::Operation => self.operation_ui(ui),
                 Screen::Help => self.help_ui(ui),
+                Screen::Test => self.test_panel.ui(ui, &self.shared),
             });
         });
     }

@@ -31,6 +31,24 @@ fn can(id: u16, op: u8, channel: u8, flag: u8, value: i16) -> String {
 }
 
 impl Session {
+    pub fn switches(&self) -> Vec<String> {
+        let mut switches: Vec<_> = self.outputs.keys().map(|id| format!("motor{id}")).collect();
+        switches.extend(self.reads.iter().map(|id| format!("read{id}")));
+        for (name, enabled) in [
+            ("status", self.status),
+            ("encoder", self.encoder),
+            ("communication", self.communication),
+        ] {
+            if enabled {
+                switches.push(name.into());
+            }
+        }
+        switches
+    }
+
+    pub fn watchdog_running(&self) -> bool {
+        self.silent_until.is_some()
+    }
     pub fn active_outputs(&self) -> Vec<u8> {
         self.outputs.keys().copied().collect()
     }

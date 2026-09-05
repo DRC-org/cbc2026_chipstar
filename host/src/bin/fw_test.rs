@@ -7,8 +7,11 @@ mod fw_test;
 mod serial;
 
 use anyhow::{Result, bail};
+#[path = "../fw_test_transport.rs"]
+mod fw_test_transport;
 use clap::Parser;
 use fw_test::{Board, Session};
+use fw_test_transport::{connect, send};
 use std::{
     io::{self, BufRead},
     sync::mpsc,
@@ -32,40 +35,6 @@ struct Args {
     seconds: u64,
 }
 
-fn send(link: &mut serial::SerialLink, lines: Vec<String>) -> Result<()> {
-    for line in lines {
-        link.write_line(&line)?;
-        // USB受信キューと低速UARTに一括投入しない。
-        thread::sleep(Duration::from_millis(5));
-    }
-    Ok(())
-}
-
-fn connect(link: &mut serial::SerialLink, board: Board) -> Result<()> {
-    let start = Instant::now();
-    while start.elapsed() < Duration::from_secs(3) {
-        link.write_line("HELLO 1")?;
-        thread::sleep(Duration::from_millis(100));
-        for line in link.read_lines() {
-            if let Some(info) = device::parse_device_info(&line) {
-                let expected = if board == Board::SerialSvmd {
-                    "serial_svmd"
-                } else {
-                    "cctl"
-                };
-                if info.protocol != 1 || info.board != expected {
-                    bail!("接続先の能力が不一致: {line}");
-                }
-                if matches!(board, Board::Svmd | Board::Dcmd) && !info.can_buses.contains(&2) {
-                    bail!("FDCAN2ゲートウェイがありません");
-                }
-                return Ok(());
-            }
-        }
-    }
-    bail!("能力通知がありません。接続とボーレートを確認してください")
-}
-
 fn main() -> Result<()> {
     let args = Args::parse();
     let baud = args
@@ -78,40 +47,7 @@ fn main() -> Result<()> {
     let mut link = serial::SerialLink::new(args.serial_device, baud);
     connect(&mut link, args.board)?;
     let mut session = Session::new(args.board, Duration::from_secs(args.seconds));
-    if matches!(args.board, Board::Svmd | Board::Dcmd) {
-        send(&mut link, vec!["STOP".into(), "ENABLE 7 0".into()])?;
-    }
-    send(&mut link, session.stop())?;
-    if matches!(args.board, Board::Svmd | Board::Dcmd) {
-        let (probe, prefix) = if args.board == Board::Svmd {
-            (
-                "CAN 2 768 0103000000000000",
-                "CAN_RX bus=2 id=769 data=0100",
-            )
-        } else {
-            (
-                "CAN 2 784 0100000000000000",
-                "CAN_RX bus=2 id=785 data=0100",
-            )
-        };
-        let start = Instant::now();
-        let mut found = false;
-        while start.elapsed() < Duration::from_secs(3) {
-            link.write_line(probe)?;
-            thread::sleep(Duration::from_millis(100));
-            if link
-                .read_lines()
-                .iter()
-                .any(|line| line.starts_with(prefix))
-            {
-                found = true;
-                break;
-            }
-        }
-        if !found {
-            bail!("CAN先の基板応答がありません。電源・CAN配線・終端抵抗を確認してください");
-        }
-    }
+    fw_test_transport::prepare(&mut link, args.board, &mut session)?;
     println!("{}", session.help());
     println!(
         "出力は最大{}秒。機構を安全に固定し、通常hostを終了して使用してください。",
@@ -141,6 +77,11 @@ fn main() -> Result<()> {
                     Ok(lines) => {
                         send(&mut link, lines)?;
                         println!("設定: {}", line.trim());
+                        println!(
+                            "ON機能: {:?}, 通信断テスト: {}",
+                            session.switches(),
+                            session.watchdog_running()
+                        );
                     }
                     Err(error) => eprintln!("{error:#}"),
                 },

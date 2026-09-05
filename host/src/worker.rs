@@ -22,14 +22,10 @@ fn period_from_hz(rate_hz: f64) -> Duration {
 
 pub fn run(shared: Arc<Shared>) {
     let mut gilrs = match Gilrs::new() {
-        Ok(gilrs) => gilrs,
+        Ok(gilrs) => Some(gilrs),
         Err(err) => {
             shared.update_status(|s| s.last_error = Some(format!("gilrs 初期化失敗: {err}")));
-            // 入力が扱えないため待機のみ。GUI は継続動作させる。
-            while shared.is_running() {
-                thread::sleep(Duration::from_millis(200));
-            }
-            return;
+            None
         }
     };
 
@@ -48,6 +44,33 @@ pub fn run(shared: Arc<Shared>) {
     let mut last_serial_svmd_hello = Instant::now();
 
     while shared.is_running() {
+        if shared.tests.enabled() {
+            let test_config = shared.tests.config();
+            shared.set_sending_enabled(false);
+            shared.take_commands();
+            shared.take_serial_svmd_commands();
+            // 通常操作のリンクで停止後、ポートを解放してからテストへ渡す。
+            let _ = link.write_line("STOP");
+            if !cfg.machine.pwm_servos.is_empty() {
+                let _ = link.write_line(&crate::svmd::Command::Stop.to_cctl_line());
+            }
+            if !cfg.machine.dc_motors.is_empty() {
+                let _ = link.write_line(&crate::dcmd::line(3, 0, 0));
+            }
+            if let Some(link) = serial_svmd_link.as_mut() {
+                let _ = link.write_line("STOP");
+            }
+            link = SerialLink::new(cfg.serial_device.clone(), cfg.baud_rate);
+            serial_svmd_link = None;
+            if let Some(test_config) = test_config {
+                crate::fw_test_gui::run(&shared, test_config);
+            }
+            shared.tests.finish();
+            // 通常操作を再構成するが、送信の再開は明示操作まで待つ。
+            shared.set_sending_enabled(false);
+            last_gen = u64::MAX;
+            continue;
+        }
         // 設定変更を検知したらシリアルを開き直す。
         let generation = shared.config_generation();
         if generation != last_gen {
@@ -88,8 +111,10 @@ pub fn run(shared: Arc<Shared>) {
         }
 
         // イベントを消費して各ゲームパッドの状態を最新化する。
-        while let Some(event) = gilrs.next_event() {
-            gilrs.update(&event);
+        if let Some(gilrs) = gilrs.as_mut() {
+            while let Some(event) = gilrs.next_event() {
+                gilrs.update(&event);
+            }
         }
 
         // 指令はコントローラの有無にも送信停止にも関係なく送る。
@@ -121,7 +146,9 @@ pub fn run(shared: Arc<Shared>) {
             }
         }
 
-        let gamepad = gilrs.gamepads().find(|(_, pad)| pad.is_connected());
+        let gamepad = gilrs
+            .as_ref()
+            .and_then(|gilrs| gilrs.gamepads().find(|(_, pad)| pad.is_connected()));
 
         match gamepad {
             Some((_, pad)) => {
