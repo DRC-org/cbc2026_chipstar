@@ -47,9 +47,9 @@ cctl FDCAN2に接続する。指令は標準ID `0x310`（784）、状態は`0x31
 | byte | 内容 |
 |---|---|
 | 0 | version=1 |
-| 1 | 0=HELLO、1=SAFE、2=RUN、3=STOP、4=TARGET、5=HEARTBEAT、6=INPUT READ、7=INPUT GUARD |
-| 2 | TARGETはchannel 0、RUNは有効mask 1、INPUT GUARDは監視mask、それ以外は0 |
-| 3 | INPUT GUARDは開接点で停止するbit、それ以外は0 |
+| 1 | 0=HELLO、1=SAFE、2=RUN、3=STOP、4=TARGET、5=HEARTBEAT、6=INPUT READ |
+| 2 | TARGETはchannel 0、RUNは有効mask 1、それ以外は0 |
+| 3 | 0 |
 | 4..5 | TARGETの符号付き16bit Duty [permille]、big endian。それ以外は0 |
 | 6..7 | 0 |
 
@@ -62,10 +62,9 @@ countは起動時ゼロの符号付き32bit累積値、indexはX相立ち上が�
 cctlの`CAN_RX`通知はUSB混雑時に欠落し得るため、
 通知一件だけを到達保証として扱わない。
 
-`INPUT READ`と`INPUT GUARD`の応答は標準ID `0x313`（787）で返し、`0x311`の状態通知は
-伴わない。接点の意味とラッチの解除条件は
-[device_protocol.md](device_protocol.md)の接点入力に従う。SW_A〜SW_Cを停止条件に
-設定すると、成立時にランプを待たずDutyをゼロにしてSTOPへ遷移する。
+`INPUT READ`の応答は標準ID `0x313`（787）で返し、`0x311`の状態通知は伴わない。
+形式は`[1, raw, stable, dip, available, 0, 0, 0]`。接点は状態として報告するだけで、
+Dutyやモードには影響しない。到達時に何を止めるかはhostが決める。
 
 ## ビルドとhost
 

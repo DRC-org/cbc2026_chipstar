@@ -36,12 +36,13 @@ FDCAN のビットレート設計・CAN ID 割当は [cctl_can_bus.md](cctl_can_
 | LED1〜3 | PC1, PC2, PC3 | 出力 PP / 初期 LOW | HIGH で点灯 |
 | SW1〜3 | PA10, PA9, PA8 | 入力 プルアップ | 閉で LOW |
 | DIP1〜4 | PC14, PC15, PF0, PF1 | 入力 プルアップ | ON で LOW |
-
-SW1〜3 は基板上のスイッチではなく、外部接点用の 2 ピンコネクタ J5 / J6 / J7
-（pin 1=GND, pin 2=信号）である。停止条件への割当は
-[device_protocol.md](device_protocol.md) の接点入力を参照。
 | I2C1_INT, I2C2_INT | PB0, PB1 | 入力 NOPULL | コネクタからの割込み線（未使用） |
 | NRST | PG10 | 入力 NOPULL | — |
+
+SW1〜3 は基板上のスイッチではなく、外部接点用の 2 ピンコネクタ J5 / J6 / J7
+（pin 1=GND, pin 2=信号）である。10ms のデバウンス後の値を `STATE` の `sw=` に載せて
+50ms ごとに送る。リミットとしての割当と原点出しは host 側で、
+[host_machine_profile.md](host_machine_profile.md) を参照。
 
 ## LCD
 

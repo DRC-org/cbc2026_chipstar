@@ -1,6 +1,6 @@
 # デバイス通信プロトコル v1
 
-host と各基板の間で使う、改行区切りASCIIプロトコル。1行は改行を除いて95 byte
+host と各基板の間で使う、改行区切りASCIIプロトコル。1行は改行を除いて128 byte
 以下とし、整数は10進、実数は有限な10進表記にする。キーワードは大文字で送信する。
 
 ## 共通指令
@@ -12,8 +12,6 @@ host と各基板の間で使う、改行区切りASCIIプロトコル。1行は
 | `RUN` | 構成済みで有効な出力を開始する |
 | `STOP` | 即時停止して出力を切る |
 | `HEARTBEAT` | Watchdogを更新する |
-| `INPUT READ` | 接点入力とDIPの状態を返す |
-| `INPUT GUARD <mask> <high>` | 停止条件とする接点と極性を設定する |
 
 応答の先頭語は、能力通知が `DEVICE`、状態通知が `STATE`、正常応答が `OK`、拒否が
 `ERR` である。未知のフィールドを受信側が読み飛ばせるよう、応答の値は
@@ -27,47 +25,24 @@ ERR code=OUT_OF_RANGE
 
 ## 接点入力
 
-各基板は接点入力とDIPスイッチを読み取り、指定した接点を出力の停止条件にできる。
-接点は内蔵プルアップで受け、GNDへ閉じたときを1とする。どの接点をどの機構の
-リミットとして使うかはhost側の機体構成であり、FWは番号のまま扱う。
+各基板は接点入力とDIPスイッチを読み取り、状態を報告する。接点は内蔵プルアップで
+受け、GNDへ閉じたときを1とする。基板が受け持つのは読み取りと10msのデバウンスまでで、
+どの接点をどの機構のリミットとして使うか、到達時に何を止めるかはhostが決める。
 
-| 基板 | 接点 | `available` | DIP |
-|---|---|---|---|
-| cctl | SW1〜SW3 | 7 | DIP1〜4 |
-| serial_svmd | SW1〜SW6 | 63 | DIP1〜4 |
-| DCMD | SW_A〜SW_C | 7 | DIP1〜2 |
-| svmd | なし | 0 | A0〜A3 |
+| 基板 | 接点 | `available` | DIP | 報告の経路 |
+|---|---|---|---|---|
+| cctl | SW1〜SW3 | 7 | DIP1〜4 | `STATE` の `sw=` |
+| serial_svmd | SW1〜SW6 | 63 | DIP1〜4 | `INPUT READ` |
+| DCMD | SW_A〜SW_C | 7 | DIP1〜2 | CAN指令 `6` |
+| svmd | なし | — | — | なし |
 
-`mask` は停止条件として監視する接点のbit、`high` はそのうち開接点を停止条件とする
-bitである。B接点（NC）で断線も検出したい配線では `high` に含める。`mask` に
-含まれない接点は監視だけで、状態には現れるが出力を止めない。`available` にない
-bitや、`mask` の外を指す `high` は `ERR code=OUT_OF_RANGE` で拒否する。
+常時テレメトリを送るcctlは`STATE`に載せ、要求応答型の基板は問い合わせに答える。
+報告するのは事実だけで、停止条件や到達のラッチは基板側に持たない。
 
-停止条件が成立するとFWはSTOPへ遷移して出力を切り、成立をラッチする。ラッチは
-接点が復帰しただけでは解除されず、`INPUT GUARD` を再送するまで残る。ラッチ中の
-`RUN` は `ERR code=INPUT_ACTIVE`、RUN中の `INPUT GUARD` は `ERR code=BUSY` になる。
-判定にはデバウンス前の生値を使い、10msの安定値は表示だけに用いる。設定はRAMだけに
-保持し、電源再投入で監視なしへ戻る。
+`raw`は生値、`stable`は10msの安定値。B接点（常閉）で配線した場合、平常時は接点が
+閉じてbitが1になり、押下と断線がどちらも0になる。この読み替えはhost側で行う。
 
-cctlとserial_svmdは `INPUT READ`・`INPUT GUARD` の応答を1行で返す。
-
-```text
-INPUT_STATE raw=3 stable=1 dip=5 guard=1 high=0 trip=1 available=7
-```
-
-DCMDとsvmdは同じ内容を8 byteのCANフレームで返す。IDはDCMDが `0x313`（787）、
-svmdが `0x302`（770）。
-
-| byte | 内容 |
-|---|---|
-| 0 | protocol version (`1`) |
-| 1 | raw（生値） |
-| 2 | stable（10ms安定値） |
-| 3 | dip |
-| 4 | guard（監視mask） |
-| 5 | high（開接点で停止するbit） |
-| 6 | trip（`0|1`、ラッチ状態） |
-| 7 | available |
+DCMDの指令と応答の形式は[board_dcmd.md](board_dcmd.md)に定める。
 
 ## cctl
 
@@ -82,10 +57,13 @@ svmdが `0x302`（770）。
 受理できるが、出力はRUNへ遷移するまで有効にならない。
 
 ```text
-STATE t=12345 mode=RUN en=7 a0=1.250/1.230 a1=-40.000/-39.500 a2=0.500/0.490 err=00
+STATE t=12345 mode=RUN en=7 a0=1.250/1.230 a1=-40.000/-39.500 a2=0.500/0.490 err=00 sw=5
 ```
 
-各 `aN` は `目標値/実測値`。単位は能力表で定義したネイティブ単位である。
+各 `aN` は `目標値/実測値`。単位は能力表で定義したネイティブ単位である。`sw`は
+SW1〜SW3の10ms安定値で、bit 0がSW1に対応する。`STATE`は50ms周期で送るので、
+接点を見るための問い合わせは要らない。`sw`を持たないFWと接続した場合、hostは
+接点の状態を不明として扱い、リミットとしては使わない。
 
 `id`は10進の0..2047、`data`は0..8 byteを空白なしの16進表記にする。0 byteは`-`で
 表す。受信フレームは次の形式で通知する。FDCAN2は1Mbps固定で、拡張IDの送信は
@@ -106,6 +84,7 @@ CAN送信は`HELLO 1`が成功した後だけ受理する。FDCAN2を開始で�
 | `SERVO ENABLE <id> <0|1>` | トルクを切り替える |
 | `SERVO TARGET <id> <position> <speed> <accel>` | 位置指令を送る |
 | `SERVO READ <id>` | 現在位置を取得する |
+| `INPUT READ` | 接点入力とDIPの状態を返す |
 
 IDは1..253、positionは0..4095とする。範囲外の指令はサーボへ送らない。
 speedは0..1000、accelは0..254。最大16個のIDをRAM上に保持し、RUN中に250ms以上
@@ -117,6 +96,7 @@ STOP・SAFE・Watchdog停止では保持していた有効設定と目標値も�
 ```text
 DEVICE protocol=1 board=serial_svmd slots=16 watchdog_ms=250
 SERVO_STATE id=12 position=2048 enabled=1 error=00
+INPUT_STATE raw=3 stable=1 dip=5 available=63
 ```
 
 ## svmd
@@ -128,7 +108,7 @@ CAN標準ID `0x300` を指令、`0x301` を状態通知に使用する。8 byte�
 | byte | 内容 |
 |---|---|
 | 0 | protocol version (`1`) |
-| 1 | command (`0=STOP`, `1=SET`, `2=ENABLE`, `3=HEARTBEAT`, `4=INPUT READ`) |
+| 1 | command (`0=STOP`, `1=SET`, `2=ENABLE`, `3=HEARTBEAT`) |
 | 2 | channel (`0..3`) |
 | 3 | flags / enable (`0|1`) |
 | 4..5 | pulse width [us]、big endian |
@@ -136,9 +116,6 @@ CAN標準ID `0x300` を指令、`0x301` を状態通知に使用する。8 byte�
 
 SETで許容するパルス幅は安全上限内に限定する。Watchdogを超過した場合は全チャネルを
 detachして状態通知にtimeoutを設定する。
-
-`INPUT READ` はbyte 2..5を0にする。svmdに外部接点入力はなく、応答はDIPだけを載せた
-`0x302` のフレームで、`0x301` の状態通知は返さない。停止条件は設定できない。
 
 状態通知はCAN標準ID `0x301`、8 byteで返す。
 
