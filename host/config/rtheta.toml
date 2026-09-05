@@ -1,4 +1,5 @@
 protocol_version = 1
+# serial_svmdを使う機体では、[serial_svmd]と[[serial_svmd.servos]]を追加する。
 
 [[axes]]
 name = "r"

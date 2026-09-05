@@ -264,6 +264,16 @@ impl BridgeApp {
                 });
                 ui.end_row();
 
+                if self.shared.config().machine.requires_serial_svmd() {
+                    ui.label("serial_svmd");
+                    ui.label(if status.serial_svmd_connected {
+                        "接続"
+                    } else {
+                        "未接続"
+                    });
+                    ui.end_row();
+                }
+
                 ui.label("デバイス");
                 ui.label(match &status.device {
                     Some(device) => format!("{} / protocol {}", device.board, device.protocol),

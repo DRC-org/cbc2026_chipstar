@@ -36,10 +36,16 @@ pub fn run(shared: Arc<Shared>) {
     let mut cfg = shared.config();
     let mut last_gen = shared.config_generation();
     let mut link = SerialLink::new(cfg.serial_device.clone(), cfg.baud_rate);
+    let mut serial_svmd_link = cfg
+        .machine
+        .serial_svmd
+        .as_ref()
+        .map(|board| SerialLink::new(board.device.clone(), board.baud_rate));
     let mut period = period_from_hz(cfg.rate_hz);
     let mut machine = MachineController::new(cfg.machine.clone());
     shared.queue_line(machine.hello_line());
     let mut last_hello = Instant::now();
+    let mut last_serial_svmd_hello = Instant::now();
 
     while shared.is_running() {
         // 設定変更を検知したらシリアルを開き直す。
@@ -48,17 +54,32 @@ pub fn run(shared: Arc<Shared>) {
             last_gen = generation;
             cfg = shared.config();
             link = SerialLink::new(cfg.serial_device.clone(), cfg.baud_rate);
+            serial_svmd_link = cfg
+                .machine
+                .serial_svmd
+                .as_ref()
+                .map(|board| SerialLink::new(board.device.clone(), board.baud_rate));
             period = period_from_hz(cfg.rate_hz);
             machine = MachineController::new(cfg.machine.clone());
             shared.queue_line(machine.hello_line());
-            shared.update_status(|s| s.device = None);
+            shared.update_status(|s| {
+                s.device = None;
+                s.serial_svmd_device = None;
+            });
             last_hello = Instant::now();
+            last_serial_svmd_hello = Instant::now();
         }
 
         // USBの抜き差しは明示イベントを持たないため、能力照会を定期再送する。
         if last_hello.elapsed() >= Duration::from_secs(1) {
             let _ = link.write_line(&machine.hello_line());
             last_hello = Instant::now();
+        }
+        if last_serial_svmd_hello.elapsed() >= Duration::from_secs(1) {
+            if let Some(link) = serial_svmd_link.as_mut() {
+                let _ = link.write_line(&machine.serial_svmd_hello_line());
+            }
+            last_serial_svmd_hello = Instant::now();
         }
 
         // イベントを消費して各ゲームパッドの状態を最新化する。
@@ -81,6 +102,19 @@ pub fn run(shared: Arc<Shared>) {
                 });
             }
         }
+        for line in shared.take_serial_svmd_commands() {
+            let Some(link) = serial_svmd_link.as_mut() else {
+                continue;
+            };
+            if let Err(err) = link.write_line(&line) {
+                shared.update_status(|s| {
+                    s.serial_svmd_connected = false;
+                    s.last_error = Some(format!("serial_svmd: {err:#}"));
+                });
+            } else {
+                shared.update_status(|s| s.serial_svmd_connected = true);
+            }
+        }
 
         let gamepad = gilrs.gamepads().find(|(_, pad)| pad.is_connected());
 
@@ -96,6 +130,16 @@ pub fn run(shared: Arc<Shared>) {
                         if let Err(err) = link.write_line(target) {
                             result = Err(err);
                             break;
+                        }
+                    }
+                    if result.is_ok()
+                        && let Some(link) = serial_svmd_link.as_mut()
+                    {
+                        for target in machine.update_serial_svmd(&state, period.as_secs_f32()) {
+                            if let Err(err) = link.write_line(&target) {
+                                result = Err(err);
+                                break;
+                            }
                         }
                     }
                     Some((result, targets.last().cloned().unwrap_or_default()))
@@ -144,6 +188,19 @@ pub fn run(shared: Arc<Shared>) {
                     s.telemetry = Some(telemetry);
                     s.telemetry_count = s.telemetry_count.wrapping_add(1);
                 });
+            }
+        }
+        if let Some(link) = serial_svmd_link.as_mut() {
+            for line in link.read_lines() {
+                if let Some(device) = parse_device_info(&line)
+                    && device.board == "serial_svmd"
+                {
+                    shared.update_status(|s| {
+                        s.serial_svmd_device = Some(device);
+                        s.serial_svmd_connected = true;
+                        s.last_error = None;
+                    });
+                }
             }
         }
 

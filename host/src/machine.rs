@@ -19,6 +19,7 @@ const STICK_DEADZONE: f32 = 0.1;
 const PWM_CHANNEL_COUNT: usize = 4;
 const PWM_MIN_US: u16 = 500;
 const PWM_MAX_US: u16 = 2500;
+const SERIAL_SERVO_MAX_COUNT: usize = 16;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct AxisProfile {
@@ -50,6 +51,36 @@ pub struct PwmServoProfile {
     pub enabled: bool,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct SerialServoProfile {
+    pub name: String,
+    pub id: u8,
+    pub input_axis: Option<usize>,
+    #[serde(default = "one")]
+    pub input_sign: f32,
+    pub speed_position_per_second: f32,
+    pub minimum_position: u16,
+    pub maximum_position: u16,
+    pub initial_position: u16,
+    pub move_speed: u16,
+    pub acceleration: u8,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct SerialSvmdProfile {
+    pub device: String,
+    #[serde(default = "serial_svmd_baud")]
+    pub baud_rate: u32,
+    #[serde(default)]
+    pub servos: Vec<SerialServoProfile>,
+}
+
+fn serial_svmd_baud() -> u32 {
+    38_400
+}
+
 fn one() -> f32 {
     1.0
 }
@@ -61,6 +92,7 @@ pub struct MachineProfile {
     pub axes: Vec<AxisProfile>,
     #[serde(default)]
     pub pwm_servos: Vec<PwmServoProfile>,
+    pub serial_svmd: Option<SerialSvmdProfile>,
 }
 
 impl MachineProfile {
@@ -92,8 +124,8 @@ impl MachineProfile {
         if self.pwm_servos.len() > PWM_CHANNEL_COUNT {
             bail!("PWMサーボ数は0..={PWM_CHANNEL_COUNT}で指定してください");
         }
-        if self.axes.is_empty() && self.pwm_servos.is_empty() {
-            bail!("軸またはPWMサーボを1つ以上指定してください");
+        if self.axes.is_empty() && self.pwm_servos.is_empty() && self.serial_svmd.is_none() {
+            bail!("軸またはサーボを1つ以上指定してください");
         }
 
         let mut slots = HashSet::new();
@@ -158,11 +190,51 @@ impl MachineProfile {
                 bail!("PWMサーボ設定の範囲が不正です: {}", servo.name);
             }
         }
+        if let Some(board) = &self.serial_svmd {
+            if board.device.trim().is_empty() || board.baud_rate == 0 {
+                bail!("serial_svmdの接続設定が不正です");
+            }
+            if board.servos.is_empty() || board.servos.len() > SERIAL_SERVO_MAX_COUNT {
+                bail!("serial_svmdのサーボ数は1..={SERIAL_SERVO_MAX_COUNT}で指定してください");
+            }
+            let mut ids = HashSet::new();
+            for servo in &board.servos {
+                if servo.id == 0 || servo.id > 253 || !ids.insert(servo.id) {
+                    bail!("STS3215 IDは1..253で重複なく指定してください: {}", servo.id);
+                }
+                if servo.name.is_empty() || !names.insert(servo.name.as_str()) {
+                    bail!(
+                        "デバイス名は空でなく重複しない値にしてください: {}",
+                        servo.name
+                    );
+                }
+                if servo.input_axis.is_some_and(|index| index >= 6) {
+                    bail!("input_axisは0..5で指定してください: {}", servo.name);
+                }
+                if !servo.input_sign.is_finite()
+                    || !servo.speed_position_per_second.is_finite()
+                    || servo.input_sign.abs() != 1.0
+                    || servo.speed_position_per_second < 0.0
+                    || servo.maximum_position > 4095
+                    || servo.minimum_position >= servo.maximum_position
+                    || !(servo.minimum_position..=servo.maximum_position)
+                        .contains(&servo.initial_position)
+                    || servo.move_speed > 1000
+                    || servo.acceleration > 254
+                {
+                    bail!("STS3215設定の範囲が不正です: {}", servo.name);
+                }
+            }
+        }
         Ok(())
     }
 
     pub fn requires_can_bus_2(&self) -> bool {
         !self.pwm_servos.is_empty()
+    }
+
+    pub fn requires_serial_svmd(&self) -> bool {
+        self.serial_svmd.is_some()
     }
 }
 
@@ -170,6 +242,7 @@ pub struct MachineController {
     profile: MachineProfile,
     targets: Vec<f32>,
     pwm_targets_us: Vec<f32>,
+    serial_targets: Vec<f32>,
 }
 
 impl MachineController {
@@ -180,14 +253,25 @@ impl MachineController {
             .iter()
             .map(|servo| f32::from(servo.initial_us))
             .collect();
+        let serial_targets = profile
+            .serial_svmd
+            .iter()
+            .flat_map(|board| &board.servos)
+            .map(|servo| f32::from(servo.initial_position))
+            .collect();
         Self {
             profile,
             targets,
             pwm_targets_us,
+            serial_targets,
         }
     }
 
     pub fn hello_line(&self) -> String {
+        format!("HELLO {}", self.profile.protocol_version)
+    }
+
+    pub fn serial_svmd_hello_line(&self) -> String {
         format!("HELLO {}", self.profile.protocol_version)
     }
 
@@ -231,6 +315,39 @@ impl MachineController {
                 }
                 .to_cctl_line(),
             );
+        }
+        lines
+    }
+
+    pub fn update_serial_svmd(&mut self, input: &ControllerState, elapsed_s: f32) -> Vec<String> {
+        let Some(board) = &self.profile.serial_svmd else {
+            return Vec::new();
+        };
+        let dt = elapsed_s.clamp(0.0, MAX_INPUT_INTERVAL_S);
+        let mut lines = Vec::with_capacity(board.servos.len() * 2);
+        for (servo, target) in board.servos.iter().zip(&mut self.serial_targets) {
+            if let Some(index) = servo.input_axis {
+                let raw = input.axes[index];
+                let value = if raw.abs() < STICK_DEADZONE { 0.0 } else { raw };
+                *target = (*target
+                    + value * servo.input_sign * servo.speed_position_per_second * dt)
+                    .clamp(
+                        f32::from(servo.minimum_position),
+                        f32::from(servo.maximum_position),
+                    );
+            }
+            lines.push(format!(
+                "SERVO TARGET {} {} {} {}",
+                servo.id,
+                target.round() as u16,
+                servo.move_speed,
+                servo.acceleration
+            ));
+            lines.push(format!(
+                "SERVO ENABLE {} {}",
+                servo.id,
+                u8::from(servo.enabled)
+            ));
         }
         lines
     }
@@ -312,5 +429,23 @@ mod tests {
 
         assert_eq!(lines[3], "CAN 2 768 0101010005780000");
         assert_eq!(lines[4], "CAN 2 768 0102010100000000");
+    }
+
+    #[test]
+    fn validates_and_drives_serial_servo_from_host_profile() {
+        let source = format!(
+            "{EMBEDDED_PROFILE}\n[serial_svmd]\ndevice = \"/dev/ttyUSB0\"\n\n[[serial_svmd.servos]]\nname = \"arm\"\nid = 12\ninput_axis = 4\ninput_sign = 1.0\nspeed_position_per_second = 500.0\nminimum_position = 1000\nmaximum_position = 3000\ninitial_position = 2000\nmove_speed = 400\nacceleration = 30\nenabled = true\n"
+        );
+        let profile = MachineProfile::parse(&source).unwrap();
+        assert!(profile.requires_serial_svmd());
+        assert_eq!(profile.serial_svmd.as_ref().unwrap().baud_rate, 38_400);
+        let mut machine = MachineController::new(profile);
+        let mut input = neutral_input();
+        input.axes[4] = 1.0;
+
+        assert_eq!(
+            machine.update_serial_svmd(&input, 0.1),
+            vec!["SERVO TARGET 12 2050 400 30", "SERVO ENABLE 12 1"]
+        );
     }
 }

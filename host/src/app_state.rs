@@ -28,6 +28,7 @@ pub struct Status {
     pub gamepad_connected: bool,
     pub gamepad_name: Option<String>,
     pub serial_connected: bool,
+    pub serial_svmd_connected: bool,
     pub last_error: Option<String>,
     pub tx_count: u64,
     pub last_line: String,
@@ -37,6 +38,7 @@ pub struct Status {
     pub telemetry: Option<Telemetry>,
     pub telemetry_count: u64,
     pub device: Option<DeviceInfo>,
+    pub serial_svmd_device: Option<DeviceInfo>,
 }
 
 /// スレッド間共有ハンドル。`Arc<Shared>` で持ち回る。
@@ -48,6 +50,7 @@ pub struct Shared {
     status: Mutex<Status>,
     /// GUI が積み、ワーカーが送る指令行。
     commands: Mutex<VecDeque<String>>,
+    serial_svmd_commands: Mutex<VecDeque<String>>,
 }
 
 impl Shared {
@@ -59,6 +62,7 @@ impl Shared {
             running: AtomicBool::new(true),
             status: Mutex::new(Status::default()),
             commands: Mutex::new(VecDeque::new()),
+            serial_svmd_commands: Mutex::new(VecDeque::new()),
         }
     }
 
@@ -116,10 +120,27 @@ impl Shared {
                 });
                 return false;
             }
+            if self.config.lock().unwrap().machine.requires_serial_svmd()
+                && status.serial_svmd_device.is_none()
+            {
+                drop(status);
+                self.update_status(|status| {
+                    status.last_error = Some("serial_svmdの能力確認が完了していません".to_owned());
+                });
+                return false;
+            }
         }
         self.queue_line(command.to_line());
         if command == Command::Stop && self.config.lock().unwrap().machine.requires_can_bus_2() {
             self.queue_line(svmd::Command::Stop.to_cctl_line());
+        }
+        if self.config.lock().unwrap().machine.requires_serial_svmd()
+            && matches!(command, Command::Stop | Command::Run | Command::Safe)
+        {
+            self.serial_svmd_commands
+                .lock()
+                .unwrap()
+                .push_back(command.to_line());
         }
         true
     }
@@ -132,6 +153,14 @@ impl Shared {
     /// 送信待ちの行を全て取り出す。
     pub fn take_commands(&self) -> Vec<String> {
         self.commands.lock().unwrap().drain(..).collect()
+    }
+
+    pub fn take_serial_svmd_commands(&self) -> Vec<String> {
+        self.serial_svmd_commands
+            .lock()
+            .unwrap()
+            .drain(..)
+            .collect()
     }
 
     /// ワーカーから状態を更新する。
@@ -162,6 +191,29 @@ enabled = true
         .unwrap()
     }
 
+    fn serial_profile() -> MachineProfile {
+        MachineProfile::parse(
+            r#"
+protocol_version = 1
+
+[serial_svmd]
+device = "/dev/ttyUSB0"
+
+[[serial_svmd.servos]]
+name = "arm"
+id = 1
+speed_position_per_second = 0.0
+minimum_position = 1000
+maximum_position = 3000
+initial_position = 2000
+move_speed = 400
+acceleration = 30
+enabled = true
+"#,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn stop_is_forwarded_to_cctl_and_svmd() {
         let shared = Shared::new(BridgeConfig {
@@ -176,5 +228,20 @@ enabled = true
             shared.take_commands(),
             vec!["STOP", "CAN 2 768 0100000000000000"]
         );
+    }
+
+    #[test]
+    fn common_state_commands_are_forwarded_to_serial_svmd() {
+        let shared = Shared::new(BridgeConfig {
+            serial_device: "/dev/null".to_owned(),
+            baud_rate: 115_200,
+            rate_hz: 20.0,
+            machine: serial_profile(),
+        });
+
+        assert!(shared.queue_command(Command::Safe));
+        assert!(shared.queue_command(Command::Home { slots: 7 }));
+        assert_eq!(shared.take_commands(), vec!["SAFE", "HOME 7"]);
+        assert_eq!(shared.take_serial_svmd_commands(), vec!["SAFE"]);
     }
 }
