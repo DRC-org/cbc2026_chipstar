@@ -500,6 +500,10 @@ impl BridgeApp {
 
         ui.add_space(12.0);
         ui.separator();
+        self.origin_ui(ui, &status);
+
+        ui.add_space(12.0);
+        ui.separator();
         let mut sending = self.shared.sending_enabled();
         if ui
             .checkbox(&mut sending, "コントローラ入力の送信を有効化")
@@ -507,6 +511,53 @@ impl BridgeApp {
         {
             self.shared.set_sending_enabled(sending);
         }
+    }
+
+    /// 原点出し。スイッチのある軸はジョグで当てれば自動で採用され、
+    /// スイッチのない軸は姿勢を合わせてからボタンで採用する。
+    fn origin_ui(&mut self, ui: &mut egui::Ui, status: &crate::app_state::Status) {
+        ui.label(egui::RichText::new("原点").strong());
+        if status.origins.is_empty() {
+            ui.label("軸が設定されていません。");
+            return;
+        }
+        if status
+            .telemetry
+            .as_ref()
+            .is_none_or(|telemetry| telemetry.contacts.is_none())
+        {
+            ui.colored_label(
+                egui::Color32::from_rgb(200, 140, 0),
+                "接点の状態が届いていません。cctlのFWが古い可能性があります。",
+            );
+        }
+
+        for (index, origin) in status.origins.iter().enumerate() {
+            ui.horizontal(|ui| {
+                let (mark, color) = if origin.captured {
+                    ("採用済み", egui::Color32::from_rgb(0, 150, 0))
+                } else {
+                    ("未採用", egui::Color32::from_rgb(200, 140, 0))
+                };
+                ui.colored_label(color, format!("{:<6}{mark}", origin.name));
+                ui.label(format!("{:8.2} {}", origin.position, origin.unit));
+                match origin.at_limit {
+                    Some(true) => {
+                        ui.colored_label(egui::Color32::from_rgb(200, 60, 60), "リミット到達")
+                    }
+                    Some(false) => ui.label("リミット手前"),
+                    None => ui.label("スイッチなし"),
+                };
+                if ui
+                    .button("現在位置を原点に")
+                    .on_hover_text("いまの姿勢にこの軸の原点位置を割り当てます。")
+                    .clicked()
+                {
+                    self.shared.request_origin(index);
+                }
+            });
+        }
+        ui.label("未採用の軸は可動域の制限が効きません。低速で当ててください。");
     }
 
     fn help_ui(&mut self, ui: &mut egui::Ui) {

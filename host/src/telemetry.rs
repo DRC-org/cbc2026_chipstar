@@ -37,6 +37,8 @@ pub struct Telemetry {
     pub enabled_slots: u8,
     pub mode: RunMode,
     pub error_bits: u8,
+    /// SW1..SW3の10ms安定値。閉で1。`sw=`を持たないFWではNone。
+    pub contacts: Option<u8>,
 }
 
 impl Telemetry {
@@ -73,6 +75,7 @@ pub fn parse_telemetry(line: &str) -> Option<Telemetry> {
     let mut enabled_slots = None;
     let mut mode = None;
     let mut error_bits = None;
+    let mut contacts = None;
     for token in tokens {
         let (key, value) = token.split_once('=')?;
         match key {
@@ -83,6 +86,7 @@ pub fn parse_telemetry(line: &str) -> Option<Telemetry> {
             "a1" => slots[1] = Some(parse_slot(value)?),
             "a2" => slots[2] = Some(parse_slot(value)?),
             "err" => error_bits = Some(u8::from_str_radix(value, 16).ok()?),
+            "sw" => contacts = Some(value.parse().ok()?),
             _ => {}
         }
     }
@@ -93,6 +97,7 @@ pub fn parse_telemetry(line: &str) -> Option<Telemetry> {
         enabled_slots: enabled_slots?,
         mode: mode?,
         error_bits: error_bits?,
+        contacts,
     })
 }
 
@@ -101,7 +106,7 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str =
-        "STATE t=12345 mode=RUN en=7 a0=1.200/1.100 a1=-45.000/-44.200 a2=0.500/0.400 err=0A";
+        "STATE t=12345 mode=RUN en=7 a0=1.200/1.100 a1=-45.000/-44.200 a2=0.500/0.400 err=0A sw=5";
 
     #[test]
     fn parses_all_slots() {
@@ -111,7 +116,14 @@ mod tests {
         assert_eq!(telemetry.slots[1].measured, -44.2);
         assert_eq!(telemetry.mode, RunMode::Run);
         assert_eq!(telemetry.error_bits, 0x0A);
+        assert_eq!(telemetry.contacts, Some(5));
         assert!(telemetry.slot_enabled(2));
+    }
+
+    #[test]
+    fn treats_missing_contacts_as_unknown_not_as_asserted() {
+        let line = SAMPLE.strip_suffix(" sw=5").unwrap();
+        assert_eq!(parse_telemetry(line).unwrap().contacts, None);
     }
 
     #[test]

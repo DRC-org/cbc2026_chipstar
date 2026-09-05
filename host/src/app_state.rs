@@ -41,6 +41,8 @@ pub struct Status {
     pub telemetry_count: u64,
     pub device: Option<DeviceInfo>,
     pub serial_svmd_device: Option<DeviceInfo>,
+    /// 軸ごとの原点と接点の状態。
+    pub origins: Vec<crate::machine::OriginState>,
 }
 
 /// スレッド間共有ハンドル。`Arc<Shared>` で持ち回る。
@@ -54,6 +56,8 @@ pub struct Shared {
     /// GUI が積み、ワーカーが送る指令行。
     commands: Mutex<VecDeque<String>>,
     serial_svmd_commands: Mutex<VecDeque<String>>,
+    /// GUI が積み、ワーカーが処理する原点採用の要求（軸の番号）。
+    origin_requests: Mutex<Vec<usize>>,
 }
 
 impl Shared {
@@ -67,6 +71,7 @@ impl Shared {
             status: Mutex::new(Status::default()),
             commands: Mutex::new(VecDeque::new()),
             serial_svmd_commands: Mutex::new(VecDeque::new()),
+            origin_requests: Mutex::new(Vec::new()),
         }
     }
 
@@ -221,6 +226,15 @@ impl Shared {
     /// 送信待ちの行を全て取り出す。
     pub fn take_commands(&self) -> Vec<String> {
         self.commands.lock().unwrap().drain(..).collect()
+    }
+
+    /// 指定した軸の現在位置を原点として採るよう要求する。
+    pub fn request_origin(&self, index: usize) {
+        self.origin_requests.lock().unwrap().push(index);
+    }
+
+    pub fn take_origin_requests(&self) -> Vec<usize> {
+        std::mem::take(&mut *self.origin_requests.lock().unwrap())
     }
 
     pub fn take_serial_svmd_commands(&self) -> Vec<String> {

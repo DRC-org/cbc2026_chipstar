@@ -42,6 +42,8 @@ pub fn run(shared: Arc<Shared>) {
     shared.queue_line(machine.hello_line());
     let mut last_hello = Instant::now();
     let mut last_serial_svmd_hello = Instant::now();
+    // 原点採用と接点判定は最新のテレメトリを基準にする。
+    let mut telemetry = None;
 
     while shared.is_running() {
         if shared.tests.enabled() {
@@ -119,6 +121,12 @@ pub fn run(shared: Arc<Shared>) {
 
         // 指令はコントローラの有無にも送信停止にも関係なく送る。
         // 立ち上げ中はコントローラを繋がないこともあり、STOP は常に届く必要がある。
+        for index in shared.take_origin_requests() {
+            machine.capture_origin(index, telemetry.as_ref());
+        }
+        let origins = machine.origin_states(telemetry.as_ref());
+        shared.update_status(|s| s.origins = origins);
+
         for line in shared.take_commands() {
             if let Err(err) = link.write_line(&line) {
                 shared.update_status(|s| {
@@ -157,7 +165,7 @@ pub fn run(shared: Arc<Shared>) {
 
                 let send_result = if shared.sending_enabled() {
                     let mut result = Ok(());
-                    let targets = machine.update(&state, period.as_secs_f32());
+                    let targets = machine.update(&state, period.as_secs_f32(), telemetry.as_ref());
                     for target in &targets {
                         if let Err(err) = link.write_line(target) {
                             result = Err(err);
@@ -221,7 +229,9 @@ pub fn run(shared: Arc<Shared>) {
                     s.serial_connected = true;
                     s.last_error = None;
                 });
-            } else if let Some(telemetry) = parse_telemetry(&line) {
+            } else if let Some(parsed) = parse_telemetry(&line) {
+                telemetry = Some(parsed.clone());
+                let telemetry = parsed;
                 shared.update_status(|s| {
                     s.telemetry = Some(telemetry);
                     s.telemetry_count = s.telemetry_count.wrapping_add(1);

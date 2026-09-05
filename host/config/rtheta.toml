@@ -12,6 +12,12 @@ native_per_unit = 0.10005072
 minimum = 0.0
 maximum = 120.0
 initial = 0.0
+# 前進しきるとビーム後端がSW1を叩く。そこが可動域の最大側。
+origin_position = 120.0
+
+[axes.limit]
+input = 0
+direction = 1.0
 
 [[axes]]
 name = "theta"
@@ -24,6 +30,9 @@ native_per_unit = 140.82353
 minimum = -180.0
 maximum = 180.0
 initial = 0.0
+# 赤青コートで取り付けを共用できないためスイッチは持たない。
+# セッティングで姿勢を合わせ、GUIから原点を採る。
+origin_position = 0.0
 
 [[axes]]
 name = "z"
@@ -34,3 +43,9 @@ native_per_unit = 0.15707964
 minimum = 0.0
 maximum = 75.0
 initial = 0.0
+# 下端でSW2に当たる。
+origin_position = 0.0
+
+[axes.limit]
+input = 1
+direction = -1.0
