@@ -18,6 +18,7 @@
 
 ## 実機作業
 
+- [firmware_tests.md](firmware_tests.md) — 全基板の駆動・読取り・通信を個別にON/OFFする配線確認ツール
 - [bringup.md](bringup.md) — cctl の立ち上げ手順、指令とテレメトリ、LED の読み方、調整値の場所
 
 ## 機体・制御

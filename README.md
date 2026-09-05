@@ -18,6 +18,8 @@
 ## ドキュメント
 機体・回路・制御のドメイン知識は [docs/](docs/README.md) を参照。
 
+全基板の駆動・読取り・通信を個別に切り替える実機テストは
+[基板ネットワークの動作テスト](docs/firmware_tests.md)を参照。
 各基板のペリフェラルを単体で動かして確認するコードは [samples/](samples/README.md) にある。
 
 HAL 非依存ロジックのホスト側テストは [tests/](tests/README.md) にある。

@@ -65,6 +65,9 @@ IDは1..253、positionは0..4095とする。範囲外の指令はサーボへ送
 speedは0..1000、accelは0..254。最大16個のIDをRAM上に保持し、RUN中に250ms以上
 有効な指令が途切れると全サーボのトルクを切る。
 
+STOP・SAFE・Watchdog停止では保持していた有効設定と目標値も解除する。
+再始動にはTARGETとENABLEを再設定する。RUNだけでは以前の出力を復帰させない。
+
 ```text
 DEVICE protocol=1 board=serial_svmd slots=16 watchdog_ms=250
 SERVO_STATE id=12 position=2048 enabled=1 error=00

@@ -65,6 +65,11 @@ void disableAll() {
 void setMode(Mode next) {
   if (next != Mode::Run) {
     disableAll();
+    // 再RUN時に前のセッションの出力を復帰させない。
+    for (auto& servo : servos) {
+      servo.enabled = false;
+      servo.has_target = false;
+    }
     mode = next;
     return;
   }
