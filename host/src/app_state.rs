@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::device::DeviceInfo;
 use crate::frame::Command;
 use crate::machine::MachineProfile;
+use crate::svmd;
 use crate::telemetry::Telemetry;
 
 /// シリアルブリッジの設定。
@@ -97,13 +98,29 @@ impl Shared {
 
     /// 指令を送信待ちに積む。送信停止中でも送るので、STOP は必ず届く。
     pub fn queue_command(&self, command: Command) -> bool {
-        if command == Command::Run && self.status.lock().unwrap().device.is_none() {
-            self.update_status(|status| {
-                status.last_error = Some("FWの能力確認が完了していません".to_owned());
-            });
-            return false;
+        if command == Command::Run {
+            let status = self.status.lock().unwrap();
+            let Some(device) = &status.device else {
+                drop(status);
+                self.update_status(|status| {
+                    status.last_error = Some("FWの能力確認が完了していません".to_owned());
+                });
+                return false;
+            };
+            if self.config.lock().unwrap().machine.requires_can_bus_2()
+                && !device.can_buses.contains(&2)
+            {
+                drop(status);
+                self.update_status(|status| {
+                    status.last_error = Some("FWに必要なCAN bus 2がありません".to_owned());
+                });
+                return false;
+            }
         }
         self.queue_line(command.to_line());
+        if command == Command::Stop && self.config.lock().unwrap().machine.requires_can_bus_2() {
+            self.queue_line(svmd::Command::Stop.to_cctl_line());
+        }
         true
     }
 
@@ -120,5 +137,44 @@ impl Shared {
     /// ワーカーから状態を更新する。
     pub fn update_status(&self, f: impl FnOnce(&mut Status)) {
         f(&mut self.status.lock().unwrap());
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn pwm_profile() -> MachineProfile {
+        MachineProfile::parse(
+            r#"
+protocol_version = 1
+
+[[pwm_servos]]
+name = "gripper"
+channel = 0
+speed_us_per_second = 0.0
+minimum_us = 900
+maximum_us = 2100
+initial_us = 1500
+enabled = true
+"#,
+        )
+        .unwrap()
+    }
+
+    #[test]
+    fn stop_is_forwarded_to_cctl_and_svmd() {
+        let shared = Shared::new(BridgeConfig {
+            serial_device: "/dev/null".to_owned(),
+            baud_rate: 115_200,
+            rate_hz: 20.0,
+            machine: pwm_profile(),
+        });
+
+        assert!(shared.queue_command(Command::Stop));
+        assert_eq!(
+            shared.take_commands(),
+            vec!["STOP", "CAN 2 768 0100000000000000"]
+        );
     }
 }

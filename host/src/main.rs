@@ -10,6 +10,7 @@ mod gui;
 mod keymap;
 mod machine;
 mod serial;
+mod svmd;
 mod telemetry;
 mod worker;
 

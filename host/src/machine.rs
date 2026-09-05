@@ -10,11 +10,15 @@ use anyhow::{Context, Result, bail};
 use serde::Deserialize;
 
 use crate::controller::ControllerState;
+use crate::svmd;
 
 const EMBEDDED_PROFILE: &str = include_str!("../config/rtheta.toml");
 const MAX_SLOTS: usize = 3;
 const MAX_INPUT_INTERVAL_S: f32 = 0.1;
 const STICK_DEADZONE: f32 = 0.1;
+const PWM_CHANNEL_COUNT: usize = 4;
+const PWM_MIN_US: u16 = 500;
+const PWM_MAX_US: u16 = 2500;
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct AxisProfile {
@@ -31,6 +35,21 @@ pub struct AxisProfile {
     pub initial: f32,
 }
 
+#[derive(Clone, Debug, Deserialize, PartialEq)]
+pub struct PwmServoProfile {
+    pub name: String,
+    pub channel: u8,
+    pub input_axis: Option<usize>,
+    #[serde(default = "one")]
+    pub input_sign: f32,
+    pub speed_us_per_second: f32,
+    pub minimum_us: u16,
+    pub maximum_us: u16,
+    pub initial_us: u16,
+    #[serde(default)]
+    pub enabled: bool,
+}
+
 fn one() -> f32 {
     1.0
 }
@@ -38,7 +57,10 @@ fn one() -> f32 {
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct MachineProfile {
     pub protocol_version: u8,
+    #[serde(default)]
     pub axes: Vec<AxisProfile>,
+    #[serde(default)]
+    pub pwm_servos: Vec<PwmServoProfile>,
 }
 
 impl MachineProfile {
@@ -64,8 +86,14 @@ impl MachineProfile {
                 self.protocol_version
             );
         }
-        if self.axes.is_empty() || self.axes.len() > MAX_SLOTS {
-            bail!("軸数は1..={MAX_SLOTS}で指定してください");
+        if self.axes.len() > MAX_SLOTS {
+            bail!("軸数は0..={MAX_SLOTS}で指定してください");
+        }
+        if self.pwm_servos.len() > PWM_CHANNEL_COUNT {
+            bail!("PWMサーボ数は0..={PWM_CHANNEL_COUNT}で指定してください");
+        }
+        if self.axes.is_empty() && self.pwm_servos.is_empty() {
+            bail!("軸またはPWMサーボを1つ以上指定してください");
         }
 
         let mut slots = HashSet::new();
@@ -100,19 +128,63 @@ impl MachineProfile {
                 bail!("軸設定の範囲が不正です: {}", axis.name);
             }
         }
+
+        let mut channels = HashSet::new();
+        for servo in &self.pwm_servos {
+            if servo.channel as usize >= PWM_CHANNEL_COUNT || !channels.insert(servo.channel) {
+                bail!(
+                    "PWM channelは0..3で重複なく指定してください: {}",
+                    servo.channel
+                );
+            }
+            if servo.name.is_empty() || !names.insert(servo.name.as_str()) {
+                bail!(
+                    "デバイス名は空でなく重複しない値にしてください: {}",
+                    servo.name
+                );
+            }
+            if servo.input_axis.is_some_and(|index| index >= 6) {
+                bail!("input_axisは0..5で指定してください: {}", servo.name);
+            }
+            if !servo.input_sign.is_finite()
+                || !servo.speed_us_per_second.is_finite()
+                || servo.input_sign.abs() != 1.0
+                || servo.speed_us_per_second < 0.0
+                || servo.minimum_us < PWM_MIN_US
+                || servo.maximum_us > PWM_MAX_US
+                || servo.minimum_us >= servo.maximum_us
+                || !(servo.minimum_us..=servo.maximum_us).contains(&servo.initial_us)
+            {
+                bail!("PWMサーボ設定の範囲が不正です: {}", servo.name);
+            }
+        }
         Ok(())
+    }
+
+    pub fn requires_can_bus_2(&self) -> bool {
+        !self.pwm_servos.is_empty()
     }
 }
 
 pub struct MachineController {
     profile: MachineProfile,
     targets: Vec<f32>,
+    pwm_targets_us: Vec<f32>,
 }
 
 impl MachineController {
     pub fn new(profile: MachineProfile) -> Self {
         let targets = profile.axes.iter().map(|axis| axis.initial).collect();
-        Self { profile, targets }
+        let pwm_targets_us = profile
+            .pwm_servos
+            .iter()
+            .map(|servo| f32::from(servo.initial_us))
+            .collect();
+        Self {
+            profile,
+            targets,
+            pwm_targets_us,
+        }
     }
 
     pub fn hello_line(&self) -> String {
@@ -121,7 +193,8 @@ impl MachineController {
 
     pub fn update(&mut self, input: &ControllerState, elapsed_s: f32) -> Vec<String> {
         let dt = elapsed_s.clamp(0.0, MAX_INPUT_INTERVAL_S);
-        self.profile
+        let mut lines: Vec<String> = self
+            .profile
             .axes
             .iter()
             .zip(&mut self.targets)
@@ -135,7 +208,31 @@ impl MachineController {
                 let native = *target * axis.native_per_unit;
                 format!("TARGET {} {native:.5}", axis.slot)
             })
-            .collect()
+            .collect();
+
+        for (servo, target) in self.profile.pwm_servos.iter().zip(&mut self.pwm_targets_us) {
+            if let Some(index) = servo.input_axis {
+                let raw = input.axes[index];
+                let value = if raw.abs() < STICK_DEADZONE { 0.0 } else { raw };
+                *target = (*target + value * servo.input_sign * servo.speed_us_per_second * dt)
+                    .clamp(f32::from(servo.minimum_us), f32::from(servo.maximum_us));
+            }
+            lines.push(
+                svmd::Command::Set {
+                    channel: servo.channel,
+                    pulse_us: target.round() as u16,
+                }
+                .to_cctl_line(),
+            );
+            lines.push(
+                svmd::Command::Enable {
+                    channel: servo.channel,
+                    enabled: servo.enabled,
+                }
+                .to_cctl_line(),
+            );
+        }
+        lines
     }
 
     #[cfg(test)]
@@ -198,5 +295,22 @@ mod tests {
         input.axes[0] = 1.0;
         machine.update(&input, 1.0);
         assert_eq!(machine.target("theta"), Some(9.0));
+    }
+
+    #[test]
+    fn validates_and_drives_pwm_servo_from_host_profile() {
+        let source = format!(
+            "{EMBEDDED_PROFILE}\n[[pwm_servos]]\nname = \"gripper\"\nchannel = 1\ninput_axis = 3\ninput_sign = -1.0\nspeed_us_per_second = 1000.0\nminimum_us = 900\nmaximum_us = 2100\ninitial_us = 1500\nenabled = true\n"
+        );
+        let profile = MachineProfile::parse(&source).unwrap();
+        assert!(profile.requires_can_bus_2());
+        let mut machine = MachineController::new(profile);
+        let mut input = neutral_input();
+        input.axes[3] = 1.0;
+
+        let lines = machine.update(&input, 0.1);
+
+        assert_eq!(lines[3], "CAN 2 768 0101010005780000");
+        assert_eq!(lines[4], "CAN 2 768 0102010100000000");
     }
 }
