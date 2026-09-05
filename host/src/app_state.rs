@@ -124,7 +124,7 @@ impl Shared {
                 self.tests.command("stop".into());
                 return true;
             }
-            self.update_status(|s| s.last_error = Some("基板テスト中は通常操作できません".into()));
+            self.update_status(|s| s.last_error = Some("動作テスト中は通常操作できません".into()));
             return false;
         }
         if command == Command::Run {

@@ -30,7 +30,7 @@ const SCREENS: [(Screen, &str); 5] = [
     (Screen::Config, "2 設定"),
     (Screen::Operation, "3 操作"),
     (Screen::Help, "4 ヘルプ"),
-    (Screen::Test, "5 基板テスト"),
+    (Screen::Test, "5 動作テスト"),
 ];
 
 /// 操作画面で選べる項目。
@@ -125,14 +125,16 @@ impl BridgeApp {
     // ---- キー入力 ---------------------------------------------------------
 
     fn handle_keys(&mut self, ctx: &egui::Context) {
-        if self.screen == Screen::Test {
-            // テスト画面では数値・接続先を通常のGUI入力として編集する。
-            if !ctx.egui_wants_keyboard_input() && ctx.input(|i| i.key_pressed(egui::Key::Space)) {
-                self.shared.queue_command(Command::Stop);
-            }
+        if self.mode != Mode::Normal {
             return;
         }
-        if self.mode != Mode::Normal {
+
+        // 動作テスト画面には数値・接続先の入力欄がある。編集中だけはキーを奪わず、
+        // Esc でフォーカスを外して通常のキー操作へ戻す。
+        if self.screen == Screen::Test && ctx.egui_wants_keyboard_input() {
+            if ctx.input(|input| input.key_pressed(egui::Key::Escape)) {
+                ctx.memory_mut(|memory| memory.stop_text_input());
+            }
             return;
         }
 
@@ -442,7 +444,7 @@ impl BridgeApp {
     fn operation_ui(&mut self, ui: &mut egui::Ui) {
         if self.shared.tests.enabled() {
             ui.label(
-                "基板テスト中は通常操作を停止しています。「5 基板テスト」で終了してください。",
+                "動作テスト中は通常操作を停止しています。「5 動作テスト」で終了してください。",
             );
             if ui.button("テスト出力STOP").clicked() {
                 self.shared.queue_command(Command::Stop);
@@ -564,15 +566,19 @@ impl BridgeApp {
         ui.heading("キー操作");
         ui.separator();
 
-        const ROWS: [(&str, &str); 13] = [
+        const ROWS: [(&str, &str); 14] = [
             ("Space", "STOP を送る。どの画面でも効く"),
             ("j / k", "選択を下 / 上へ"),
             ("gg / G", "選択を先頭 / 末尾へ"),
             ("Enter", "選択中の項目を実行"),
             ("gt / gT", "次 / 前の画面へ"),
-            ("1 - 4", "画面を直接選ぶ"),
+            ("1 - 5", "画面を直接選ぶ"),
             ("i", "設定画面で編集を始める"),
             ("Esc", "編集・コマンドラインを抜ける"),
+            (
+                "",
+                "動作テスト画面では入力欄の編集中だけキーが入力になる。Esc で戻る",
+            ),
             (":", "コマンドラインを開く"),
             ("?", "この画面"),
             (":q", "終了"),
