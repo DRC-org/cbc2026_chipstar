@@ -37,6 +37,10 @@ struct Args {
     seconds: u64,
 }
 
+fn output_ids(session: &fw_test::Session) -> Vec<u8> {
+    session.output_expiries().into_iter().map(|(id, _)| id).collect()
+}
+
 fn main() -> Result<()> {
     let args = Args::parse();
     let baud = args
@@ -71,7 +75,7 @@ fn main() -> Result<()> {
     let result = (|| -> Result<()> {
         loop {
             let now = Instant::now();
-            let previous_outputs = session.active_outputs();
+            let previous_outputs = output_ids(&session);
             match rx.try_recv() {
                 Ok(line) if line.trim() == "quit" => break,
                 Ok(line) if line.trim() == "help" => println!("{}", session.help()),
@@ -91,8 +95,8 @@ fn main() -> Result<()> {
                 Err(mpsc::TryRecvError::Empty) => {}
             }
             send(&mut link, session.tick(now))?;
-            if previous_outputs != session.active_outputs() {
-                println!("テスト出力ON（指令状態）: {:?}", session.active_outputs());
+            if previous_outputs != output_ids(&session) {
+                println!("テスト出力ON（指令状態）: {:?}", output_ids(&session));
             }
             for line in link.read_lines() {
                 if line.starts_with("ERR ") {

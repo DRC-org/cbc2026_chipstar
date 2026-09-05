@@ -51,9 +51,11 @@ impl Session {
     pub fn watchdog_running(&self) -> bool {
         self.silent_until.is_some()
     }
-    pub fn active_outputs(&self) -> Vec<u8> {
-        self.outputs.keys().copied().collect()
+    /// 出力中の番号と自動OFFの期限。
+    pub fn output_expiries(&self) -> Vec<(u8, Instant)> {
+        self.outputs.iter().map(|(id, at)| (*id, *at)).collect()
     }
+
     pub fn new(board: Board, duration: Duration) -> Self {
         Self {
             board,
@@ -387,7 +389,7 @@ mod tests {
         let now = Instant::now();
         s.command("on status", now).unwrap();
         assert_eq!(s.tick(now), ["CAN 2 768 0103000000000000"]);
-        assert!(s.active_outputs().is_empty());
+        assert!(s.output_expiries().is_empty());
         s.command("off status", now).unwrap();
         assert!(s.tick(now).is_empty());
     }

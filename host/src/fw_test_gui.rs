@@ -25,7 +25,8 @@ pub struct Config {
 pub struct Snapshot {
     pub inputs: Option<crate::inputs::InputState>,
     pub input_rx: Option<Instant>,
-    pub outputs: Vec<u8>,
+    /// 出力中の番号と自動OFFの期限。
+    pub outputs: Vec<(u8, Instant)>,
     pub ready: bool,
     pub switches: Vec<String>,
     pub watchdog: bool,
@@ -120,7 +121,7 @@ pub fn run(shared: &Shared, config: Config) {
             fw_test_transport::send(&mut link, session.tick(now))?;
             shared.tests.update(|s| {
                 s.switches = session.switches();
-                s.outputs = session.active_outputs();
+                s.outputs = session.output_expiries();
                 s.watchdog = session.watchdog_running();
             });
             for line in link.read_lines() {
@@ -187,137 +188,141 @@ impl Panel {
     }
 
     pub fn ui(&mut self, ui: &mut egui::Ui, shared: &Shared) {
-        ui.heading("基板テスト — 駆動・読取り・通信");
-        ui.label("通常操作と排他。開始時に出力を停止します。配線変更は電源OFFで行ってください。");
         let enabled = shared.tests.enabled();
         let snapshot = shared.tests.snapshot();
-        ui.add_enabled_ui(!enabled, |ui| {
-            let previous = self.config.board;
-            ui.horizontal(|ui| {
-                for (board, label) in [
-                    (Board::Cctl, "cctl"),
-                    (Board::Svmd, "svmd"),
-                    (Board::SerialSvmd, "serial_svmd"),
-                    (Board::Dcmd, "DCMD"),
-                ] {
-                    ui.selectable_value(&mut self.config.board, board, label);
-                }
-            });
-            if self.config.board != previous {
-                let cfg = shared.config();
-                self.config.device = if self.config.board == Board::SerialSvmd {
-                    cfg.machine
-                        .serial_svmd
-                        .as_ref()
-                        .map(|b| b.device.clone())
-                        .unwrap_or("/dev/ttyUSB0".into())
-                } else {
-                    cfg.serial_device
-                };
-                self.config.baud = if self.config.board == Board::SerialSvmd {
-                    38400
-                } else {
-                    cfg.baud_rate
-                };
-                self.motors = match self.config.board {
-                    Board::Cctl => vec![(0, 0.0), (1, 0.0), (2, 0.0)],
-                    Board::Svmd => (0..4).map(|id| (id, 1500.0)).collect(),
-                    Board::SerialSvmd => vec![(1, 2048.0)],
-                    Board::Dcmd => vec![(0, 0.0)],
-                };
+
+        ui.heading("動作テスト");
+        ui.label(
+            "基板に繋いだデバイスを機能ごとに動かして、配線と通信を確かめます。通常操作とは排他です。",
+        );
+        ui.add_space(6.0);
+        state_banner(ui, enabled, &snapshot);
+        ui.add_space(10.0);
+
+        self.connection_ui(ui, shared, enabled);
+        if enabled {
+            ui.add_space(10.0);
+            self.output_ui(ui, shared, &snapshot);
+            ui.add_space(10.0);
+            self.monitor_ui(ui, shared, &snapshot);
+            ui.add_space(10.0);
+            control_ui(ui, shared, &snapshot);
+        }
+        ui.add_space(10.0);
+        log_ui(ui, &snapshot);
+        reference_ui(ui, self.config.board);
+    }
+
+    /// 1. どの基板へどう繋ぐか。開始後は変更できない。
+    fn connection_ui(&mut self, ui: &mut egui::Ui, shared: &Shared, enabled: bool) {
+        section(ui, "1. 接続");
+        if enabled {
+            ui.label(format!(
+                "{} — {} @ {} baud（テスト中は変更できません）",
+                board_name(self.config.board),
+                self.config.device,
+                self.config.baud
+            ));
+            return;
+        }
+        let previous = self.config.board;
+        ui.horizontal(|ui| {
+            ui.label("対象");
+            for board in [Board::Cctl, Board::Svmd, Board::SerialSvmd, Board::Dcmd] {
+                ui.selectable_value(&mut self.config.board, board, board_name(board));
             }
-            ui.horizontal(|ui| {
-                ui.label("接続先");
-                ui.text_edit_singleline(&mut self.config.device);
-                ui.label("baud");
-                ui.add(egui::DragValue::new(&mut self.config.baud).range(1200..=1_000_000));
-            });
-            ui.horizontal(|ui| {
-                ui.label("自動OFF [秒]");
-                ui.add(egui::DragValue::new(&mut self.config.seconds).range(1..=30));
-                if ui.button("テスト接続を開始").clicked() {
-                    shared.start_test(self.config.clone());
-                }
-            });
+        });
+        if self.config.board != previous {
+            self.reset_for_board(shared);
+        }
+        ui.label(connection_hint(self.config.board));
+        ui.horizontal(|ui| {
+            ui.label("接続先");
+            ui.text_edit_singleline(&mut self.config.device);
+            ui.label("baud");
+            ui.add(egui::DragValue::new(&mut self.config.baud).range(1200..=1_000_000));
         });
         ui.horizontal(|ui| {
-            if ui
-                .add_enabled(enabled, egui::Button::new("全出力STOP"))
-                .clicked()
-            {
-                shared.tests.command("stop".into());
-            }
-            if ui
-                .add_enabled(enabled, egui::Button::new("停止してテスト終了"))
-                .clicked()
-            {
-                shared.tests.end();
-            }
-            ui.label(if snapshot.ready {
-                "接続確認済み"
-            } else if enabled && snapshot.error.is_none() {
-                "接続確認中…"
-            } else {
-                "停止中"
-            });
+            ui.label("出力の自動OFF");
+            ui.add(egui::DragValue::new(&mut self.config.seconds).range(1..=30));
+            ui.label("秒");
         });
-        if let Some(error) = &snapshot.error {
-            ui.colored_label(egui::Color32::RED, error);
+        if ui.button("テストを開始").clicked() {
+            shared.start_test(self.config.clone());
         }
-        ui.label(match snapshot.last_rx {
-            Some(time) => format!(
-                "最終受信: {:.1}秒前（実機の動作成功を保証するものではありません）",
-                time.elapsed().as_secs_f32()
-            ),
-            None => "受信データなし".into(),
-        });
-        ui.separator();
-        ui.add_enabled_ui(enabled && snapshot.ready && !snapshot.watchdog, |ui| {
-            ui.label("ON表示は指令状態。値を変更した後の「適用」で目標と停止期限を更新します。");
+    }
+
+    fn reset_for_board(&mut self, shared: &Shared) {
+        let cfg = shared.config();
+        let serial_svmd = self.config.board == Board::SerialSvmd;
+        self.config.device = if serial_svmd {
+            cfg.machine
+                .serial_svmd
+                .as_ref()
+                .map(|board| board.device.clone())
+                .unwrap_or("/dev/ttyUSB0".into())
+        } else {
+            cfg.serial_device
+        };
+        self.config.baud = if serial_svmd { 38400 } else { cfg.baud_rate };
+        self.motors = match self.config.board {
+            Board::Cctl => vec![(0, 0.0), (1, 0.0), (2, 0.0)],
+            Board::Svmd => (0..4).map(|channel| (channel, 1500.0)).collect(),
+            Board::SerialSvmd => vec![(1, 2048.0)],
+            Board::Dcmd => vec![(0, 0.0)],
+        };
+    }
+
+    /// 2. 出力。1行が1デバイスで、チェックで出力、値の変更は「送り直す」で反映する。
+    fn output_ui(&mut self, ui: &mut egui::Ui, shared: &Shared, snapshot: &Snapshot) {
+        section(ui, "2. 出力");
+        let live = snapshot.ready && !snapshot.watchdog;
+        if !live {
+            ui.label("接続確認が済むまで出力できません。");
+        }
+        ui.add_enabled_ui(live, |ui| {
+            let board = self.config.board;
             for (id, value) in &mut self.motors {
+                let name = format!("motor{id}");
+                let on = snapshot.switches.contains(&name);
                 ui.horizontal(|ui| {
-                    let (min, max, unit) = match self.config.board {
-                        Board::Cctl if *id == 1 => (-26000.0, 26000.0, "motor deg"),
-                        Board::Cctl => (-12.5, 12.5, "rad"),
-                        Board::Svmd => (500.0, 2500.0, "us"),
-                        Board::SerialSvmd => (0.0, 4095.0, "position"),
-                        Board::Dcmd => (-100.0, 100.0, "permille (最大10%)"),
+                    ui.label(egui::RichText::new(format!("{:<22}", output_label(board, *id))).monospace());
+                    let (min, max, unit) = output_range(board, *id);
+                    let mut drag = egui::DragValue::new(value).range(min..=max);
+                    drag = if board == Board::Cctl {
+                        drag.speed(0.1)
+                    } else {
+                        drag.speed(1.0).max_decimals(0)
                     };
-                    ui.label(format!("motor{id}"));
-                    let mut drag = egui::DragValue::new(value).range(min..=max).speed(
-                        if self.config.board == Board::Cctl {
-                            0.1
-                        } else {
-                            1.0
-                        },
-                    );
-                    if self.config.board != Board::Cctl {
-                        drag = drag.max_decimals(0);
-                    }
                     ui.add(drag);
                     ui.label(unit);
-                    let name = format!("motor{id}");
-                    let mut on = snapshot.switches.contains(&name);
-                    if ui.checkbox(&mut on, "ON").changed() {
-                        shared.tests.command(if on {
+
+                    let mut checked = on;
+                    if ui.checkbox(&mut checked, "出力").changed() {
+                        shared.tests.command(if checked {
                             format!("on {name} {value}")
                         } else {
                             format!("off {name}")
                         });
                     }
-                    if ui.add_enabled(on, egui::Button::new("適用")).clicked() {
+                    if ui
+                        .add_enabled(on, egui::Button::new("送り直す"))
+                        .on_hover_text("いまの値を送り直し、自動OFFまでの時間を延長します。")
+                        .clicked()
+                    {
                         shared.tests.command(format!("on {name} {value}"));
                     }
-                    if self.config.board == Board::SerialSvmd {
-                        toggle(ui, shared, &snapshot, &format!("read{id}"), "位置読取り");
+                    if let Some(remaining) = remaining_seconds(snapshot, *id) {
+                        ui.label(format!("自動OFFまで {remaining:.0} 秒"));
                     }
                 });
             }
-            if self.config.board == Board::SerialSvmd {
+            if board == Board::SerialSvmd {
                 ui.horizontal(|ui| {
+                    ui.label("IDを追加");
                     ui.add(egui::DragValue::new(&mut self.new_id).range(1..=253));
                     if ui
-                        .add_enabled(self.motors.len() < 16, egui::Button::new("ID行を追加"))
+                        .add_enabled(self.motors.len() < 16, egui::Button::new("追加"))
                         .clicked()
                         && !self.motors.iter().any(|(id, _)| *id == self.new_id)
                     {
@@ -325,82 +330,207 @@ impl Panel {
                     }
                 });
             }
+        });
+        ui.label("チェックはhostの指令状態で、実機が動いた保証ではありません。");
+    }
+
+    /// 3. 読取り。基板から返る値を見るための切り替え。
+    fn monitor_ui(&mut self, ui: &mut egui::Ui, shared: &Shared, snapshot: &Snapshot) {
+        section(ui, "3. 読取り");
+        let live = snapshot.ready && !snapshot.watchdog;
+        let board = self.config.board;
+        ui.add_enabled_ui(live, |ui| {
             ui.horizontal(|ui| {
-                toggle(
-                    ui,
-                    shared,
-                    &snapshot,
-                    "communication",
-                    "通信確認・全受信表示",
-                );
-                if self.config.board != Board::SerialSvmd {
-                    toggle(ui, shared, &snapshot, "status", "状態読取り");
+                if board != Board::SerialSvmd {
+                    toggle(ui, shared, snapshot, "status", "状態");
                 }
-                if self.config.board == Board::Dcmd {
-                    toggle(ui, shared, &snapshot, "encoder", "ENC1読取り");
+                if board == Board::Dcmd {
+                    toggle(ui, shared, snapshot, "encoder", "ENC1");
                 }
+                if crate::inputs::supported(board) {
+                    toggle(ui, shared, snapshot, "inputs", "接点・DIP");
+                }
+                toggle(ui, shared, snapshot, "communication", "受信をすべて表示");
             });
-            if ui
-                .add_enabled(
-                    !snapshot.outputs.is_empty(),
-                    egui::Button::new("通信断テスト（500ms無送信）"),
-                )
-                .clicked()
-            {
-                shared.tests.command("watchdog".into());
+            if board == Board::SerialSvmd {
+                ui.horizontal(|ui| {
+                    ui.label("位置読取り");
+                    for (id, _) in &self.motors {
+                        toggle(ui, shared, snapshot, &format!("read{id}"), &format!("ID {id}"));
+                    }
+                });
+            }
+            if board == Board::Cctl {
+                ui.label("接点とDIPは「状態」のSTATE行に sw= として出ます。");
+            }
+            if let Some(state) = &snapshot.inputs {
+                contacts_ui(ui, board, state, snapshot.input_rx);
             }
         });
-        if snapshot.watchdog {
-            ui.label("通信断テスト中。終了後の自動再始動はありません。");
-        }
-        if crate::inputs::supported(self.config.board) {
-            ui.separator();
-            ui.add_enabled_ui(enabled && snapshot.ready && !snapshot.watchdog, |ui| {
-                toggle(ui, shared, &snapshot, "inputs", "スイッチ・DIP読取り");
-                if let Some(state) = &snapshot.inputs {
-                    ui.label(format!(
-                        "{}  入力応答={:.1}秒前",
-                        crate::inputs::describe(state),
-                        snapshot
-                            .input_rx
-                            .map(|at| at.elapsed().as_secs_f32())
-                            .unwrap_or(0.0)
-                    ));
-                    for index in 0..8 {
-                        let bit = 1 << index;
-                        if state.available & bit == 0 {
-                            continue;
-                        }
-                        let name = if self.config.board == Board::Dcmd {
-                            ["SW_A", "SW_B", "SW_C"][index].to_owned()
-                        } else {
-                            format!("SW{}", index + 1)
-                        };
-                        ui.label(format!(
-                            "{name}: {}（安定値 {}）",
-                            if state.raw & bit != 0 { "閉/LOW" } else { "開/HIGH" },
-                            if state.stable & bit != 0 { "閉" } else { "開" }
-                        ));
-                    }
-                } else {
-                    ui.label("読取りをONにすると接点とDIPの状態を表示します。");
-                }
-            });
-        }
-        ui.collapsing("テスト機能と単位", |ui| {
-            ui.label(Session::new(self.config.board, Duration::from_secs(5)).help());
-        });
-        ui.separator();
-        egui::ScrollArea::vertical()
-            .id_salt("test_log")
-            .max_height(220.0)
-            .stick_to_bottom(true)
-            .show(ui, |ui| {
-                for line in &snapshot.logs {
-                    ui.monospace(line);
-                }
-            });
     }
+}
+
+/// いま何ができる状態かを一行で示す。
+fn state_banner(ui: &mut egui::Ui, enabled: bool, snapshot: &Snapshot) {
+    let (text, color) = if let Some(error) = &snapshot.error {
+        (error.clone(), egui::Color32::from_rgb(200, 60, 60))
+    } else if !enabled {
+        (
+            "停止中 — 接続先を決めて「テストを開始」".to_owned(),
+            egui::Color32::GRAY,
+        )
+    } else if snapshot.watchdog {
+        (
+            "通信断テスト中 — 送信を止めています".to_owned(),
+            egui::Color32::from_rgb(200, 140, 0),
+        )
+    } else if snapshot.ready {
+        (
+            "テスト中 — 出力できます".to_owned(),
+            egui::Color32::from_rgb(0, 150, 0),
+        )
+    } else {
+        (
+            "接続確認中… — 基板からの応答を待っています".to_owned(),
+            egui::Color32::from_rgb(200, 140, 0),
+        )
+    };
+    ui.colored_label(color, egui::RichText::new(text).strong());
+    ui.label(match snapshot.last_rx {
+        Some(at) => format!("最終受信: {:.1} 秒前", at.elapsed().as_secs_f32()),
+        None => "受信データなし".into(),
+    });
+}
+
+/// 4. 停止と終了。危険側の操作をまとめて置く。
+fn control_ui(ui: &mut egui::Ui, shared: &Shared, snapshot: &Snapshot) {
+    section(ui, "4. 停止");
+    ui.horizontal(|ui| {
+        if ui.button("全出力STOP").clicked() {
+            shared.tests.command("stop".into());
+        }
+        if ui
+            .add_enabled(
+                !snapshot.outputs.is_empty(),
+                egui::Button::new("通信断テスト（500ms無送信）"),
+            )
+            .on_hover_text("送信を500ms止め、FWのWatchdogが出力を切ることを確かめます。")
+            .clicked()
+        {
+            shared.tests.command("watchdog".into());
+        }
+        if ui.button("停止してテストを終了").clicked() {
+            shared.tests.end();
+        }
+    });
+    ui.label("Space でもSTOPを送れます（入力欄の編集中を除く）。");
+}
+
+/// GUIとCLIは同じSessionを使う。対応するコマンドを畳んで置いておく。
+fn reference_ui(ui: &mut egui::Ui, board: Board) {
+    ui.collapsing("CLI（cargo run --bin fw_test）での書き方", |ui| {
+        ui.monospace(Session::new(board, Duration::from_secs(5)).help());
+    });
+}
+
+fn log_ui(ui: &mut egui::Ui, snapshot: &Snapshot) {
+    section(ui, "受信ログ");
+    egui::ScrollArea::vertical()
+        .id_salt("test_log")
+        .max_height(200.0)
+        .stick_to_bottom(true)
+        .show(ui, |ui| {
+            for line in &snapshot.logs {
+                ui.monospace(line);
+            }
+        });
+}
+
+fn contacts_ui(
+    ui: &mut egui::Ui,
+    board: Board,
+    state: &crate::inputs::InputState,
+    received: Option<Instant>,
+) {
+    ui.horizontal(|ui| {
+        for index in 0..8 {
+            let bit = 1 << index;
+            if state.available & bit == 0 {
+                continue;
+            }
+            let name = if board == Board::Dcmd {
+                ["SW_A", "SW_B", "SW_C"][index].to_owned()
+            } else {
+                format!("SW{}", index + 1)
+            };
+            let closed = state.raw & bit != 0;
+            ui.colored_label(
+                if closed {
+                    egui::Color32::from_rgb(0, 150, 0)
+                } else {
+                    egui::Color32::GRAY
+                },
+                format!("{name} {}", if closed { "閉" } else { "開" }),
+            );
+        }
+    });
+    ui.label(format!(
+        "DIP={:04b}  受信 {:.1} 秒前",
+        state.dip,
+        received.map(|at| at.elapsed().as_secs_f32()).unwrap_or(0.0)
+    ));
+}
+
+fn section(ui: &mut egui::Ui, title: &str) {
+    ui.label(egui::RichText::new(title).strong());
+    ui.separator();
+}
+
+fn board_name(board: Board) -> &'static str {
+    match board {
+        Board::Cctl => "cctl",
+        Board::Svmd => "svmd",
+        Board::SerialSvmd => "serial_svmd",
+        Board::Dcmd => "DCMD",
+    }
+}
+
+fn connection_hint(board: Board) -> &'static str {
+    match board {
+        Board::Cctl => "USB CDCへ直接繋ぎます。",
+        Board::Svmd => "cctlのFDCAN2経由。接続先はcctlのUSB CDCです。",
+        Board::SerialSvmd => "USART2のUSBシリアル変換器へ直接繋ぎます（既定38400 baud）。",
+        Board::Dcmd => "cctlのFDCAN2経由。接続先はcctlのUSB CDCです。",
+    }
+}
+
+/// 行の見出しは機体の軸ではなく、基板に繋がるデバイスで表す。
+fn output_label(board: Board, id: u8) -> String {
+    match board {
+        Board::Cctl => match id {
+            0 => "slot 0 — EL05".into(),
+            1 => "slot 1 — M3508+C620".into(),
+            _ => "slot 2 — DM-S3519".into(),
+        },
+        Board::Svmd => format!("ch {id} — PWMサーボ"),
+        Board::SerialSvmd => format!("ID {id} — STS3215"),
+        Board::Dcmd => "PWM0 — DCモータ".into(),
+    }
+}
+
+fn output_range(board: Board, id: u8) -> (f32, f32, &'static str) {
+    match board {
+        Board::Cctl if id == 1 => (-26000.0, 26000.0, "motor deg"),
+        Board::Cctl => (-12.5, 12.5, "rad"),
+        Board::Svmd => (500.0, 2500.0, "us"),
+        Board::SerialSvmd => (0.0, 4095.0, "position"),
+        Board::Dcmd => (-100.0, 100.0, "permille（上限10%）"),
+    }
+}
+
+fn remaining_seconds(snapshot: &Snapshot, id: u8) -> Option<f32> {
+    let (_, at) = snapshot.outputs.iter().find(|(output, _)| *output == id)?;
+    Some(at.saturating_duration_since(Instant::now()).as_secs_f32())
 }
 
 fn toggle(ui: &mut egui::Ui, shared: &Shared, snapshot: &Snapshot, name: &str, label: &str) {
