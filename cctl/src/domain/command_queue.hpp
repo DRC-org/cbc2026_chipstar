@@ -14,7 +14,7 @@ namespace domain {
 // 1 個だけ保持する方式では、STOP が後続の指令に上書きされて消えうる。
 class CommandQueue {
 public:
-    static constexpr std::size_t CAPACITY = 8;
+    static constexpr std::size_t CAPACITY = 32;
 
     // 割込み側から呼ぶ。満杯なら false を返して捨てる。
     bool push(const Command& command);

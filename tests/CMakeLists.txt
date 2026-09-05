@@ -27,6 +27,11 @@ function(add_firmware_tests name src_dir)
     add_test(NAME ${name} COMMAND ${name})
 endfunction()
 
+add_firmware_tests(dcmd_tests ${REPO_ROOT}/dcmd/src
+    dcmd/controller_test.cpp
+    ${REPO_ROOT}/dcmd/src/domain/controller.cpp
+)
+
 add_firmware_tests(serial_svmd_tests ${REPO_ROOT}/serial_svmd/src
     serial_svmd/sts3215_protocol_test.cpp
     serial_svmd/servo_command_test.cpp
