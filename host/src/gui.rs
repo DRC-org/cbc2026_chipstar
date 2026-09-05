@@ -334,6 +334,12 @@ impl BridgeApp {
 
         ui.separator();
         ui.label("機体の状態");
+        if let Some(encoder) = &status.dcmd_encoder {
+            ui.monospace(format!(
+                "DCMD ENC1 count={} index={}",
+                encoder.count, encoder.index_count
+            ));
+        }
         if let Some(dcmd) = &status.dcmd {
             ui.monospace(format!(
                 "DCMD mode={} enabled={} duty={:?} result={}",

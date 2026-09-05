@@ -9,8 +9,8 @@ bool parse(const uint8_t* data, std::size_t size, Command& out) {
   const int32_t raw = (static_cast<uint16_t>(data[4]) << 8) | data[5];
   cmd.duty = static_cast<int16_t>(raw >= 32768 ? raw - 65536 : raw);
   if (cmd.op == Op::Target) {
-    if (cmd.channel > 1 || cmd.duty < -MAX_DUTY || cmd.duty > MAX_DUTY) return false;
-  } else if (cmd.duty || (cmd.op == Op::Run ? (cmd.channel == 0 || cmd.channel > 3) : cmd.channel != 0)) {
+    if (cmd.channel != 0 || cmd.duty < -MAX_DUTY || cmd.duty > MAX_DUTY) return false;
+  } else if (cmd.duty || (cmd.op == Op::Run ? cmd.channel != 1 : cmd.channel != 0)) {
     return false;
   }
   out = cmd;
@@ -31,7 +31,7 @@ bool Controller::apply(const Command& cmd, uint32_t now) {
     case Op::Safe: stop(Mode::Safe, now); return true;
     case Op::Stop: stop(Mode::Stop, now); return true;
     case Op::Run:
-      if (!ready_ || cmd.channel == 0 || cmd.channel > 3 ||
+      if (!ready_ || cmd.channel != 1 ||
           (configured_ & cmd.channel) != cmd.channel) return false;
       enabled_ = cmd.channel;
       mode_ = Mode::Run;
@@ -40,7 +40,7 @@ bool Controller::apply(const Command& cmd, uint32_t now) {
       step_ = now;
       return true;
     case Op::Target:
-      if (cmd.channel > 1 || cmd.duty < -MAX_DUTY || cmd.duty > MAX_DUTY) return false;
+      if (cmd.channel != 0 || cmd.duty < -MAX_DUTY || cmd.duty > MAX_DUTY) return false;
       target_[cmd.channel] = cmd.duty;
       configured_ |= static_cast<uint8_t>(1U << cmd.channel);
       contact_ = now;

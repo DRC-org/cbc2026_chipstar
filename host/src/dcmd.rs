@@ -14,7 +14,7 @@ pub struct MotorProfile {
 pub fn validate(motors: &[MotorProfile]) -> Result<()> {
     let mut mask = 0u8;
     for motor in motors {
-        if motor.channel > 1
+        if motor.channel != 0
             || mask & (1 << motor.channel) != 0
             || motor.input_axis >= 6
             || motor.input_sign.abs() != 1.0
@@ -62,7 +62,7 @@ pub struct Status {
     pub enabled: u8,
     pub duty: [i16; 2],
 }
-pub fn parse_status(line: &str) -> Option<Status> {
+fn payload(line: &str, expected_id: &str) -> Option<[u8; 8]> {
     let mut fields = line.split_whitespace();
     if fields.next()? != "CAN_RX" {
         return None;
@@ -79,7 +79,7 @@ pub fn parse_status(line: &str) -> Option<Status> {
             _ => {}
         }
     }
-    if bus != Some("2") || id != Some("785") {
+    if bus != Some("2") || id != Some(expected_id) {
         return None;
     }
     let data = data?;
@@ -90,7 +90,32 @@ pub fn parse_status(line: &str) -> Option<Status> {
     for (i, byte) in bytes.iter_mut().enumerate() {
         *byte = u8::from_str_radix(&data[i * 2..i * 2 + 2], 16).ok()?;
     }
-    if bytes[0] != 1 || bytes[1] > 2 || bytes[2] > 2 || bytes[3] > 3 {
+    if bytes[0] != 1 {
+        return None;
+    }
+    Some(bytes)
+}
+
+#[derive(Clone, Debug)]
+pub struct EncoderStatus {
+    pub count: i32,
+    pub index_count: u16,
+}
+
+pub fn parse_encoder(line: &str) -> Option<EncoderStatus> {
+    let bytes = payload(line, "786")?;
+    if bytes[1] != 1 {
+        return None;
+    }
+    Some(EncoderStatus {
+        count: i32::from_be_bytes([bytes[2], bytes[3], bytes[4], bytes[5]]),
+        index_count: u16::from_be_bytes([bytes[6], bytes[7]]),
+    })
+}
+
+pub fn parse_status(line: &str) -> Option<Status> {
+    let bytes = payload(line, "785")?;
+    if bytes[1] > 2 || bytes[2] > 2 || bytes[3] > 1 || bytes[6] != 0 || bytes[7] != 0 {
         return None;
     }
     Some(Status {
@@ -110,8 +135,8 @@ mod tests {
     #[test]
     fn encodes_negative_duty_and_decodes_status() {
         assert_eq!(line(4, 1, -900), "CAN 2 784 01040100FC7C0000");
-        let status = parse_status("CAN_RX bus=2 id=785 data=010001030064FC7C").unwrap();
-        assert_eq!(status.duty, [100, -900]);
+        let status = parse_status("CAN_RX bus=2 id=785 data=0100010100640000").unwrap();
+        assert_eq!(status.duty, [100, 0]);
         assert!(parse_status("CAN_RX bus=2 id=769 data=010001030064FC7C").is_none());
     }
 
@@ -121,9 +146,17 @@ mod tests {
             crate::machine::MachineProfile::parse(include_str!("../config/dcmd.toml")).unwrap();
         assert_eq!(
             targets(&profile.dc_motors, &[0.0, -2.0, 0.0, 0.05, 0.0, 0.0]),
-            vec![line(4, 0, -100), line(4, 1, 0)]
+            vec![line(4, 0, -100)]
         );
-        profile.dc_motors[1].channel = 0;
+        profile.dc_motors[0].channel = 1;
         assert!(validate(&profile.dc_motors).is_err());
+    }
+
+    #[test]
+    fn decodes_signed_encoder_and_index() {
+        let encoder = parse_encoder("CAN_RX bus=2 id=786 data=0101FFFFFFFE0003").unwrap();
+        assert_eq!(encoder.count, -2);
+        assert_eq!(encoder.index_count, 3);
+        assert!(parse_encoder("CAN_RX bus=2 id=786 data=0100FFFFFFFE0003").is_none());
     }
 }

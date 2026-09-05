@@ -26,6 +26,7 @@ pub struct BridgeConfig {
 #[derive(Clone, Default)]
 pub struct Status {
     pub dcmd: Option<crate::dcmd::Status>,
+    pub dcmd_encoder: Option<crate::dcmd::EncoderStatus>,
     pub gamepad_connected: bool,
     pub gamepad_name: Option<String>,
     pub serial_connected: bool,

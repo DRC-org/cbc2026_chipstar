@@ -6,10 +6,3 @@ channel = 0
 input_axis = 1
 input_sign = 1.0
 maximum_duty = 100
-
-[[dc_motors]]
-name = "motor1"
-channel = 1
-input_axis = 3
-input_sign = 1.0
-maximum_duty = 100

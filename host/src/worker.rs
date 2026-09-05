@@ -65,6 +65,7 @@ pub fn run(shared: Arc<Shared>) {
             shared.update_status(|s| {
                 s.device = None;
                 s.dcmd = None;
+                s.dcmd_encoder = None;
                 s.serial_svmd_device = None;
             });
             last_hello = Instant::now();
@@ -181,6 +182,9 @@ pub fn run(shared: Arc<Shared>) {
 
         // cctl からのテレメトリを取り込む。
         for line in link.read_lines() {
+            if let Some(encoder) = crate::dcmd::parse_encoder(&line) {
+                shared.update_status(|s| s.dcmd_encoder = Some(encoder));
+            }
             if let Some(status) = crate::dcmd::parse_status(&line) {
                 shared.update_status(|s| s.dcmd = Some(status));
             }
