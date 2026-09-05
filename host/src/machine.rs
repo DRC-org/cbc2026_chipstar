@@ -308,13 +308,6 @@ impl MachineController {
                 }
                 .to_cctl_line(),
             );
-            lines.push(
-                svmd::Command::Enable {
-                    channel: servo.channel,
-                    enabled: servo.enabled,
-                }
-                .to_cctl_line(),
-            );
         }
         lines
     }
@@ -428,7 +421,7 @@ mod tests {
         let lines = machine.update(&input, 0.1);
 
         assert_eq!(lines[3], "CAN 2 768 0101010005780000");
-        assert_eq!(lines[4], "CAN 2 768 0102010100000000");
+        assert_eq!(lines.len(), 4);
     }
 
     #[test]

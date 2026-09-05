@@ -233,7 +233,18 @@ impl BridgeApp {
             ExCommand::Help => self.screen = Screen::Help,
             ExCommand::Send(line) => {
                 self.message = Some(format!("送信: {line}"));
-                self.shared.queue_line(line);
+                match line.to_ascii_uppercase().as_str() {
+                    "STOP" => {
+                        self.shared.queue_command(Command::Stop);
+                    }
+                    "SAFE" => {
+                        self.shared.queue_command(Command::Safe);
+                    }
+                    "RUN" => {
+                        self.shared.queue_command(Command::Run);
+                    }
+                    _ => self.shared.queue_line(line),
+                }
             }
         }
     }
@@ -483,7 +494,7 @@ impl BridgeApp {
             ("?", "この画面"),
             (":q", "終了"),
             (":h", "この画面"),
-            (":<指令>", "cctl へそのまま送る（例 :EN T 1）"),
+            (":<指令>", "cctl へそのまま送る（例 :ENABLE 2 1）"),
         ];
 
         egui::Grid::new("help_grid")

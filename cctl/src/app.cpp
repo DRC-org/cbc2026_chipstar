@@ -20,6 +20,7 @@ extern FDCAN_HandleTypeDef hfdcan2;
 extern I2C_HandleTypeDef hi2c1;
 extern TIM_HandleTypeDef htim15;
 extern TIM_HandleTypeDef htim2;
+extern USBD_HandleTypeDef hUsbDeviceFS;
 }
 
 namespace {
@@ -33,7 +34,14 @@ volatile uint32_t last_contact_ms = 0;
 bool protocol_ready = false;
 bool peripheral_bus_ready = false;
 
+bool usbReady() {
+    const auto* cdc = static_cast<const USBD_CDC_HandleTypeDef*>(hUsbDeviceFS.pClassData);
+    return hUsbDeviceFS.dev_state == USBD_STATE_CONFIGURED && cdc != nullptr &&
+           cdc->TxState == 0;
+}
+
 void sendText(const char* text) {
+    if (!usbReady()) return;
     static uint8_t buffer[96];
     const std::size_t length = std::strlen(text);
     if (length + 1 > sizeof(buffer)) return;
@@ -109,6 +117,7 @@ void sendCanFrame(const domain::CanFrame& frame) {
 }
 
 void sendTelemetry() {
+    if (!usbReady()) return;
     static uint8_t line[domain::TELEMETRY_LINE_CAPACITY + 1];
     domain::Telemetry telemetry;
     telemetry.uptime_ms = HAL_GetTick();

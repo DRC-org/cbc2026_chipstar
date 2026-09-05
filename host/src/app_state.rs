@@ -111,6 +111,13 @@ impl Shared {
                 });
                 return false;
             };
+            if device.protocol != 1 || device.board != "cctl" || device.slots < 3 {
+                drop(status);
+                self.update_status(|status| {
+                    status.last_error = Some("cctlの能力またはバージョンが不一致です".to_owned());
+                });
+                return false;
+            }
             if self.config.lock().unwrap().machine.requires_can_bus_2()
                 && !device.can_buses.contains(&2)
             {
@@ -121,7 +128,9 @@ impl Shared {
                 return false;
             }
             if self.config.lock().unwrap().machine.requires_serial_svmd()
-                && status.serial_svmd_device.is_none()
+                && !status.serial_svmd_device.as_ref().is_some_and(|device| {
+                    device.protocol == 1 && device.board == "serial_svmd" && device.slots >= 16
+                })
             {
                 drop(status);
                 self.update_status(|status| {
@@ -131,8 +140,21 @@ impl Shared {
             }
         }
         self.queue_line(command.to_line());
-        if command == Command::Stop && self.config.lock().unwrap().machine.requires_can_bus_2() {
+        if matches!(command, Command::Stop | Command::Safe)
+            && self.config.lock().unwrap().machine.requires_can_bus_2()
+        {
             self.queue_line(svmd::Command::Stop.to_cctl_line());
+        }
+        if command == Command::Run {
+            for servo in &self.config().machine.pwm_servos {
+                self.queue_line(
+                    svmd::Command::Enable {
+                        channel: servo.channel,
+                        enabled: servo.enabled,
+                    }
+                    .to_cctl_line(),
+                );
+            }
         }
         if self.config.lock().unwrap().machine.requires_serial_svmd()
             && matches!(command, Command::Stop | Command::Run | Command::Safe)
@@ -227,6 +249,26 @@ enabled = true
         assert_eq!(
             shared.take_commands(),
             vec!["STOP", "CAN 2 768 0100000000000000"]
+        );
+        assert!(shared.queue_command(Command::Safe));
+        assert_eq!(
+            shared.take_commands(),
+            vec!["SAFE", "CAN 2 768 0100000000000000"]
+        );
+        shared.update_status(|status| {
+            status.device = crate::device::parse_device_info(
+                "DEVICE protocol=2 board=cctl slots=3 can=2 watchdog_ms=250",
+            );
+        });
+        assert!(!shared.queue_command(Command::Run));
+        assert!(shared.take_commands().is_empty());
+        shared.update_status(|status| {
+            status.device.as_mut().unwrap().protocol = 1;
+        });
+        assert!(shared.queue_command(Command::Run));
+        assert_eq!(
+            shared.take_commands(),
+            vec!["RUN", "CAN 2 768 0102000100000000"]
         );
     }
 

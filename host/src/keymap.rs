@@ -118,7 +118,7 @@ pub enum ExCommand {
     Help,
     /// cctl へそのまま送る行。
     ///
-    /// GUI が知らない語は全て cctl 側へ渡す。`STOP` や `EN T 1` はもちろん、
+    /// GUI が知らない語は全て cctl 側へ渡す。`STOP` や `ENABLE 2 1` はもちろん、
     /// ファームに指令が増えても host を直さずに使える。
     Send(String),
 }
@@ -241,14 +241,20 @@ mod tests {
     fn passes_unknown_commands_to_cctl() {
         // ファームに指令が増えても host を直さずに使えるようにする。
         assert_eq!(parse_ex(":stop"), ExCommand::Send("stop".to_owned()));
-        assert_eq!(parse_ex(":EN T 1"), ExCommand::Send("EN T 1".to_owned()));
+        assert_eq!(
+            parse_ex(":ENABLE 2 1"),
+            ExCommand::Send("ENABLE 2 1".to_owned())
+        );
         assert_eq!(parse_ex("home"), ExCommand::Send("home".to_owned()));
     }
 
     #[test]
     fn keeps_argument_case_and_spacing() {
         // cctl 側の綴りをそのまま届ける。
-        assert_eq!(parse_ex(":  EN  RTZ  1  "), ExCommand::Send("EN  RTZ  1".to_owned()));
+        assert_eq!(
+            parse_ex(":  EN  RTZ  1  "),
+            ExCommand::Send("EN  RTZ  1".to_owned())
+        );
     }
 
     #[test]
