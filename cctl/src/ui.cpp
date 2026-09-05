@@ -22,20 +22,19 @@ void Ui::begin() {
   lcd_.setCursor(0, 0);
   lcd_.print("DRC-CCTL2026");
   lcd_.setCursor(0, 1);
-  lcd_.print("rtheta-z ctrl");
+  lcd_.print("actuator device");
 
   playTone(988, 80);
   playTone(1319, 120);
 }
 
-void Ui::showStatus(float r_mm, float theta_deg, float z_mm, uint8_t z_error) {
+void Ui::showStatus(float slot0, float slot1, float slot2, uint8_t error) {
   char line0[17] = {};
   char line1[17] = {};
 
-  std::snprintf(line0, sizeof(line0), "r%-4d th%-4d", static_cast<int>(r_mm),
-                static_cast<int>(theta_deg));
-  std::snprintf(line1, sizeof(line1), "z%-4d dmE%X", static_cast<int>(z_mm),
-                z_error & 0x0F);
+  std::snprintf(line0, sizeof(line0), "0:%-4d 1:%-4d", static_cast<int>(slot0),
+                static_cast<int>(slot1));
+  std::snprintf(line1, sizeof(line1), "2:%-4d err:%X", static_cast<int>(slot2), error & 0x0F);
 
   lcd_.clear();
   lcd_.setCursor(0, 0);
@@ -44,14 +43,14 @@ void Ui::showStatus(float r_mm, float theta_deg, float z_mm, uint8_t z_error) {
   lcd_.print(line1);
 }
 
-void Ui::updateLeds(uint32_t tick_ms, domain::RunMode mode, uint8_t enabled_axes) {
-  const uint8_t bits = domain::ledPattern(tick_ms, mode, enabled_axes);
+void Ui::updateLeds(uint32_t tick_ms, domain::RunMode mode, uint8_t enabled_slots) {
+  const uint8_t bits = domain::ledPattern(tick_ms, mode, enabled_slots);
 
   const auto state = [bits](uint8_t bit) {
     return (bits & bit) != 0 ? GPIO_PIN_SET : GPIO_PIN_RESET;
   };
 
-  HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, state(domain::axis_bit::R));
-  HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, state(domain::axis_bit::THETA));
-  HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, state(domain::axis_bit::Z));
+  HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, state(domain::slot_bit::SLOT0));
+  HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, state(domain::slot_bit::SLOT1));
+  HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, state(domain::slot_bit::SLOT2));
 }

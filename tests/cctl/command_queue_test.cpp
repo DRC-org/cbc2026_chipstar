@@ -41,13 +41,13 @@ TEST_CASE("積んだ順に取り出せる") {
 TEST_CASE("引数も一緒に運ばれる") {
     CommandQueue queue;
     Command enable = of(CommandKind::Enable);
-    enable.axes = domain::axis_bit::THETA;
+    enable.mask = domain::slot_bit::SLOT1;
     enable.value = true;
     queue.push(enable);
 
     Command out;
     REQUIRE(queue.pop(out));
-    CHECK(out.axes == domain::axis_bit::THETA);
+    CHECK(out.mask == domain::slot_bit::SLOT1);
     CHECK(out.value);
 }
 

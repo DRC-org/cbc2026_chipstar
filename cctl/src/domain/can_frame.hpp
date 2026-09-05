@@ -12,18 +12,4 @@ struct CanFrame {
     uint8_t data[8] = {};
 };
 
-// 受信フレームがどの軸のフィードバックかを表す。
-enum class Axis {
-    None,
-    R,
-    Theta,
-    Z,
-};
-
-// 受信フレームの宛先軸を判定する。
-// r(EL05) は拡張ID なので標準IDと空間が別。θ(C620) と z(DM) は標準IDで区別する。
-// θ と z に同じ ID が設定されていた場合は θ を優先する。
-Axis classifyFeedback(const CanFrame& frame, uint16_t theta_feedback_id,
-                      uint16_t z_feedback_id);
-
 }  // namespace domain

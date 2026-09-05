@@ -7,6 +7,7 @@ use std::collections::VecDeque;
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 
+use crate::device::DeviceInfo;
 use crate::frame::Command;
 use crate::machine::MachineProfile;
 use crate::telemetry::Telemetry;
@@ -34,6 +35,7 @@ pub struct Status {
     /// cctl から受け取った最新のテレメトリ。未受信なら None。
     pub telemetry: Option<Telemetry>,
     pub telemetry_count: u64,
+    pub device: Option<DeviceInfo>,
 }
 
 /// スレッド間共有ハンドル。`Arc<Shared>` で持ち回る。
@@ -94,8 +96,15 @@ impl Shared {
     }
 
     /// 指令を送信待ちに積む。送信停止中でも送るので、STOP は必ず届く。
-    pub fn queue_command(&self, command: Command) {
+    pub fn queue_command(&self, command: Command) -> bool {
+        if command == Command::Run && self.status.lock().unwrap().device.is_none() {
+            self.update_status(|status| {
+                status.last_error = Some("FWの能力確認が完了していません".to_owned());
+            });
+            return false;
+        }
         self.queue_line(command.to_line());
+        true
     }
 
     /// cctl へそのまま送る行を積む。コマンドラインからの入力に使う。

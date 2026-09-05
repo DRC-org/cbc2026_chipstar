@@ -13,85 +13,54 @@ Command parse(const char* line) {
 }
 }  // namespace
 
-TEST_CASE("引数のない指令") {
+TEST_CASE("共通状態指令を解釈する") {
     CHECK(parse("STOP").kind == CommandKind::Stop);
     CHECK(parse("RUN").kind == CommandKind::Run);
     CHECK(parse("SAFE").kind == CommandKind::Safe);
-    CHECK(parse("HOME").kind == CommandKind::Home);
+    CHECK(parse("HEARTBEAT").kind == CommandKind::Heartbeat);
 }
 
-TEST_CASE("大文字小文字は問わない") {
-    // 現場でターミナルから直接打つため、綴りだけ合っていれば通す。
-    CHECK(parse("stop").kind == CommandKind::Stop);
-    CHECK(parse("Stop").kind == CommandKind::Stop);
-    CHECK(parse("home").kind == CommandKind::Home);
+TEST_CASE("HELLOはプロトコルバージョンを持つ") {
+    const Command command = parse("HELLO 1");
+    CHECK(command.kind == CommandKind::Hello);
+    CHECK(command.protocol_version == 1);
 }
 
-TEST_CASE("前後の空白は無視する") {
-    CHECK(parse("  STOP  ").kind == CommandKind::Stop);
-    CHECK(parse("\tRUN").kind == CommandKind::Run);
+TEST_CASE("slotの有効状態を解釈する") {
+    const Command command = parse("ENABLE 5 1");
+    CHECK(command.kind == CommandKind::Enable);
+    CHECK(command.mask == 5);
+    CHECK(command.value);
+    CHECK(parse("ENABLE 7 0").kind == CommandKind::Enable);
 }
 
-TEST_CASE("TEST は 0 / 1 を取る") {
-    const Command on = parse("TEST 1");
-    CHECK(on.kind == CommandKind::Test);
-    CHECK(on.value);
-
-    const Command off = parse("TEST 0");
-    CHECK(off.kind == CommandKind::Test);
-    CHECK_FALSE(off.value);
+TEST_CASE("HOMEはslot maskを要求する") {
+    const Command command = parse("HOME 6");
+    CHECK(command.kind == CommandKind::Home);
+    CHECK(command.mask == 6);
+    CHECK(parse("HOME").kind == CommandKind::None);
 }
 
-TEST_CASE("EN は対象軸と 0 / 1 を取る") {
-    const Command all = parse("EN RTZ 1");
-    CHECK(all.kind == CommandKind::Enable);
-    CHECK(all.axes == domain::axis_bit::ALL);
-    CHECK(all.value);
-
-    const Command theta = parse("EN T 0");
-    CHECK(theta.kind == CommandKind::Enable);
-    CHECK(theta.axes == domain::axis_bit::THETA);
-    CHECK_FALSE(theta.value);
-
-    const Command z = parse("EN Z 1");
-    CHECK(z.axes == domain::axis_bit::Z);
-
-    const Command rz = parse("EN RZ 1");
-    CHECK(rz.axes == (domain::axis_bit::R | domain::axis_bit::Z));
+TEST_CASE("TARGETはslotと有限な実数を持つ") {
+    const Command command = parse("TARGET 1 -123.5");
+    CHECK(command.kind == CommandKind::Target);
+    CHECK(command.slot == 1);
+    CHECK(command.target == doctest::Approx(-123.5f));
+    CHECK(parse("TARGET 3 0").kind == CommandKind::None);
+    CHECK(parse("TARGET 0 nan").kind == CommandKind::None);
+    CHECK(parse("TARGET 0 inf").kind == CommandKind::None);
 }
 
-TEST_CASE("軸指定も大文字小文字を問わない") {
-    CHECK(parse("en rtz 1").axes == domain::axis_bit::ALL);
+TEST_CASE("大文字小文字と前後空白を許容する") {
+    CHECK(parse("  heartbeat  ").kind == CommandKind::Heartbeat);
+    CHECK(parse("target 2 1.25").kind == CommandKind::Target);
 }
 
-TEST_CASE("解釈できない行は None") {
-    CHECK(parse("").kind == CommandKind::None);
-    CHECK(parse("   ").kind == CommandKind::None);
-    CHECK(parse("GO").kind == CommandKind::None);
-    CHECK(parse("STOPPED").kind == CommandKind::None);
-}
-
-TEST_CASE("スティック入力の行は指令として扱わない") {
-    // 同じリンクを流れるので、取り違えると操作が指令になる。
-    CHECK(parse("LX+000 LY+000 RX+000 RY+000").kind == CommandKind::None);
-}
-
-TEST_CASE("引数が欠けている指令は受け付けない") {
-    CHECK(parse("TEST").kind == CommandKind::None);
-    CHECK(parse("EN").kind == CommandKind::None);
-    CHECK(parse("EN RTZ").kind == CommandKind::None);
-}
-
-TEST_CASE("引数が不正な指令は受け付けない") {
-    CHECK(parse("TEST 2").kind == CommandKind::None);
-    CHECK(parse("TEST x").kind == CommandKind::None);
-    CHECK(parse("EN X 1").kind == CommandKind::None);
-    CHECK(parse("EN RTZ 2").kind == CommandKind::None);
-    CHECK(parse("EN RR 1").kind == CommandKind::None);
-}
-
-TEST_CASE("余分な引数がある指令は受け付けない") {
-    // 打ち間違いを黙って実行しない。
+TEST_CASE("範囲外または余分な引数を拒否する") {
+    CHECK(parse("HELLO 0").kind == CommandKind::None);
+    CHECK(parse("ENABLE 0 1").kind == CommandKind::None);
+    CHECK(parse("ENABLE 8 1").kind == CommandKind::None);
+    CHECK(parse("ENABLE 1 2").kind == CommandKind::None);
     CHECK(parse("STOP NOW").kind == CommandKind::None);
-    CHECK(parse("TEST 1 2").kind == CommandKind::None);
+    CHECK(parse("TARGET 0 1 extra").kind == CommandKind::None);
 }

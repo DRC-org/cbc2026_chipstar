@@ -5,14 +5,15 @@
 
 use std::sync::Arc;
 use std::thread;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use gilrs::Gilrs;
 
 use crate::app_state::Shared;
+use crate::device::parse_device_info;
 use crate::machine::MachineController;
 use crate::telemetry::parse_telemetry;
-use crate::{controller, frame, serial::SerialLink};
+use crate::{controller, serial::SerialLink};
 
 fn period_from_hz(rate_hz: f64) -> Duration {
     let hz = if rate_hz > 0.0 { rate_hz } else { 1.0 };
@@ -38,6 +39,7 @@ pub fn run(shared: Arc<Shared>) {
     let mut period = period_from_hz(cfg.rate_hz);
     let mut machine = MachineController::new(cfg.machine.clone());
     shared.queue_line(machine.hello_line());
+    let mut last_hello = Instant::now();
 
     while shared.is_running() {
         // 設定変更を検知したらシリアルを開き直す。
@@ -49,6 +51,14 @@ pub fn run(shared: Arc<Shared>) {
             period = period_from_hz(cfg.rate_hz);
             machine = MachineController::new(cfg.machine.clone());
             shared.queue_line(machine.hello_line());
+            shared.update_status(|s| s.device = None);
+            last_hello = Instant::now();
+        }
+
+        // USBの抜き差しは明示イベントを持たないため、能力照会を定期再送する。
+        if last_hello.elapsed() >= Duration::from_secs(1) {
+            let _ = link.write_line(&machine.hello_line());
+            last_hello = Instant::now();
         }
 
         // イベントを消費して各ゲームパッドの状態を最新化する。
@@ -79,21 +89,16 @@ pub fn run(shared: Arc<Shared>) {
                 let state = controller::read(&pad);
                 let name = pad.name().to_owned();
 
-                let line = frame::format_controller_input(&state);
                 let send_result = if shared.sending_enabled() {
-                    // 移行中は新しいslot指令と旧入力行を併送する。旧FWはTARGETを、
-                    // 汎用FWはLX行を無視するため、片側ずつ更新しても操作を維持できる。
                     let mut result = Ok(());
-                    for target in machine.update(&state, period.as_secs_f32()) {
-                        if let Err(err) = link.write_line(&target) {
+                    let targets = machine.update(&state, period.as_secs_f32());
+                    for target in &targets {
+                        if let Err(err) = link.write_line(target) {
                             result = Err(err);
                             break;
                         }
                     }
-                    if result.is_ok() {
-                        result = link.write_line(&line);
-                    }
-                    Some(result)
+                    Some((result, targets.last().cloned().unwrap_or_default()))
                 } else {
                     None
                 };
@@ -104,13 +109,13 @@ pub fn run(shared: Arc<Shared>) {
                     s.axes = state.axes;
                     s.buttons = state.buttons;
                     match send_result {
-                        Some(Ok(())) => {
+                        Some((Ok(()), last_line)) => {
                             s.serial_connected = true;
                             s.last_error = None;
-                            s.last_line = line;
+                            s.last_line = last_line;
                             s.tx_count = s.tx_count.wrapping_add(1);
                         }
-                        Some(Err(err)) => {
+                        Some((Err(err), _)) => {
                             s.serial_connected = false;
                             s.last_error = Some(format!("{err:#}"));
                         }
@@ -128,7 +133,13 @@ pub fn run(shared: Arc<Shared>) {
 
         // cctl からのテレメトリを取り込む。
         for line in link.read_lines() {
-            if let Some(telemetry) = parse_telemetry(&line) {
+            if let Some(device) = parse_device_info(&line) {
+                shared.update_status(|s| {
+                    s.device = Some(device);
+                    s.serial_connected = true;
+                    s.last_error = None;
+                });
+            } else if let Some(telemetry) = parse_telemetry(&line) {
                 shared.update_status(|s| {
                     s.telemetry = Some(telemetry);
                     s.telemetry_count = s.telemetry_count.wrapping_add(1);

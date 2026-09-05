@@ -33,14 +33,11 @@ add_firmware_tests(serial_svmd_tests ${REPO_ROOT}/serial_svmd/src
 )
 
 add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
-    cctl/robot_config_test.cpp
+    cctl/device_config_test.cpp
     cctl/c620_codec_test.cpp
-    cctl/can_frame_test.cpp
     cctl/line_reader_test.cpp
-    cctl/stick_command_test.cpp
     cctl/telemetry_test.cpp
     cctl/command_test.cpp
-    cctl/kinematics_test.cpp
     cctl/command_queue_test.cpp
     cctl/led_pattern_test.cpp
     cctl/dm_codec_test.cpp
@@ -48,12 +45,9 @@ add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     cctl/pid_test.cpp
     cctl/delta_timer_test.cpp
     ${REPO_ROOT}/cctl/src/domain/c620_codec.cpp
-    ${REPO_ROOT}/cctl/src/domain/can_frame.cpp
     ${REPO_ROOT}/cctl/src/domain/line_reader.cpp
-    ${REPO_ROOT}/cctl/src/domain/stick_command.cpp
     ${REPO_ROOT}/cctl/src/domain/telemetry.cpp
     ${REPO_ROOT}/cctl/src/domain/command.cpp
-    ${REPO_ROOT}/cctl/src/domain/kinematics.cpp
     ${REPO_ROOT}/cctl/src/domain/command_queue.cpp
     ${REPO_ROOT}/cctl/src/domain/led_pattern.cpp
     ${REPO_ROOT}/cctl/src/domain/dm_codec.cpp

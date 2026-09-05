@@ -11,11 +11,11 @@ bool blink(uint32_t tick_ms, uint32_t half_period_ms) {
 uint8_t ledPattern(uint32_t tick_ms, RunMode mode, uint8_t enabled_axes) {
     switch (mode) {
         case RunMode::Safe:
-            return blink(tick_ms, 500) ? axis_bit::R : 0;
+            return blink(tick_ms, 500) ? slot_bit::SLOT0 : 0;
         case RunMode::Stop:
-            return blink(tick_ms, 100) ? axis_bit::ALL : 0;
+            return blink(tick_ms, 100) ? slot_bit::ALL : 0;
         case RunMode::Run:
-            return enabled_axes & axis_bit::ALL;
+            return enabled_axes & slot_bit::ALL;
     }
     return 0;
 }

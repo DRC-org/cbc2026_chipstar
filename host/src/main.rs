@@ -4,6 +4,7 @@
 
 mod app_state;
 mod controller;
+mod device;
 mod frame;
 mod gui;
 mod keymap;

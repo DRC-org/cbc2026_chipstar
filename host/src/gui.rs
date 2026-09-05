@@ -12,7 +12,8 @@ use eframe::egui::{self, FontData};
 use crate::app_state::{BridgeConfig, Shared};
 use crate::frame::Command;
 use crate::keymap::{self, Action, ExCommand, Key, Mode, Normal};
-use crate::telemetry::{axis_bit, RunMode, Telemetry};
+use crate::machine::MachineProfile;
+use crate::telemetry::{RunMode, Telemetry, slot_bit};
 
 /// 画面（タブ）。
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -36,19 +37,25 @@ enum Operation {
     Run,
     Safe,
     Home,
-    ToggleAxis(u8),
-    Test(bool),
+    ToggleSlot(u8),
 }
 
-const OPERATIONS: [(Operation, &str); 8] = [
+const OPERATIONS: [(Operation, &str); 6] = [
     (Operation::Run, "RUN（運転開始）"),
     (Operation::Safe, "SAFE（待機へ）"),
-    (Operation::Home, "HOME（原点取り直し）"),
-    (Operation::ToggleAxis(axis_bit::R), "r 軸 (EL05) を切り替え"),
-    (Operation::ToggleAxis(axis_bit::THETA), "θ 軸 (M3508) を切り替え"),
-    (Operation::ToggleAxis(axis_bit::Z), "z 軸 (DM) を切り替え"),
-    (Operation::Test(true), "テスト動作 開始"),
-    (Operation::Test(false), "テスト動作 停止"),
+    (Operation::Home, "全slotの原点取り直し"),
+    (
+        Operation::ToggleSlot(slot_bit::SLOT0),
+        "r 軸 (slot 0 / EL05) を切り替え",
+    ),
+    (
+        Operation::ToggleSlot(slot_bit::SLOT1),
+        "θ 軸 (slot 1 / M3508) を切り替え",
+    ),
+    (
+        Operation::ToggleSlot(slot_bit::SLOT2),
+        "z 軸 (slot 2 / DM) を切り替え",
+    ),
 ];
 
 /// 設定画面で編集できる項目数。
@@ -183,30 +190,34 @@ impl BridgeApp {
             return;
         };
 
-        let enabled_axes = self
+        let enabled_slots = self
             .shared
             .status_snapshot()
             .telemetry
             .as_ref()
-            .map(|telemetry| telemetry.enabled_axes);
+            .map(|telemetry| telemetry.enabled_slots);
 
         let command = match *operation {
             Operation::Run => Command::Run,
             Operation::Safe => Command::Safe,
-            Operation::Home => Command::Home,
-            Operation::ToggleAxis(bit) => {
+            Operation::Home => Command::Home {
+                slots: slot_bit::ALL,
+            },
+            Operation::ToggleSlot(bit) => {
                 // テレメトリが無い間は有効化する方向に倒す。
-                let currently_enabled = enabled_axes.is_some_and(|axes| axes & bit != 0);
+                let currently_enabled = enabled_slots.is_some_and(|slots| slots & bit != 0);
                 Command::Enable {
-                    axes: bit,
+                    slots: bit,
                     enabled: !currently_enabled,
                 }
             }
-            Operation::Test(enabled) => Command::Test(enabled),
         };
 
-        self.shared.queue_command(command);
-        self.message = Some(format!("{label} → {}", command.to_line()));
+        if self.shared.queue_command(command) {
+            self.message = Some(format!("{label} → {}", command.to_line()));
+        } else {
+            self.message = Some("FWの能力確認を待っています。".to_owned());
+        }
     }
 
     fn submit_command(&mut self, ctx: &egui::Context) {
@@ -253,6 +264,13 @@ impl BridgeApp {
                 });
                 ui.end_row();
 
+                ui.label("デバイス");
+                ui.label(match &status.device {
+                    Some(device) => format!("{} / protocol {}", device.board, device.protocol),
+                    None => "能力確認待ち".to_owned(),
+                });
+                ui.end_row();
+
                 ui.label("送信");
                 ui.label(if self.shared.sending_enabled() {
                     "有効"
@@ -296,7 +314,12 @@ impl BridgeApp {
         ui.separator();
         ui.label("機体の状態");
         match &status.telemetry {
-            Some(telemetry) => telemetry_ui(ui, telemetry, status.telemetry_count),
+            Some(telemetry) => telemetry_ui(
+                ui,
+                telemetry,
+                &self.shared.config().machine,
+                status.telemetry_count,
+            ),
             None => {
                 ui.label("cctl からのテレメトリを受信していません。");
             }
@@ -393,13 +416,16 @@ impl BridgeApp {
         ui.label("j / k で選び、Enter で実行。Space はいつでも STOP。");
         ui.add_space(8.0);
 
-        let enabled_axes = status.telemetry.as_ref().map(|telemetry| telemetry.enabled_axes);
+        let enabled_slots = status
+            .telemetry
+            .as_ref()
+            .map(|telemetry| telemetry.enabled_slots);
         let mut clicked = None;
 
         for (index, (operation, label)) in OPERATIONS.iter().enumerate() {
             let selected = index == self.selection;
             let suffix = match operation {
-                Operation::ToggleAxis(bit) => match enabled_axes {
+                Operation::ToggleSlot(bit) => match enabled_slots {
                     Some(axes) if axes & bit != 0 => "  [現在: 有効]",
                     Some(_) => "  [現在: 無効]",
                     None => "  [現在: 不明]",
@@ -464,7 +490,7 @@ impl BridgeApp {
 
         ui.add_space(8.0);
         ui.label("コマンドラインは cctl の指令をそのまま受け取ります。");
-        ui.monospace(":STOP   :RUN   :SAFE   :HOME   :EN RTZ 1   :TEST 1");
+        ui.monospace(":STOP   :RUN   :SAFE   :HOME 7   :ENABLE 7 1");
         ui.add_space(4.0);
         ui.label("GUI が知らない語は cctl へ送るので、ファーム側に指令が増えても");
         ui.label("host を更新せずに使えます。指令の一覧は docs/bringup.md を参照。");
@@ -605,7 +631,7 @@ fn mode_color(mode: RunMode) -> egui::Color32 {
 }
 
 /// 目標値と実測値を並べて表示する。
-fn telemetry_ui(ui: &mut egui::Ui, telemetry: &Telemetry, count: u64) {
+fn telemetry_ui(ui: &mut egui::Ui, telemetry: &Telemetry, profile: &MachineProfile, count: u64) {
     ui.colored_label(
         mode_color(telemetry.mode),
         egui::RichText::new(telemetry.mode.label()).strong(),
@@ -622,16 +648,15 @@ fn telemetry_ui(ui: &mut egui::Ui, telemetry: &Telemetry, count: u64) {
             ui.label("誤差");
             ui.end_row();
 
-            for (bit, name, axis, unit) in [
-                (axis_bit::R, "r", telemetry.r, "mm"),
-                (axis_bit::THETA, "θ", telemetry.theta, "deg"),
-                (axis_bit::Z, "z", telemetry.z, "mm"),
-            ] {
-                let enabled = telemetry.axis_enabled(bit);
-                ui.label(format!("{name} {}", if enabled { "●" } else { "○" }));
-                ui.monospace(format!("{:+8.3} {unit}", axis.target));
-                ui.monospace(format!("{:+8.3} {unit}", axis.measured));
-                ui.monospace(format!("{:+8.3}", axis.error()));
+            for axis in &profile.axes {
+                let state = telemetry.slots[axis.slot as usize];
+                let target = state.target / axis.native_per_unit;
+                let measured = state.measured / axis.native_per_unit;
+                let enabled = telemetry.slot_enabled(axis.slot);
+                ui.label(format!("{} {}", axis.name, if enabled { "●" } else { "○" }));
+                ui.monospace(format!("{target:+8.3} {}", axis.unit));
+                ui.monospace(format!("{measured:+8.3} {}", axis.unit));
+                ui.monospace(format!("{:+8.3}", target - measured));
                 ui.end_row();
             }
         });
@@ -644,7 +669,7 @@ fn telemetry_ui(ui: &mut egui::Ui, telemetry: &Telemetry, count: u64) {
     if telemetry.error_bits != 0 {
         ui.colored_label(
             egui::Color32::from_rgb(200, 80, 80),
-            "z 軸ドライバがエラーを報告しています。",
+            "アクチュエータがエラーを報告しています。",
         );
     }
 }

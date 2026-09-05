@@ -9,7 +9,7 @@ input_sign = 1.0
 speed_per_second = 100.0
 native_per_unit = 0.10005072
 minimum = 0.0
-maximum = 250.0
+maximum = 120.0
 initial = 0.0
 
 [[axes]]
@@ -31,5 +31,5 @@ slot = 2
 speed_per_second = 0.0
 native_per_unit = 0.15707964
 minimum = 0.0
-maximum = 300.0
+maximum = 75.0
 initial = 0.0

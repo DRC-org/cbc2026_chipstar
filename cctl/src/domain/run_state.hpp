@@ -11,12 +11,14 @@ enum class RunMode : uint8_t {
     Stop,      // 非常停止。トルクを切って保持する
 };
 
-// 軸を指すビット。テレメトリと指令で共通に使う。
-namespace axis_bit {
-constexpr uint8_t R = 1 << 0;
-constexpr uint8_t THETA = 1 << 1;
-constexpr uint8_t Z = 1 << 2;
-constexpr uint8_t ALL = R | THETA | Z;
-}  // namespace axis_bit
+constexpr uint8_t SLOT_COUNT = 3;
+
+// 物理アクチュエータslotを指すビット。機体上の軸名は持たない。
+namespace slot_bit {
+constexpr uint8_t SLOT0 = 1 << 0;
+constexpr uint8_t SLOT1 = 1 << 1;
+constexpr uint8_t SLOT2 = 1 << 2;
+constexpr uint8_t ALL = SLOT0 | SLOT1 | SLOT2;
+}  // namespace slot_bit
 
 }  // namespace domain
