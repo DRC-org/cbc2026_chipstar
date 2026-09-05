@@ -76,8 +76,15 @@ impl Session {
             Board::SerialSvmd => "motor1..253 <位置0..4095>; read1..253（同時最大16 ID）",
             Board::Dcmd => "motor0 <duty -100..100 permille>; encoder; status",
         };
+        let inputs = if crate::inputs::supported(self.board) {
+            "; inputs (SW/DIP読取り)"
+        } else if self.board == Board::Cctl {
+            "。接点はstatusのSTATE行にsw=として出る"
+        } else {
+            ""
+        };
         format!(
-            "on <機能> [値] / off <機能> / stop / watchdog / help / quit\n機能: {features}; communication; inputs (SW/DIP読取り)\nguard <mask> <high>: 対象基板を停止して入力停止条件を設定。high=0は閉接点で停止。\nwatchdog: 全送信を500ms止め、出力をOFF状態に戻す。自動再開なし。"
+            "on <機能> [値] / off <機能> / stop / watchdog / help / quit\n機能: {features}; communication{inputs}\nwatchdog: 全送信を500ms止め、出力をOFF状態に戻す。自動再開なし。"
         )
     }
 
@@ -133,29 +140,6 @@ impl Session {
             );
             self.silent_until = Some(now + Duration::from_millis(500));
             return Ok(vec![]);
-        }
-        if tokens.first() == Some(&"guard") {
-            ensure!(tokens.len() == 3, "guard <mask> <high> を指定してください");
-            ensure!(self.board != Board::Svmd, "svmdには外部SW入力がありません");
-            let mask: u8 = tokens[1].parse()?;
-            let high: u8 = tokens[2].parse()?;
-            let available = if self.board == Board::SerialSvmd {
-                63
-            } else {
-                7
-            };
-            ensure!(
-                mask & !available == 0 && high & !mask == 0,
-                "入力mask/極性が範囲外です"
-            );
-            let mut lines = self.stop();
-            self.inputs = true;
-            lines.push(if self.board == Board::Dcmd {
-                can(784, 7, mask, high, 0)
-            } else {
-                format!("INPUT GUARD {mask} {high}")
-            });
-            return Ok(lines);
         }
         ensure!(
             tokens.len() == 2 || tokens.len() == 3,
@@ -228,7 +212,13 @@ impl Session {
         }
         ensure!(tokens.len() == 2, "この機能に値は不要です");
         match name {
-            "inputs" => self.inputs = enabled,
+            "inputs" => {
+                ensure!(
+                    crate::inputs::supported(self.board),
+                    "この基板に要求応答型の接点報告はありません"
+                );
+                self.inputs = enabled;
+            }
             "status" => {
                 ensure!(
                     self.board != Board::SerialSvmd,
@@ -294,9 +284,8 @@ impl Session {
         // 1周期1IDに制限し、出力のWatchdog更新を遅らせない。
         if self.inputs {
             lines.push(match self.board {
-                Board::Cctl | Board::SerialSvmd => "INPUT READ".into(),
                 Board::Dcmd => can(784, 6, 0, 0, 0),
-                Board::Svmd => can(768, 4, 0, 0, 0),
+                _ => "INPUT READ".into(),
             });
         }
         if let Some(id) = self

@@ -125,10 +125,6 @@ pub fn run(shared: &Shared, config: Config) {
             });
             for line in link.read_lines() {
                 if let Some(state) = crate::inputs::parse(&line, config.board) {
-                    if state.trip && !session.active_outputs().is_empty() {
-                        shared.tests.command("stop".into());
-                        fw_test_transport::send(&mut link, session.stop())?;
-                    }
                     shared.tests.update(|s| {
                         s.inputs = Some(state);
                         s.input_rx = Some(Instant::now());
@@ -174,8 +170,6 @@ pub struct Panel {
     config: Config,
     motors: Vec<(u8, f32)>,
     new_id: u8,
-    guard_mask: u8,
-    guard_high: u8,
 }
 
 impl Panel {
@@ -189,8 +183,6 @@ impl Panel {
             },
             motors: vec![(0, 0.0), (1, 0.0), (2, 0.0)],
             new_id: 1,
-            guard_mask: 0,
-            guard_high: 0,
         }
     }
 
@@ -212,8 +204,6 @@ impl Panel {
                 }
             });
             if self.config.board != previous {
-                self.guard_mask = 0;
-                self.guard_high = 0;
                 let cfg = shared.config();
                 self.config.device = if self.config.board == Board::SerialSvmd {
                     cfg.machine
@@ -363,37 +353,40 @@ impl Panel {
         if snapshot.watchdog {
             ui.label("通信断テスト中。終了後の自動再始動はありません。");
         }
-        ui.separator();
-        ui.add_enabled_ui(enabled && snapshot.ready && !snapshot.watchdog, |ui| {
-            toggle(ui, shared, &snapshot, "inputs", "スイッチ・DIP読取り");
-            if let Some(state) = &snapshot.inputs {
-                ui.label(format!("DIP={:04b}  FW停止mask={:06b}  開接点停止mask={:06b}  入力応答={:.1}秒前",
-                    state.dip, state.guard, state.high, snapshot.input_rx.map(|t| t.elapsed().as_secs_f32()).unwrap_or(0.0)));
-                if state.trip { ui.colored_label(egui::Color32::RED, "入力保護作動：出力禁止。原因を除き、停止条件を再設定して解除してください。"); }
-                for index in 0..6 {
-                    let bit = 1 << index;
-                    if state.available & bit == 0 { continue; }
-                    ui.horizontal(|ui| {
-                        let name = if self.config.board == Board::Dcmd { ["SW_A", "SW_B", "SW_C"][index] .to_owned() } else { format!("SW{}", index + 1) };
-                        ui.label(format!("{name}: {}（安定値 {}）", if state.raw & bit != 0 { "閉/LOW" } else { "開/HIGH" }, if state.stable & bit != 0 { "閉" } else { "開" }));
-                        let mut selected = self.guard_mask & bit != 0;
-                        if ui.checkbox(&mut selected, "停止入力").changed() {
-                            if selected { self.guard_mask |= bit; } else { self.guard_mask &= !bit; self.guard_high &= !bit; }
+        if crate::inputs::supported(self.config.board) {
+            ui.separator();
+            ui.add_enabled_ui(enabled && snapshot.ready && !snapshot.watchdog, |ui| {
+                toggle(ui, shared, &snapshot, "inputs", "スイッチ・DIP読取り");
+                if let Some(state) = &snapshot.inputs {
+                    ui.label(format!(
+                        "{}  入力応答={:.1}秒前",
+                        crate::inputs::describe(state),
+                        snapshot
+                            .input_rx
+                            .map(|at| at.elapsed().as_secs_f32())
+                            .unwrap_or(0.0)
+                    ));
+                    for index in 0..8 {
+                        let bit = 1 << index;
+                        if state.available & bit == 0 {
+                            continue;
                         }
-                        let mut high = self.guard_high & bit != 0;
-                        if ui.add_enabled(selected, egui::Checkbox::new(&mut high, "開接点で停止")).changed() {
-                            if high { self.guard_high |= bit; } else { self.guard_high &= !bit; }
-                        }
-                    });
-                }
-                if state.available != 0 {
-                    ui.label("未選択は監視のみ。停止条件は基板全出力に作用し、電源再投入で解除されます。");
-                    if ui.add_enabled(snapshot.outputs.is_empty(), egui::Button::new("停止条件を設定・ラッチ解除（全出力停止）")).clicked() {
-                        shared.tests.command(format!("guard {} {}", self.guard_mask, self.guard_high));
+                        let name = if self.config.board == Board::Dcmd {
+                            ["SW_A", "SW_B", "SW_C"][index].to_owned()
+                        } else {
+                            format!("SW{}", index + 1)
+                        };
+                        ui.label(format!(
+                            "{name}: {}（安定値 {}）",
+                            if state.raw & bit != 0 { "閉/LOW" } else { "開/HIGH" },
+                            if state.stable & bit != 0 { "閉" } else { "開" }
+                        ));
                     }
-                } else { ui.label("この基板に外部SW入力はありません。DIPの状態のみ読み取れます。"); }
-            } else { ui.label("読取りをONにすると入力状態と停止条件を表示します。対応FWへの更新が必要です。"); }
-        });
+                } else {
+                    ui.label("読取りをONにすると接点とDIPの状態を表示します。");
+                }
+            });
+        }
         ui.collapsing("テスト機能と単位", |ui| {
             ui.label(Session::new(self.config.board, Duration::from_secs(5)).help());
         });
