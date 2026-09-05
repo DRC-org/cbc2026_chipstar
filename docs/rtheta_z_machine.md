@@ -1,8 +1,9 @@
 # rθz 機体構成
 
 キャチロボ2026 の把持ハンドを位置決めする **rθz 3軸機構**の構成と、各軸の駆動系・
-座標定義をまとめる。制御コードは `cctl`（STM32G474）に実装（[cctl_can_bus.md](cctl_can_bus.md),
-[motor_protocols.md](motor_protocols.md) 参照）。
+座標定義をまとめる。機体座標とモータの換算は`host/config/rtheta.toml`、デバイスの
+リアルタイム制御は`cctl`に実装する（[host_machine_profile.md](host_machine_profile.md)、
+[motor_protocols.md](motor_protocols.md)参照）。
 
 ## 座標系
 
@@ -30,7 +31,7 @@
 - 円盤ベース外周が**内歯リングギア（ターンテーブル）**になっており、M3508 に付いた
   **ピニオン**で駆動して機体全体を旋回させる。
 - 減速比 = `(内歯車歯数 / ピニオン歯数) × C620内蔵減速比(3591/187 ≈ 19.2032)`。
-- **歯数は要実測**（`cctl/src/robot_config.hpp` の `RING_TEETH` / `PINION_TEETH` を暫定値で仮置き）。
+- **歯数は要実測**。確定後、`host/config/rtheta.toml`のθ軸`native_per_unit`へ反映する。
 - M3508/C620 は絶対位置を持たないため、cctl 側で**多回転角の積算**と**位置→速度カスケードPID**で
   位置制御する。**原点は起動時姿勢**（初回フィードバック角を 0 とする）。
 
@@ -55,18 +56,20 @@
 
 | 軸 | 起動時の原点確定方法 |
 |---|---|
-| z | DM 電源投入位置 = 0 rad |
-| r | EL05 `set_zero`（起動シーケンスで発行） |
-| θ | M3508 初回フィードバック角を 0 に採用 |
+| z | 安全な姿勢でhostから`HOME 4`を送る |
+| r | 安全な姿勢でhostから`HOME 1`を送り、EL05の`set_zero`を実行 |
+| θ | `HOME 2`後のM3508フィードバック角を0に採用 |
 
 将来的にはリミットスイッチによるホーミングを追加予定。それまでは**毎回同じ姿勢で電源投入**する必要がある。
 
 ## 要実測パラメータ一覧
 
-以下は実機確定後に `cctl/src/robot_config.hpp` を更新する。
+以下は実機確定後に`host/config/rtheta.toml`を更新する。
 
-- z: `Z_MM_PER_OUTPUT_REV`（プーリ歯数×ベルトピッチ or 有効径×π）、可動域 `Z_MIN/MAX_MM`
-- r: `R_MM_PER_OUTPUT_REV`（ピニオン モジュール×歯数）、可動域 `R_MIN/MAX_MM`
-- θ: `RING_TEETH`, `PINION_TEETH`、可動域 `THETA_MIN/MAX_DEG`
-- 各軸の正方向 `*_SIGN`
-- DM フィードバック復号レンジ `dm::P_MAX`（実機 PMAX レジスタ値）
+- z: プーリ歯数×ベルトピッチまたは有効径×πから`native_per_unit`、`minimum/maximum`
+- r: ピニオンのモジュール×歯数から`native_per_unit`、`minimum/maximum`
+- θ: リング歯数、ピニオン歯数、C620減速比から`native_per_unit`、`minimum/maximum`
+- 各軸の正方向を`input_sign`へ反映
+
+DMのフィードバック復号レンジ、モータ電流上限、制御ゲインなど基板が守る絶対条件は
+`cctl/src/device_config.hpp`に置く。通常の機体変更では触らない。

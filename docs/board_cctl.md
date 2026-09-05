@@ -16,7 +16,7 @@ FDCAN のビットレート設計・CAN ID 割当は [cctl_can_bus.md](cctl_can_
 | MCU ペリフェラル | ハンドル | ピン | AF | 設定 | 用途 |
 |---|---|---|---|---|---|
 | FDCAN1 | `hfdcan1` | PB8=RX, PB9=TX | AF9 | 1Mbps, Classic | モータ用バス |
-| FDCAN2 | `hfdcan2` | PB5=RX, PB6=TX | AF9 | ⚠ CubeMX 既定のまま | 周辺基板用（要設定） |
+| FDCAN2 | `hfdcan2` | PB5=RX, PB6=TX | AF9 | 1Mbps, Classic | 周辺基板用 |
 | FDCAN3 | `hfdcan3` | PB3=RX, PB4=TX | AF11 | ⚠ CubeMX 既定のまま | 予備 |
 | I2C1 | `hi2c1` | PA15=SCL, PB7=SDA | AF4 | `Timing=0x30D29DE4`（≒100kHz） | LCD 専用 |
 | I2C3 | `hi2c3` | PC8=SCL, PC9=SDA | AF8 | 同上 | 基板の **I2C1 コネクタ** |
@@ -65,10 +65,11 @@ MCU の I2C1 ではなく I2C3 のピンを指す。ハンドルとピンマク�
 PC7 のラベルが `.ioc` の時点で `ISC2_SDA` になっており、`main.h` にも
 `ISC2_SDA_Pin` として生成される。意味は `I2C2_SDA`。
 
-### FDCAN2 / FDCAN3 は未整備
+### FDCAN3 は未整備
 
-CubeMX 既定のタイミングのままで 1Mbps になっていない。使う前に `.ioc` で設定し直す。
-詳細は [cctl_can_bus.md](cctl_can_bus.md)。
+FDCAN2は1Mbpsに設定し、USB CDCから標準IDのCANフレームを送受信できる。FDCAN3は
+CubeMX既定のタイミングのままで、アプリから開始していない。詳細は
+[cctl_can_bus.md](cctl_can_bus.md)。
 
 ### USB CDC の受信は割込みコンテキスト
 

@@ -16,12 +16,11 @@ SystemClock（`main.c` の `SystemClock_Config`）:
 | ペリフェラル | Prescaler | Seg1 | Seg2 | 合計tq | ビットレート | 状態 |
 |---|---|---|---|---|---|---|
 | FDCAN1 | 16 | 7 | 2 | 10 | **1 Mbps** | 正常（モータ用） |
-| FDCAN2 | 16 | 1 | 1 | 3 | 3.33 Mbps | ⚠ CubeMX 既定のまま・未整備 |
+| FDCAN2 | 16 | 7 | 2 | 10 | **1 Mbps** | 正常（周辺基板用） |
 | FDCAN3 | 16 | 1 | 1 | 3 | 3.33 Mbps | ⚠ CubeMX 既定のまま・未整備 |
 
-> **注意**: FDCAN2/3 は 1Mbps になっていない。周辺基板バスとして使う際は `.ioc` で
-> `NominalTimeSeg1=7, NominalTimeSeg2=2`（1Mbps）等に設定し直すこと。全ペリフェラル
-> Classic CAN（`FDCAN_FRAME_CLASSIC`）、`AutoRetransmission=DISABLE`。
+FDCAN1/2はClassic CAN、1Mbps、`AutoRetransmission=DISABLE`。FDCAN3は未使用で、
+アプリから開始していない。
 
 ## ピン割当（`stm32g4xx_hal_msp.c`）
 
@@ -38,10 +37,10 @@ SystemClock（`main.c` の `SystemClock_Config`）:
 | バス | 用途 | ビットレート |
 |---|---|---|
 | **FDCAN1** | **全モータ（DM / EL05 / M3508）を集約** | 1 Mbps |
-| FDCAN2 | 周辺基板 | 未定（要設定） |
+| **FDCAN2** | **周辺基板。hostからの汎用CANゲートウェイ** | 1 Mbps |
 | FDCAN3 | 予備（未使用） | — |
 
-モータは 3 種とも 1Mbps のため、唯一 1Mbps 設定済みの FDCAN1 に集約する。
+モータは3種とも1MbpsのFDCAN1に集約し、周辺基板通信をFDCAN2へ分離する。
 
 ## CAN ID 割当（同一バス上の衝突回避）
 
@@ -49,10 +48,10 @@ SystemClock（`main.c` の `SystemClock_Config`）:
 EL05 は拡張ID(29bit)なので標準IDと空間が別で衝突しない。**DM と M3508/C620 が標準IDで競合**する。
 
 - C620(θ) はコマンド `0x200`、フィードバック `0x200 + ESC_ID`（ID=1 → `0x201`）を占有。
-- DM のコマンドは `0x100 + CAN_ID`。CAN_ID を 0〜8 にすると C620 の `0x200〜0x208` と衝突する
-  （※ DM は `0x100+` 系なので実際に重なるのは稀だが、帯域と識別のため明確に分離する）。
+- DMのPosition-Velocity指令は`0x100 + CAN_ID`。指令IDとフィードバックIDの両方を
+  C620が使用するIDと重複させない。
 
-採用した割当（`cctl/src/robot_config.hpp` の `can_id` 名前空間）:
+採用した割当（`cctl/src/device_config.hpp` の `can_id` 名前空間）:
 
 | モータ | 種別 | コマンドID | フィードバックID | 備考 |
 |---|---|---|---|---|
@@ -61,7 +60,11 @@ EL05 は拡張ID(29bit)なので標準IDと空間が別で衝突しない。**DM
 | EL05 (r) | 拡張 | 拡張ID | 拡張ID | motor=0x7F / host=0xFD |
 
 受信振り分けは **`RxHeader.IdType`（標準/拡張）＋ Identifier** で判定する
-（`RThetaZController::dispatchRx`）。
+（`ActuatorController::dispatchRx`）。
+
+FDCAN2はUSB CDCの`CAN 2 <id> <data>`を標準CANフレームへ変換し、受信フレームを
+`CAN_RX`行でhostへ返す。svmdの指令IDは`0x300`、状態IDは`0x301`。フレーム内容は
+[device_protocol.md](device_protocol.md)を参照。
 
 ## 受信・送信の実装方針
 

@@ -8,6 +8,7 @@
 - [clangd.md](clangd.md) — clangd(LSP) の設定、compile_commands.json の生成、クロスコンパイラの扱い
 - [generic_firmware.md](generic_firmware.md) — 汎用FWとhostの責務、安全状態、基板ごとの能力
 - [device_protocol.md](device_protocol.md) — hostと各基板のバージョン付き通信プロトコル
+- [host_machine_profile.md](host_machine_profile.md) — 機体固有の軸、PWM/STS3215サーボ、接続先の設定
 
 ## 基板
 

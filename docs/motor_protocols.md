@@ -70,7 +70,7 @@ Kp=0 かつ Kd≠0 で `v_des` を与えれば定速回転、Kp=Kd=0 で `t_ff` 
 | `0x23` | baud | 通信速度 | RW |
 
 **PMAX / VMAX / TMAX は実機から読める**（`DmMotor::requestRegister`）。
-`robot_config.hpp` の暫定値を推測で埋める必要はない。
+`device_config.hpp` の基板上限を推測で変更する必要はない。
 
 ### フィードバックフレーム（ID = MST_ID）
 | byte | 内容 |
@@ -185,4 +185,4 @@ C620 は 1回転 0..8191 の角度しか返さないため:
 3. **カスケードPID**: 位置ループ（モータ多回転角[deg]誤差→目標rpm）→ 速度ループ（rpm誤差→電流mA）。
 4. θ出力角 → モータ角の換算 = `θ_deg × (RING_TEETH/PINION_TEETH) × (3591/187)`。
 
-ゲイン・電流上限は暫定値（`robot_config.hpp` の `m3508` 名前空間）。実機で調整前提。
+ゲイン・電流上限は基板設定（`device_config.hpp` の `m3508` 名前空間）。実機で調整前提。

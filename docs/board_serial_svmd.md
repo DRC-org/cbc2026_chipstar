@@ -91,4 +91,8 @@ STS3215 は工場出荷時 1Mbps の個体がある。USART1 は 115200bps 固�
 `Core/Src/main.c` の USER CODE から `setup()` と `loop()` を呼ぶだけにし、実装は
 `src/app.cpp` に置く。宣言は `src/app.h`。
 
+USART2の上位プロトコルは機体固有IDを固定せず、`HELLO`、`SAFE/RUN/STOP`、
+`SERVO ENABLE/TARGET/READ`を受理する。プロトコルと範囲は
+[device_protocol.md](device_protocol.md)を参照。
+
 ペリフェラル単体の動作確認コードは [samples/serial_svmd/](../samples/serial_svmd) にある。
