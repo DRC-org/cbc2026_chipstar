@@ -51,6 +51,29 @@ TEST_CASE("TARGETはslotと有限な実数を持つ") {
     CHECK(parse("TARGET 0 inf").kind == CommandKind::None);
 }
 
+TEST_CASE("CANはFDCAN2の標準IDと0から8 byteを解釈する") {
+    const Command command = parse("CAN 2 768 0101000005DC0000");
+    CHECK(command.kind == CommandKind::CanTx);
+    CHECK(command.can_id == 0x300);
+    CHECK(command.can_length == 8);
+    CHECK(command.can_data[0] == 0x01);
+    CHECK(command.can_data[1] == 0x01);
+    CHECK(command.can_data[4] == 0x05);
+    CHECK(command.can_data[5] == 0xDC);
+
+    const Command empty = parse("CAN 2 0 -");
+    CHECK(empty.kind == CommandKind::CanTx);
+    CHECK(empty.can_length == 0);
+}
+
+TEST_CASE("CANは未提供bus、不正ID、不正payloadを拒否する") {
+    CHECK(parse("CAN 1 768 00").kind == CommandKind::None);
+    CHECK(parse("CAN 2 2048 00").kind == CommandKind::None);
+    CHECK(parse("CAN 2 768 0").kind == CommandKind::None);
+    CHECK(parse("CAN 2 768 GG").kind == CommandKind::None);
+    CHECK(parse("CAN 2 768 000102030405060708").kind == CommandKind::None);
+}
+
 TEST_CASE("大文字小文字と前後空白を許容する") {
     CHECK(parse("  heartbeat  ").kind == CommandKind::Heartbeat);
     CHECK(parse("target 2 1.25").kind == CommandKind::Target);

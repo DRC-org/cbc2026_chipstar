@@ -11,10 +11,12 @@
 #include "usbd_cdc_if.h"
 
 #include <cstdint>
+#include <cstdio>
 #include <cstring>
 
 extern "C" {
 extern FDCAN_HandleTypeDef hfdcan1;
+extern FDCAN_HandleTypeDef hfdcan2;
 extern I2C_HandleTypeDef hi2c1;
 extern TIM_HandleTypeDef htim15;
 extern TIM_HandleTypeDef htim2;
@@ -23,11 +25,13 @@ extern TIM_HandleTypeDef htim2;
 namespace {
 Ui ui(&hi2c1, &htim15);
 CanBus motor_bus(&hfdcan1);
+CanBus peripheral_bus(&hfdcan2);
 ActuatorController controller(motor_bus);
 domain::LineReader usb_line;
 domain::CommandQueue commands;
 volatile uint32_t last_contact_ms = 0;
 bool protocol_ready = false;
+bool peripheral_bus_ready = false;
 
 void sendText(const char* text) {
     static uint8_t buffer[96];
@@ -42,7 +46,7 @@ void applyCommand(const domain::Command& command) {
     switch (command.kind) {
         case domain::CommandKind::Hello:
             protocol_ready = command.protocol_version == 1;
-            sendText(protocol_ready ? "DEVICE protocol=1 board=cctl slots=3 watchdog_ms=250"
+            sendText(protocol_ready ? "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250"
                                     : "ERR code=BAD_VERSION");
             break;
         case domain::CommandKind::Stop:
@@ -68,9 +72,40 @@ void applyCommand(const domain::Command& command) {
                 sendText("ERR code=OUT_OF_RANGE");
             }
             break;
+        case domain::CommandKind::CanTx:
+            if (!protocol_ready) {
+                sendText("ERR code=NOT_READY");
+            } else if (!peripheral_bus_ready) {
+                sendText("ERR code=CAN_UNAVAILABLE");
+            } else if (!peripheral_bus.sendStd(command.can_id, command.can_data,
+                                               command.can_length)) {
+                sendText("ERR code=CAN_TX");
+            }
+            break;
         case domain::CommandKind::None:
             break;
     }
+}
+
+void sendCanFrame(const domain::CanFrame& frame) {
+    static char line[96];
+    if (frame.extended || frame.length > 8) return;
+
+    const int prefix = std::snprintf(line, sizeof(line), "CAN_RX bus=2 id=%lu data=",
+                                     static_cast<unsigned long>(frame.id));
+    if (prefix < 0 || static_cast<std::size_t>(prefix) >= sizeof(line)) return;
+    std::size_t length = static_cast<std::size_t>(prefix);
+    if (frame.length == 0) {
+        line[length++] = '-';
+    } else {
+        constexpr char HEX[] = "0123456789ABCDEF";
+        for (uint8_t i = 0; i < frame.length; ++i) {
+            line[length++] = HEX[frame.data[i] >> 4];
+            line[length++] = HEX[frame.data[i] & 0x0F];
+        }
+    }
+    line[length] = '\0';
+    sendText(line);
 }
 
 void sendTelemetry() {
@@ -97,6 +132,7 @@ extern "C" void setup(void) {
     ui.begin();
     HAL_TIM_Base_Start_IT(&htim2);
     motor_bus.begin();
+    peripheral_bus_ready = peripheral_bus.begin();
     controller.begin();
     last_contact_ms = HAL_GetTick();
 }
@@ -104,6 +140,7 @@ extern "C" void setup(void) {
 extern "C" void loop(void) {
     domain::CanFrame frame;
     while (motor_bus.receive(frame)) controller.dispatchRx(frame);
+    while (peripheral_bus.receive(frame)) sendCanFrame(frame);
 
     domain::Command command;
     while (commands.pop(command)) applyCommand(command);

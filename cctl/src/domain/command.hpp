@@ -17,6 +17,7 @@ enum class CommandKind : uint8_t {
     Enable,
     Home,
     Target,
+    CanTx,
 };
 
 struct Command {
@@ -26,6 +27,9 @@ struct Command {
     uint8_t protocol_version = 0;
     bool value = false;
     float target = 0.0f;
+    uint16_t can_id = 0;
+    uint8_t can_length = 0;
+    uint8_t can_data[8] = {};
 };
 
 Command parseCommand(const char* line, std::size_t length);
