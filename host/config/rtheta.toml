@@ -38,7 +38,10 @@ origin_position = 0.0
 name = "z"
 unit = "mm"
 slot = 2
-speed_per_second = 0.0
+input_axis = 3
+input_sign = 1.0
+# 重力負荷があるので低速から始める。実機で詰める。
+speed_per_second = 30.0
 native_per_unit = 0.15707964
 minimum = 0.0
 maximum = 75.0

@@ -462,6 +462,16 @@ impl BridgeApp {
                     mode_color(telemetry.mode),
                     egui::RichText::new(telemetry.mode.label()).strong(),
                 );
+                if telemetry.stale_slots != 0 {
+                    ui.colored_label(
+                        egui::Color32::from_rgb(200, 60, 60),
+                        format!(
+                            "モータの応答が途絶えました（slot mask {:03b}）。\
+                             CAN配線と電源を確認し、再度有効化してください。",
+                            telemetry.stale_slots
+                        ),
+                    );
+                }
             }
             None => {
                 ui.label("機体の状態は不明（テレメトリ未受信）");

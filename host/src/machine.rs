@@ -116,7 +116,7 @@ fn yes() -> bool {
 /// パラメータ名から値への対応。名前は device_protocol.md の表に従う。
 pub type ParameterMap = std::collections::BTreeMap<String, f32>;
 
-pub const PARAMETER_NAMES: [&str; 31] = [
+pub const PARAMETER_NAMES: [&str; 32] = [
     "m3508_pos_kp",
     "m3508_pos_ki",
     "m3508_pos_kd",
@@ -148,6 +148,7 @@ pub const PARAMETER_NAMES: [&str; 31] = [
     "el05_period_ms",
     "telemetry_period_ms",
     "watchdog_ms",
+    "feedback_timeout_ms",
 ];
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -533,9 +534,10 @@ impl MachineController {
                 }
                 let target = &mut self.targets[index];
                 *target += value * input_sign * speed_per_second * dt;
-                // 可動域は原点が決まって初めて意味を持つ。採用前に効かせると
-                // 暫定原点基準のクランプでスイッチまで届かなくなる。
-                if self.origin_captured[index] {
+                // スイッチのある軸は、採用前にクランプするとスイッチまで届かない。
+                // スイッチのない軸は届く先がないので、起動時姿勢を基準に最初から
+                // 制限する。θのケーブル巻き込みを無制限にしないため。
+                if self.origin_captured[index] || limit.is_none() {
                     *target = target.clamp(minimum, maximum);
                 }
             }
@@ -628,6 +630,19 @@ mod tests {
     }
 
     #[test]
+    fn every_axis_can_be_jogged_for_manual_checks() {
+        // 配線後の手動確認とホーミングに必要。動かせない軸があると原点が採れない。
+        let profile = MachineProfile::load(None).unwrap();
+        for axis in &profile.axes {
+            assert!(
+                axis.input_axis.is_some() && axis.speed_per_second > 0.0,
+                "{} を手動で動かせない",
+                axis.name
+            );
+        }
+    }
+
+    #[test]
     fn sends_named_parameters_as_numeric_ids() {
         let source = format!(
             "{EMBEDDED_PROFILE}\n[parameters]\nm3508_vel_kp = 0.9\nwatchdog_ms = 300.0\n"
@@ -705,6 +720,7 @@ mod tests {
             mode: RunMode::Run,
             error_bits: 0,
             contacts: Some(contacts),
+            stale_slots: 0,
         }
     }
 
@@ -767,6 +783,18 @@ mod tests {
         input.axes[1] = 1.0;
         machine.update(&input, 0.1, Some(&telemetry));
         assert!((machine.target("r").unwrap() - 120.0).abs() < 1e-3);
+    }
+
+    #[test]
+    fn clamps_switchless_axes_from_the_start() {
+        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let mut input = neutral_input();
+        input.axes[0] = 1.0;  // theta（スイッチなし）
+        for _ in 0..40 {
+            machine.update(&input, 0.1, None);
+        }
+        // 原点未採用でも可動域で頭打ちになる。ケーブルを巻き込ませない。
+        assert!((machine.target("theta").unwrap() - 180.0).abs() < 1e-3);
     }
 
     #[test]
