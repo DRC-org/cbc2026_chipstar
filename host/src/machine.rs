@@ -96,17 +96,11 @@ pub struct SerialServoProfile {
     pub enabled: bool,
 }
 
+/// serial_svmdはcctlのFDCAN2経由で繋ぐ。接続先はcctlのリンクなので持たない。
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct SerialSvmdProfile {
-    pub device: String,
-    #[serde(default = "serial_svmd_baud")]
-    pub baud_rate: u32,
     #[serde(default)]
     pub servos: Vec<SerialServoProfile>,
-}
-
-fn serial_svmd_baud() -> u32 {
-    38_400
 }
 
 fn one() -> f32 {
@@ -245,9 +239,6 @@ impl MachineProfile {
             }
         }
         if let Some(board) = &self.serial_svmd {
-            if board.device.trim().is_empty() || board.baud_rate == 0 {
-                bail!("serial_svmdの接続設定が不正です");
-            }
             if board.servos.is_empty() || board.servos.len() > SERIAL_SERVO_MAX_COUNT {
                 bail!("serial_svmdのサーボ数は1..={SERIAL_SERVO_MAX_COUNT}で指定してください");
             }
@@ -284,7 +275,7 @@ impl MachineProfile {
     }
 
     pub fn requires_can_bus_2(&self) -> bool {
-        !self.pwm_servos.is_empty() || !self.dc_motors.is_empty()
+        !self.pwm_servos.is_empty() || !self.dc_motors.is_empty() || self.serial_svmd.is_some()
     }
 
     pub fn requires_serial_svmd(&self) -> bool {
@@ -384,8 +375,9 @@ impl MachineController {
         format!("HELLO {}", self.profile.protocol_version)
     }
 
+    /// serial_svmdへの能力照会。cctlのFDCAN2を通す。
     pub fn serial_svmd_hello_line(&self) -> String {
-        format!("HELLO {}", self.profile.protocol_version)
+        crate::serial_svmd::Command::Hello.to_cctl_line()
     }
 
     pub fn update(
@@ -459,14 +451,14 @@ impl MachineController {
             );
         }
         lines.extend(crate::dcmd::targets(&self.profile.dc_motors, &input.axes));
+        lines.extend(self.serial_svmd_lines(input, dt));
         lines
     }
 
-    pub fn update_serial_svmd(&mut self, input: &ControllerState, elapsed_s: f32) -> Vec<String> {
+    fn serial_svmd_lines(&mut self, input: &ControllerState, dt: f32) -> Vec<String> {
         let Some(board) = &self.profile.serial_svmd else {
             return Vec::new();
         };
-        let dt = elapsed_s.clamp(0.0, MAX_INPUT_INTERVAL_S);
         let mut lines = Vec::with_capacity(board.servos.len() * 2);
         for (servo, target) in board.servos.iter().zip(&mut self.serial_targets) {
             if let Some(index) = servo.input_axis {
@@ -479,18 +471,22 @@ impl MachineController {
                         f32::from(servo.maximum_position),
                     );
             }
-            lines.push(format!(
-                "SERVO TARGET {} {} {} {}",
-                servo.id,
-                target.round() as u16,
-                servo.move_speed,
-                servo.acceleration
-            ));
-            lines.push(format!(
-                "SERVO ENABLE {} {}",
-                servo.id,
-                u8::from(servo.enabled)
-            ));
+            lines.push(
+                crate::serial_svmd::Command::Target {
+                    id: servo.id,
+                    position: target.round() as u16,
+                    speed: servo.move_speed,
+                    acceleration: servo.acceleration,
+                }
+                .to_cctl_line(),
+            );
+            lines.push(
+                crate::serial_svmd::Command::Enable {
+                    id: servo.id,
+                    enabled: servo.enabled,
+                }
+                .to_cctl_line(),
+            );
         }
         lines
     }
@@ -694,18 +690,21 @@ direction = 1.0");
     #[test]
     fn validates_and_drives_serial_servo_from_host_profile() {
         let source = format!(
-            "{EMBEDDED_PROFILE}\n[serial_svmd]\ndevice = \"/dev/ttyUSB0\"\n\n[[serial_svmd.servos]]\nname = \"arm\"\nid = 12\ninput_axis = 4\ninput_sign = 1.0\nspeed_position_per_second = 500.0\nminimum_position = 1000\nmaximum_position = 3000\ninitial_position = 2000\nmove_speed = 400\nacceleration = 30\nenabled = true\n"
+            "{EMBEDDED_PROFILE}\n[serial_svmd]\n\n[[serial_svmd.servos]]\nname = \"arm\"\nid = 12\ninput_axis = 4\ninput_sign = 1.0\nspeed_position_per_second = 500.0\nminimum_position = 1000\nmaximum_position = 3000\ninitial_position = 2000\nmove_speed = 400\nacceleration = 30\nenabled = true\n"
         );
         let profile = MachineProfile::parse(&source).unwrap();
         assert!(profile.requires_serial_svmd());
-        assert_eq!(profile.serial_svmd.as_ref().unwrap().baud_rate, 38_400);
+        assert!(profile.requires_can_bus_2());
         let mut machine = MachineController::new(profile);
         let mut input = neutral_input();
         input.axes[4] = 1.0;
 
-        assert_eq!(
-            machine.update_serial_svmd(&input, 0.1),
-            vec!["SERVO TARGET 12 2050 400 30", "SERVO ENABLE 12 1"]
-        );
+        // 目標と有効化はcctlのFDCAN2経由で送る。
+        let lines = machine.update(&input, 0.1, None);
+        let servo: Vec<_> = lines
+            .iter()
+            .filter(|line| line.starts_with("CAN 2 800 "))
+            .collect();
+        assert_eq!(servo, ["CAN 2 800 01040C1E08020190", "CAN 2 800 01060C0100000000"]);
     }
 }

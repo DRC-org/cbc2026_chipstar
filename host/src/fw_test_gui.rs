@@ -276,12 +276,10 @@ impl Panel {
     fn reset_for_board(&mut self, shared: &Shared) {
         let cfg = shared.config();
         let serial_svmd = self.config.board == Board::SerialSvmd;
+        // 動作テストの serial_svmd は基板のUSART2へ直結する。機体はCAN経由なので
+        // プロファイルに接続先を持たず、既定のデバイス名から始める。
         self.config.device = if serial_svmd {
-            cfg.machine
-                .serial_svmd
-                .as_ref()
-                .map(|board| board.device.clone())
-                .unwrap_or("/dev/ttyUSB0".into())
+            "/dev/ttyUSB0".into()
         } else {
             cfg.serial_device
         };

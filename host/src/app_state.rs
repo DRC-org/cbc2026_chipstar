@@ -10,6 +10,7 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use crate::device::DeviceInfo;
 use crate::frame::Command;
 use crate::machine::MachineProfile;
+use crate::serial_svmd;
 use crate::svmd;
 use crate::telemetry::Telemetry;
 
@@ -30,7 +31,6 @@ pub struct Status {
     pub gamepad_connected: bool,
     pub gamepad_name: Option<String>,
     pub serial_connected: bool,
-    pub serial_svmd_connected: bool,
     pub last_error: Option<String>,
     pub tx_count: u64,
     pub last_line: String,
@@ -40,7 +40,6 @@ pub struct Status {
     pub telemetry: Option<Telemetry>,
     pub telemetry_count: u64,
     pub device: Option<DeviceInfo>,
-    pub serial_svmd_device: Option<DeviceInfo>,
     /// 軸ごとの原点と接点の状態。
     pub origins: Vec<crate::machine::OriginState>,
 }
@@ -55,7 +54,6 @@ pub struct Shared {
     status: Mutex<Status>,
     /// GUI が積み、ワーカーが送る指令行。
     commands: Mutex<VecDeque<String>>,
-    serial_svmd_commands: Mutex<VecDeque<String>>,
     /// GUI が積み、ワーカーが処理する原点採用の要求（軸の番号）。
     origin_requests: Mutex<Vec<usize>>,
 }
@@ -70,7 +68,6 @@ impl Shared {
             running: AtomicBool::new(true),
             status: Mutex::new(Status::default()),
             commands: Mutex::new(VecDeque::new()),
-            serial_svmd_commands: Mutex::new(VecDeque::new()),
             origin_requests: Mutex::new(Vec::new()),
         }
     }
@@ -102,7 +99,6 @@ impl Shared {
         self.set_sending_enabled(false);
         self.tests.start(config);
         self.take_commands();
-        self.take_serial_svmd_commands();
     }
 
     pub fn is_running(&self) -> bool {
@@ -159,17 +155,6 @@ impl Shared {
                 });
                 return false;
             }
-            if self.config.lock().unwrap().machine.requires_serial_svmd()
-                && !status.serial_svmd_device.as_ref().is_some_and(|device| {
-                    device.protocol == 1 && device.board == "serial_svmd" && device.slots >= 16
-                })
-            {
-                drop(status);
-                self.update_status(|status| {
-                    status.last_error = Some("serial_svmdの能力確認が完了していません".to_owned());
-                });
-                return false;
-            }
         }
         self.queue_line(command.to_line());
         let config = self.config();
@@ -204,13 +189,16 @@ impl Shared {
                 );
             }
         }
-        if self.config.lock().unwrap().machine.requires_serial_svmd()
-            && matches!(command, Command::Stop | Command::Run | Command::Safe)
-        {
-            self.serial_svmd_commands
-                .lock()
-                .unwrap()
-                .push_back(command.to_line());
+        if self.config.lock().unwrap().machine.requires_serial_svmd() {
+            match command {
+                Command::Stop => self.queue_line(serial_svmd::Command::Stop.to_cctl_line()),
+                Command::Safe => self.queue_line(serial_svmd::Command::Safe.to_cctl_line()),
+                Command::Run => {
+                    self.queue_line(serial_svmd::Command::Hello.to_cctl_line());
+                    self.queue_line(serial_svmd::Command::Run.to_cctl_line());
+                }
+                _ => {}
+            }
         }
         true
     }
@@ -235,14 +223,6 @@ impl Shared {
 
     pub fn take_origin_requests(&self) -> Vec<usize> {
         std::mem::take(&mut *self.origin_requests.lock().unwrap())
-    }
-
-    pub fn take_serial_svmd_commands(&self) -> Vec<String> {
-        self.serial_svmd_commands
-            .lock()
-            .unwrap()
-            .drain(..)
-            .collect()
     }
 
     /// ワーカーから状態を更新する。
@@ -361,7 +341,7 @@ enabled = true
     }
 
     #[test]
-    fn common_state_commands_are_forwarded_to_serial_svmd() {
+    fn state_commands_reach_serial_svmd_through_the_can_gateway() {
         let shared = Shared::new(BridgeConfig {
             serial_device: "/dev/null".to_owned(),
             baud_rate: 115_200,
@@ -371,7 +351,10 @@ enabled = true
 
         assert!(shared.queue_command(Command::Safe));
         assert!(shared.queue_command(Command::Home { slots: 7 }));
-        assert_eq!(shared.take_commands(), vec!["SAFE", "HOME 7"]);
-        assert_eq!(shared.take_serial_svmd_commands(), vec!["SAFE"]);
+        // cctlへの行に、serial_svmd宛のCANフレームが混ざって流れる。
+        assert_eq!(
+            shared.take_commands(),
+            vec!["SAFE", "CAN 2 800 0101000000000000", "HOME 7"]
+        );
     }
 }

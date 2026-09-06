@@ -1,0 +1,96 @@
+//! serial_svmdのCAN指令をcctlゲートウェイ用の行へ変換する。
+//!
+//! 基板のUSART2にもASCIIの口があるが、機体としてはcctlのFDCAN2経由に一本化する。
+//! PCへのUSBはcctlの1本だけになる。位置取得（op 7）はFWにあるが、通常運用では
+//! 目標を送り続けるだけなので、ここでは持たない。動作テストはUSART2側で確認する。
+
+const CAN_BUS: u8 = 2;
+const COMMAND_CAN_ID: u16 = 0x320;
+const PROTOCOL_VERSION: u8 = 1;
+
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Command {
+    Hello,
+    Safe,
+    Run,
+    Stop,
+    Enable {
+        id: u8,
+        enabled: bool,
+    },
+    Target {
+        id: u8,
+        position: u16,
+        speed: u16,
+        acceleration: u8,
+    },
+}
+
+impl Command {
+    pub fn to_cctl_line(self) -> String {
+        let mut data = [0u8; 8];
+        data[0] = PROTOCOL_VERSION;
+        match self {
+            Self::Hello => {}
+            Self::Safe => data[1] = 1,
+            Self::Run => data[1] = 2,
+            Self::Stop => data[1] = 3,
+            Self::Target {
+                id,
+                position,
+                speed,
+                acceleration,
+            } => {
+                data[1] = 4;
+                data[2] = id;
+                data[3] = acceleration;
+                data[4] = (position >> 8) as u8;
+                data[5] = position as u8;
+                data[6] = (speed >> 8) as u8;
+                data[7] = speed as u8;
+            }
+            Self::Enable { id, enabled } => {
+                data[1] = 6;
+                data[2] = id;
+                data[3] = u8::from(enabled);
+            }
+        }
+
+        let payload: String = data.iter().map(|byte| format!("{byte:02X}")).collect();
+        format!("CAN {CAN_BUS} {COMMAND_CAN_ID} {payload}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn encodes_commands_for_cctl_gateway() {
+        assert_eq!(Command::Hello.to_cctl_line(), "CAN 2 800 0100000000000000");
+        assert_eq!(Command::Stop.to_cctl_line(), "CAN 2 800 0103000000000000");
+        assert_eq!(
+            Command::Target {
+                id: 12,
+                position: 2048,
+                speed: 500,
+                acceleration: 30,
+            }
+            .to_cctl_line(),
+            "CAN 2 800 01040C1E080001F4"
+        );
+        assert_eq!(
+            Command::Enable {
+                id: 12,
+                enabled: true,
+            }
+            .to_cctl_line(),
+            "CAN 2 800 01060C0100000000"
+        );
+        assert_eq!(
+            Command::Safe.to_cctl_line(),
+            "CAN 2 800 0101000000000000"
+        );
+        assert_eq!(Command::Run.to_cctl_line(), "CAN 2 800 0102000000000000");
+    }
+}

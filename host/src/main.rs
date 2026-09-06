@@ -15,6 +15,7 @@ mod inputs;
 mod keymap;
 mod machine;
 mod serial;
+mod serial_svmd;
 mod svmd;
 mod telemetry;
 mod worker;

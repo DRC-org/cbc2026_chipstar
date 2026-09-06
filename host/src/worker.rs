@@ -32,11 +32,6 @@ pub fn run(shared: Arc<Shared>) {
     let mut cfg = shared.config();
     let mut last_gen = shared.config_generation();
     let mut link = SerialLink::new(cfg.serial_device.clone(), cfg.baud_rate);
-    let mut serial_svmd_link = cfg
-        .machine
-        .serial_svmd
-        .as_ref()
-        .map(|board| SerialLink::new(board.device.clone(), board.baud_rate));
     let mut period = period_from_hz(cfg.rate_hz);
     let mut machine = MachineController::new(cfg.machine.clone());
     shared.queue_line(machine.hello_line());
@@ -50,7 +45,6 @@ pub fn run(shared: Arc<Shared>) {
             let test_config = shared.tests.config();
             shared.set_sending_enabled(false);
             shared.take_commands();
-            shared.take_serial_svmd_commands();
             // 通常操作のリンクで停止後、ポートを解放してからテストへ渡す。
             let _ = link.write_line("STOP");
             if !cfg.machine.pwm_servos.is_empty() {
@@ -59,11 +53,10 @@ pub fn run(shared: Arc<Shared>) {
             if !cfg.machine.dc_motors.is_empty() {
                 let _ = link.write_line(&crate::dcmd::line(3, 0, 0));
             }
-            if let Some(link) = serial_svmd_link.as_mut() {
-                let _ = link.write_line("STOP");
+            if cfg.machine.requires_serial_svmd() {
+                let _ = link.write_line(&crate::serial_svmd::Command::Stop.to_cctl_line());
             }
             link = SerialLink::new(cfg.serial_device.clone(), cfg.baud_rate);
-            serial_svmd_link = None;
             if let Some(test_config) = test_config {
                 crate::fw_test_gui::run(&shared, test_config);
             }
@@ -79,11 +72,6 @@ pub fn run(shared: Arc<Shared>) {
             last_gen = generation;
             cfg = shared.config();
             link = SerialLink::new(cfg.serial_device.clone(), cfg.baud_rate);
-            serial_svmd_link = cfg
-                .machine
-                .serial_svmd
-                .as_ref()
-                .map(|board| SerialLink::new(board.device.clone(), board.baud_rate));
             period = period_from_hz(cfg.rate_hz);
             machine = MachineController::new(cfg.machine.clone());
             shared.queue_line(machine.hello_line());
@@ -91,7 +79,6 @@ pub fn run(shared: Arc<Shared>) {
                 s.device = None;
                 s.dcmd = None;
                 s.dcmd_encoder = None;
-                s.serial_svmd_device = None;
             });
             last_hello = Instant::now();
             last_serial_svmd_hello = Instant::now();
@@ -106,7 +93,7 @@ pub fn run(shared: Arc<Shared>) {
             last_hello = Instant::now();
         }
         if last_serial_svmd_hello.elapsed() >= Duration::from_secs(1) {
-            if let Some(link) = serial_svmd_link.as_mut() {
+            if cfg.machine.requires_serial_svmd() {
                 let _ = link.write_line(&machine.serial_svmd_hello_line());
             }
             last_serial_svmd_hello = Instant::now();
@@ -140,19 +127,6 @@ pub fn run(shared: Arc<Shared>) {
                 });
             }
         }
-        for line in shared.take_serial_svmd_commands() {
-            let Some(link) = serial_svmd_link.as_mut() else {
-                continue;
-            };
-            if let Err(err) = link.write_line(&line) {
-                shared.update_status(|s| {
-                    s.serial_svmd_connected = false;
-                    s.last_error = Some(format!("serial_svmd: {err:#}"));
-                });
-            } else {
-                shared.update_status(|s| s.serial_svmd_connected = true);
-            }
-        }
 
         let gamepad = gilrs
             .as_ref()
@@ -170,16 +144,6 @@ pub fn run(shared: Arc<Shared>) {
                         if let Err(err) = link.write_line(target) {
                             result = Err(err);
                             break;
-                        }
-                    }
-                    if result.is_ok()
-                        && let Some(link) = serial_svmd_link.as_mut()
-                    {
-                        for target in machine.update_serial_svmd(&state, period.as_secs_f32()) {
-                            if let Err(err) = link.write_line(&target) {
-                                result = Err(err);
-                                break;
-                            }
                         }
                     }
                     Some((result, targets.last().cloned().unwrap_or_default()))
@@ -236,19 +200,6 @@ pub fn run(shared: Arc<Shared>) {
                     s.telemetry = Some(telemetry);
                     s.telemetry_count = s.telemetry_count.wrapping_add(1);
                 });
-            }
-        }
-        if let Some(link) = serial_svmd_link.as_mut() {
-            for line in link.read_lines() {
-                if let Some(device) = parse_device_info(&line)
-                    && device.board == "serial_svmd"
-                {
-                    shared.update_status(|s| {
-                        s.serial_svmd_device = Some(device);
-                        s.serial_svmd_connected = true;
-                        s.last_error = None;
-                    });
-                }
             }
         }
 
