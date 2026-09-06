@@ -1,6 +1,5 @@
 #include "ui.hpp"
 
-#include "domain/led_pattern.hpp"
 
 #include <cstdio>
 
@@ -43,14 +42,14 @@ void Ui::showStatus(float slot0, float slot1, float slot2, uint8_t error) {
   lcd_.print(line1);
 }
 
-void Ui::updateLeds(uint32_t tick_ms, domain::RunMode mode, uint8_t enabled_slots) {
-  const uint8_t bits = domain::ledPattern(tick_ms, mode, enabled_slots);
+void Ui::updateLeds(uint32_t tick_ms, domain::Status status) {
+  const uint8_t bits = domain::statusPattern(tick_ms, status, 3);
 
-  const auto state = [bits](uint8_t bit) {
-    return (bits & bit) != 0 ? GPIO_PIN_SET : GPIO_PIN_RESET;
+  const auto state = [bits](uint8_t index) {
+    return (bits & (1U << index)) != 0 ? GPIO_PIN_SET : GPIO_PIN_RESET;
   };
 
-  HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, state(domain::slot_bit::SLOT0));
-  HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, state(domain::slot_bit::SLOT1));
-  HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, state(domain::slot_bit::SLOT2));
+  HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, state(0));
+  HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, state(1));
+  HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, state(2));
 }

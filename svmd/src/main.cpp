@@ -3,6 +3,7 @@
 #include <Servo.h>
 
 #include "domain/servo_can_protocol.hpp"
+#include "domain/status_led.hpp"
 
 namespace proto = domain::servo_can;
 
@@ -22,12 +23,21 @@ uint8_t address = 0;
 uint32_t last_contact_ms = 0;
 bool timeout_reported = false;
 
+// svmdはHELLOを持たないので、最初の指令を受けるまでBootとする。
+bool contacted = false;
+
 uint8_t enabledMask() {
     uint8_t mask = 0;
     for (uint8_t channel = 0; channel < proto::CHANNEL_COUNT; ++channel) {
         if (enabled[channel]) mask |= static_cast<uint8_t>(1U << channel);
     }
     return mask;
+}
+
+domain::Status ledStatus() {
+    if (timeout_reported) return domain::Status::Error;
+    if (!contacted) return domain::Status::Boot;
+    return enabledMask() != 0 ? domain::Status::Run : domain::Status::Safe;
 }
 
 void setEnabled(uint8_t channel, bool value) {
@@ -91,6 +101,7 @@ void apply(const proto::Command& command) {
 }  // namespace
 
 void setup() {
+    pinMode(LED_BUILTIN, OUTPUT);
     for (auto pin : ADDRESS_PINS) pinMode(pin, INPUT_PULLUP);
     for (uint8_t i = 0; i < 2; ++i) {
         if (digitalRead(ADDRESS_PINS[i]) == LOW) address |= 1U << i;
@@ -102,9 +113,12 @@ void setup() {
 }
 
 void loop() {
+    digitalWrite(LED_BUILTIN,
+                 domain::statusPattern(millis(), ledStatus(), 1) ? HIGH : LOW);
     while (CAN.available()) {
         const CanMsg message = CAN.read();
         if (message.id != proto::canId(proto::COMMAND_ID, address)) continue;
+        contacted = true;
 
         proto::Command command;
         if (!proto::parse(message.data, message.data_length, command, parameters)) {

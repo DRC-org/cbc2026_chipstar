@@ -18,6 +18,7 @@
 
 ## 実機作業
 
+- [status_led.md](status_led.md) — 状態表示LEDの点け方の規約
 - [wiring.md](wiring.md) — 基板間の接続、コネクタ表、間違えやすい配線
 - [firmware_tests.md](firmware_tests.md) — 全基板の駆動・読取り・通信を個別にON/OFFする配線確認ツール
 - [bringup.md](bringup.md) — cctl の立ち上げ手順、指令とテレメトリ、LED の読み方、調整値の場所

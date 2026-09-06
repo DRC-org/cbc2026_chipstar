@@ -29,12 +29,14 @@ endfunction()
 
 add_firmware_tests(dcmd_tests ${REPO_ROOT}/dcmd/src
     digital_inputs_test.cpp
+    status_led_test.cpp
     dcmd/controller_test.cpp
     ${REPO_ROOT}/dcmd/src/domain/controller.cpp
 )
 
 add_firmware_tests(serial_svmd_tests ${REPO_ROOT}/serial_svmd/src
     digital_inputs_test.cpp
+    status_led_test.cpp
     serial_svmd/sts3215_protocol_test.cpp
     serial_svmd/servo_command_test.cpp
     serial_svmd/servo_can_test.cpp
@@ -44,12 +46,14 @@ add_firmware_tests(serial_svmd_tests ${REPO_ROOT}/serial_svmd/src
 )
 
 add_firmware_tests(svmd_tests ${REPO_ROOT}/svmd/src
+    status_led_test.cpp
     svmd/servo_can_protocol_test.cpp
     ${REPO_ROOT}/svmd/src/domain/servo_can_protocol.cpp
 )
 
 add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     digital_inputs_test.cpp
+    status_led_test.cpp
     cctl/device_config_test.cpp
     cctl/parameters_test.cpp
     cctl/c620_codec_test.cpp
@@ -57,7 +61,6 @@ add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     cctl/telemetry_test.cpp
     cctl/command_test.cpp
     cctl/command_queue_test.cpp
-    cctl/led_pattern_test.cpp
     cctl/dm_codec_test.cpp
     cctl/el05_codec_test.cpp
     cctl/pid_test.cpp
@@ -68,7 +71,6 @@ add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     ${REPO_ROOT}/cctl/src/domain/command.cpp
     ${REPO_ROOT}/cctl/src/domain/parameters.cpp
     ${REPO_ROOT}/cctl/src/domain/command_queue.cpp
-    ${REPO_ROOT}/cctl/src/domain/led_pattern.cpp
     ${REPO_ROOT}/cctl/src/domain/dm_codec.cpp
     ${REPO_ROOT}/cctl/src/domain/el05_codec.cpp
     ${REPO_ROOT}/cctl/src/domain/pid.cpp

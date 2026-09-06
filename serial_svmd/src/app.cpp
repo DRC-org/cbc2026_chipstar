@@ -3,6 +3,7 @@
 #include "domain/servo_command.hpp"
 #include "domain/digital_inputs.hpp"
 #include "domain/parameters.hpp"
+#include "domain/status_led.hpp"
 #include "main.h"
 #include "sts3215.hpp"
 
@@ -48,6 +49,30 @@ domain::DigitalInputs inputs(63);
 bool bus_ready = false;
 uint8_t address = 0;
 Link source = Link::Serial;
+
+// LED1..6は基板の左から並ぶ。状態は点け方で表す。
+domain::Status ledStatus() {
+  if (!bus_ready) return domain::Status::Error;
+  if (!protocol_ready) return domain::Status::Boot;
+  switch (mode) {
+    case Mode::Run: return domain::Status::Run;
+    case Mode::Stop: return domain::Status::Stop;
+    default: return domain::Status::Safe;
+  }
+}
+
+void updateLeds(uint32_t now) {
+  const uint8_t bits = domain::statusPattern(now, ledStatus(), 6);
+  const auto level = [bits](uint8_t index) {
+    return (bits & (1U << index)) != 0 ? GPIO_PIN_SET : GPIO_PIN_RESET;
+  };
+  HAL_GPIO_WritePin(LED1_GPIO_Port, LED1_Pin, level(0));
+  HAL_GPIO_WritePin(LED2_GPIO_Port, LED2_Pin, level(1));
+  HAL_GPIO_WritePin(LED3_GPIO_Port, LED3_Pin, level(2));
+  HAL_GPIO_WritePin(LED4_GPIO_Port, LED4_Pin, level(3));
+  HAL_GPIO_WritePin(LED5_GPIO_Port, LED5_Pin, level(4));
+  HAL_GPIO_WritePin(LED6_GPIO_Port, LED6_Pin, level(5));
+}
 
 void sampleInputs() {
   const uint16_t a = GPIOA->IDR;
@@ -326,6 +351,7 @@ extern "C" void loop(void) {
   }
 
   const uint32_t now = HAL_GetTick();
+  updateLeds(now);
   if (mode == Mode::Run && now - last_contact_ms > parameters.watchdogMs()) {
     setMode(Mode::Stop);
     protocol_ready = false;

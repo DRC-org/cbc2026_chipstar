@@ -6,6 +6,7 @@
 #include "domain/command_queue.hpp"
 #include "domain/line_reader.hpp"
 #include "domain/parameters.hpp"
+#include "domain/status_led.hpp"
 #include "domain/telemetry.hpp"
 #include "domain/digital_inputs.hpp"
 #include "main.h"
@@ -226,6 +227,19 @@ void sendTelemetry() {
     line[length] = '\n';
     enqueue(line, length + 1);
 }
+
+// 基板の状態をLEDの点け方へ落とす。異常が最優先。
+domain::Status ledStatus() {
+    for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
+        if (controller.errorBits(slot) != 0) return domain::Status::Error;
+    }
+    if (!protocol_ready) return domain::Status::Boot;
+    switch (controller.mode()) {
+        case domain::RunMode::Run: return domain::Status::Run;
+        case domain::RunMode::Stop: return domain::Status::Stop;
+        default: return domain::Status::Safe;
+    }
+}
 }  // namespace
 
 extern "C" void setup(void) {
@@ -302,7 +316,7 @@ extern "C" void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef* htim) {
         static uint32_t tick_ms = 0;
         ++tick_ms;
         if (tick_ms % 20U == 0U) {
-            ui.updateLeds(tick_ms, controller.mode(), controller.enabledSlots());
+            ui.updateLeds(tick_ms, ledStatus());
         }
     }
 }

@@ -2,6 +2,7 @@
 #include "main.h"
 #include "domain/controller.hpp"
 #include "domain/encoder.hpp"
+#include "domain/status_led.hpp"
 
 extern "C" {
 extern CAN_HandleTypeDef hcan;
@@ -15,6 +16,9 @@ bool bus_ready = false;
 dcmd::Encoder encoder;
 volatile uint16_t index_count = 0;
 uint8_t address = 0;
+
+// 通信断で止まった場合と、指令で止めた場合を見分けられるようにする。
+domain::Status ledStatus();
 
 void sampleInputs() {
   const uint16_t a = GPIOA->IDR;
@@ -103,6 +107,9 @@ extern "C" void setup(void) {
 
 extern "C" void loop(void) {
   sampleInputs();
+  HAL_GPIO_WritePin(LED_GPIO_Port, LED_Pin,
+                    domain::statusPattern(HAL_GetTick(), ledStatus(), 1) ? GPIO_PIN_SET
+                                                                        : GPIO_PIN_RESET);
   encoder.sample(static_cast<uint16_t>(__HAL_TIM_GET_COUNTER(&htim3)));
   controller.tick(HAL_GetTick());
   for (uint8_t n = 0; n < 3 && HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0); ++n) {

@@ -1,6 +1,7 @@
 #pragma once
 
 #include "domain/run_state.hpp"
+#include "domain/status_led.hpp"
 #include "lcd_aqm1602.h"
 #include "main.h"
 
@@ -20,7 +21,7 @@ class Ui {
   void showStatus(float slot0, float slot1, float slot2, uint8_t error);
 
   // 運転状態と有効なslotをLED1..3に映す。tick_msは1ms周期の通し番号。
-  void updateLeds(uint32_t tick_ms, domain::RunMode mode, uint8_t enabled_slots);
+  void updateLeds(uint32_t tick_ms, domain::Status status);
 
  private:
   void playTone(uint32_t frequency_hz, uint32_t duration_ms);
