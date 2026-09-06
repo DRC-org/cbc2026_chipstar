@@ -66,9 +66,9 @@ DCMDは1chの符号付きDuty出力とENC1の累積カウントを提供する�
 
 1. 電源投入時は SAFE とし、出力を有効にしない。
 2. host は能力とプロトコルバージョンを確認する。
-3. host は運用設定と初期目標値を送る。
+3. host は運用設定を適用し、基板の応答値を確認する。
 4. 必要なスロットを有効化してから RUN へ遷移させる。
-5. RUN 中は目標指令または HEARTBEAT を継続する。
+5. RUN 中はJOGによる速度指令またはHEARTBEATを継続する。
 6. Watchdog 時間を超えて指令が途切れた場合、FWはSTOPへ遷移して出力を切る。
 
 RUN中に有効なslotがモータからの応答を`feedback_timeout_ms`を超えて受け取れない場合、
@@ -84,8 +84,8 @@ serial_svmdのサーボバスのボーレートは、hostから実行時に変�
 書き込み環境がない場所でも実機調整を終えられるようにするためである。仕様は
 [device_protocol.md](device_protocol.md)の実行時パラメータを参照。
 
-設定は当面RAMだけに保持する。電源再投入時に古い機体設定で動き出すことと、頻繁な
-Flash書き換えを避けるためである。
+cctlはSAFE中に変更値をFlashへ保存し、他基板はRAMに保持する。
+hostはPCの機体設定を正とし、接続時に値を適用・照合してから運転を許可する。
 
 機体プロファイルの形式は[host_machine_profile.md](host_machine_profile.md)に定める。
 
@@ -94,7 +94,7 @@ Flash書き換えを避けるためである。
 通信プロトコルにはバージョンを持たせる。FWは未対応の指令や範囲外の値を黙って
 採用しない。cctlの構文不正行は破棄され、範囲外目標はERRとなる。serial_svmdは
 構文不正もERRで通知する。拒否した指令では現在の出力状態を変更しない。
-hostはcctlとserial_svmdの能力確認に成功するまでRUNを送らない。
+hostのrθz操作はcctlのJOG対応能力、設定一致、最新応答、原点、中立入力を確認してからRUNを送る。
 svmdは各CAN指令のバージョンを検証し、独立した能力照会やRUN指令は持たない。
 
 プロトコルの仕様は [device_protocol.md](device_protocol.md) に定める。

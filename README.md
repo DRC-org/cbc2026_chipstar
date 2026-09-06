@@ -23,3 +23,12 @@
 各基板のペリフェラルを単体で動かして確認するコードは [samples/](samples/README.md) にある。
 
 HAL 非依存ロジックのホスト側テストは [tests/](tests/README.md) にある。
+
+## 手動操縦と模擬接続
+
+```sh
+cargo run --locked --manifest-path host/Cargo.toml --bin host -- --simulate
+```
+
+GUIは操縦・調整・診断の3画面。起動済みhostには`hostctl`から接続できる。
+操作権、停止復帰、設定保存の手順は[host操作ガイド](docs/host_operation.md)を参照。

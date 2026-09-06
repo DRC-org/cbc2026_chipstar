@@ -33,3 +33,5 @@
 
 - [datasheets/](datasheets/README.md) — 外部部品の公式マニュアル（DM / EL05 / C620 / M3508 / ST7032 / STS3215）
 - `rulebook_vol16.pdf` — 競技ルールブック
+
+- [host_operation.md](host_operation.md) — 手動操縦、調整、AI接続、模擬接続

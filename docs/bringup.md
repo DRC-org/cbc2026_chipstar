@@ -1,116 +1,43 @@
 # 汎用FW立ち上げ手順
 
-基板FWを書き込んだ後、hostから能力確認、目標設定、有効化、RUNの順で立ち上げる。
-cctlとserial_svmdは電源投入時にSAFEとなる。svmdは全PWM出力無効で起動し、
-hostは明示的なRUN時に必要なチャネルを有効化する。
+機体としての起動・調整は[host操作ガイド](host_operation.md)に従う。
+JOG対応のcctl FWを使い、PCの設定との一致を確認してから運転する。
 
-## 事前確認
+## 接続
 
-- cctlのFDCAN1にはEL05、M3508/C620、DMを接続し、FDCAN2にはsvmdを接続する。
-- CANは終端抵抗、GND共有、1Mbpsを確認する。
-- UARTは全系統115200 bpsに統一している（serial_svmdの上位UART、STS3215バス、cctlのUSBシリアル）。
-- 機体固有の換算、可動域、入力割当、サーボIDをhostの機体プロファイルに設定する。
+cctlのFDCAN1にEL05、M3508/C620、DMを、FDCAN2に周辺基板を接続する。
+CANは1Mbps、終端抵抗とGND共有を確認する。PCへの接続はcctlのUSB CDC。
+STS3215のバス速度はサーボの設定に合わせる。全UARTを同一速度と仮定しない。
 
-設定形式は[host_machine_profile.md](host_machine_profile.md)、バス構成は
-[cctl_can_bus.md](cctl_can_bus.md)を参照。
+## 手動確認
 
-## hostの起動
+1. SAFEで実測位置と設定の一致を確認する。
+2. 原点調整モードで低速操作し、r・zのリミットとθの基準姿勢を確認する。
+3. 停止して原点を採用する。機体の原点採用はモータのゼロ書換えではない。
+4. スティック中立で運転再開し、軸ごとに少しずつ操作する。
+5. 正方向、移動量、停止後の保持、可動域と干渉を確認して設定を保存する。
 
-```sh
-cd host
-cargo run --locked -- --serial-device /dev/ttyACM0 \
-  --machine-profile config/rtheta.toml
-```
+通常の停止・保持と、出力を切るSAFE/STOP、物理非常停止を区別する。
+再通電や通信断の後は、設定・原点・中立を確認して明示的に再開する。
 
-serial_svmdを使う場合、そのデバイス名とボーレートは機体プロファイルに記述する。
-GUIのステータス画面でcctlとserial_svmdの能力確認を確認する。svmdはcctlのFDCAN2
-ゲートウェイ経由で接続される。
+## 基板単体の端末確認
 
-## cctlを端末から確認する
-
-USB CDCは改行区切りASCIIなので、GUIを使わず端末からも確認できる。
+hostを終了してシリアルポートを解放した状態で行う。
 
 ```text
 HELLO 1
-DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=stored
+SAFE
+ENABLE 1 1
+RUN
+JOG 0 0.02
+JOG 0 0
+STOP
 ```
 
-主な指令は次のとおり。
-
-| 指令 | 動作 |
-|---|---|
-| `HELLO 1` | プロトコルと能力を確認 |
-| `SAFE` | 待機状態へ移り出力を切る |
-| `RUN` | 有効化済みslotの出力を開始 |
-| `STOP` | 即時停止して出力を切る |
-| `HEARTBEAT` | Watchdogを更新 |
-| `ENABLE <mask> <0\|1>` | slotの有効状態を変更 |
-| `HOME <mask>` | 指定slotの現在位置を原点にする |
-| `TARGET <slot> <value>` | slotのネイティブ単位で目標値を設定 |
-| `CAN 2 <id> <data>` | FDCAN2へ標準CANフレームを送信 |
-
-`mask`のbit 0..2がslot 0..2に対応する。詳細な構文は
-[device_protocol.md](device_protocol.md)を参照。
-
-## 1軸ずつの確認
-
-1. `HELLO 1`を送り、protocol=1と必要な能力を確認する。
-2. `STATE`が50ms周期で届き、mode=SAFE、en=0であることを確認する。
-3. 機構を安全な初期姿勢に置き、対象slotだけ`HOME <mask>`を送る。
-4. SAFEのまま、FWのネイティブ単位で小さな`TARGET`を設定する。
-5. 対象slotだけ`ENABLE <mask> 1`にし、退避可能な状態で`RUN`を送る。
-   **`RUN`だけでは動かない。**slotが有効でないとFWは指令を送らず、
-   モータからのフィードバックも返らないため実測値が更新されない。
-6. 目標と実測の向き、換算、可動域を確認し、直ちに`STOP`できる状態を保つ。
-7. `SAFE`へ戻してslotを無効化し、次のslotを確認する。
-
-slotの能力は次のとおり。
-
-| slot | デバイス | ネイティブ単位 | FW絶対範囲 |
-|---|---|---|---|
-| 0 | EL05 | rad | -12.5..12.5 |
-| 1 | M3508/C620 | motor deg | -26000..26000 |
-| 2 | DM-S3519 | rad | -12.5..12.5 |
-
-向き、機械換算、運用可動域が合わない場合は`host/config/*.toml`を直す。速度・電流・
-ネイティブ位置の絶対上限やデバイス制御ゲインを変更する場合だけ
-`cctl/src/device_config.hpp`とFWの再書き込みが必要になる。
-
-## テレメトリ
-
-```text
-STATE t=12345 mode=RUN en=7 a0=1.250/1.230 a1=-40.000/-39.500 a2=0.500/0.490 err=00
-```
-
-`a0..a2`は`目標/実測`で、値はネイティブ単位。
-
-EL05とDMは指令に応答してフィードバックを返すため、FWは有効でないslotへも同じ周期で
-指令を出し続ける。非アクティブ時の目標には現在の実測値を入れるので、トルクが切れた
-まま位置だけが更新される。SAFE中に手で動かしても実測値が追従し、有効化した瞬間に
-跳ねることもない。host GUIでは機体プロファイルの
-`native_per_unit`を使って機体単位へ戻して表示する。`err`が非0、値が非有限、または
-意図しない動作があればSTOPする。
-
-## host GUIの操作
-
-| キー | 動作 |
-|---|---|
-| `Space` | 使用中の基板へSTOPを送る |
-| `j` / `k` | 選択を下 / 上へ |
-| `gg` / `G` | 選択を先頭 / 末尾へ |
-| `Enter` | 選択中の項目を実行 |
-| `gt` / `gT` | 次 / 前の画面へ |
-| `1`–`4` | 画面を直接選ぶ |
-| `i` | 設定画面の編集を開始 |
-| `Esc` | 編集・コマンドラインを抜ける |
-| `:` | cctlへ送る生の指令行を入力 |
-| `?` | キー一覧 |
-
-`RUN`はcctlの能力確認が済むまで拒否される。RUN中はhostが目標指令を送り続けることで
-通信期限が延びる。`HELLO`では延びないので、送信が止まればWatchdogが働く。
-
-コントローラを繋いだまま送信だけを止めた場合はHEARTBEATを流し、現在位置を保持する。
-コントローラ自体が外れた場合は何も送らず、250ms Watchdogで各FWが出力を切る。
+JOGまたはHEARTBEATを継続しない場合はWatchdogで停止する。
+SAFE中のTARGETは非アクティブslotの実測追従で置き換わるため、
+SAFE中に位置目標を仕込んでからRUNする手順には依存しない。
+詳細は[デバイスプロトコル](device_protocol.md)を参照。
 
 ## 書き込み
 

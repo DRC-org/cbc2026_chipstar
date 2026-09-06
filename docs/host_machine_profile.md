@@ -1,17 +1,13 @@
 # host機体プロファイル
 
-`host`はTOML形式の機体プロファイルから、機体上の軸と基板デバイスの対応を構成する。
-既定値は`host/config/rtheta.toml`で、別構成は起動時に指定する。
+PC上のTOMLファイルを機体設定の正とする。既定の読込先はビルドしたリポジトリの
+`host/config/rtheta.toml`。`--machine-profile`で別のファイルを指定できる。
+起動手順と操作APIは[host操作ガイド](host_operation.md)を参照。
 
-```sh
-cd host
-cargo run --locked -- --machine-profile config/rtheta.toml
-```
+## 手動速度操作
 
-## cctlアクチュエータ
-
-`[[axes]]`は機体単位の目標値を積分し、`native_per_unit`でcctlのslot単位へ換算する。
-`input_axis`は`0=LX, 1=LY, 2=RX, 3=RY, 4=L2, 5=R2`。省略すると入力では動かない。
+`[[axes]]`が入力とcctlのslotを対応づける。`input_axis`は
+`0=LX, 1=LY, 2=RX, 3=RY, 4=L2, 5=R2`。省略した軸の速度入力は0になる。
 
 ```toml
 [[axes]]
@@ -20,119 +16,71 @@ unit = "mm"
 slot = 0
 input_axis = 1
 input_sign = 1.0
-speed_per_second = 100.0
-native_per_unit = 0.10005072
+speed_per_second = 10.0
+native_per_unit = 0.04
 minimum = 0.0
 maximum = 120.0
 initial = 0.0
+origin_position = 0.0
 ```
 
-slotは0..2で重複不可。運用範囲をFWの絶対上限内に収める。
+スティック値×`input_sign`×`speed_per_second`が機体単位の速度になる。
+`native_per_unit`を掛けて`JOG <slot> <速度>`として送る。
+位置目標をhostで積み上げない。入力の絶対値0.1未満は中立、L1は速度を20%にする。
+FWの速度上限でも制限されるため、実速度は負荷・ゲイン・上限に依存する。
 
-## リミットスイッチと原点
+slotは0..2で重複不可。機体座標の可動域は原点採用後に有効となり、境界までの距離に
+応じて速度を下げる。原点未採用では通常運転を開始できない。
+「原点調整モード」は機体座標の可動域制限を外し、低速で原点へ移動するための操作。
+基板のネイティブ位置上限と接点による方向制限は残る。これらの上限だけでは機構同士の
+干渉を防げない。
 
-`origin_position`は原点を採用したときにその軸へ与える機体単位の値で、既定は0。
-`[axes.limit]`を書くと、cctlの接点をその軸のリミットとして使う。
+## 原点とリミットスイッチ
+
+原点採用は、最新実測位置に`origin_position`を割り当てるhost側の座標操作。
+モータのゼロ位置を変えるFWの`HOME`とは異なる。GUI/APIからの手動採用は停止中に行う。
+位置表示は`(実測ネイティブ位置 - 採用したオフセット) / native_per_unit`。
 
 ```toml
-origin_position = 120.0
-
 [axes.limit]
-input = 0            # 接点のbit位置。SW1=0, SW2=1, SW3=2
-direction = 1.0      # スイッチへ近づく機体単位の向き
+input = 0
+direction = 1.0
 normally_closed = true
 ```
 
-`input`は軸をまたいで重複できない。`direction`は`1.0`か`-1.0`。
+`input`はSW1=0、SW2=1、SW3=2。`direction`は到達する向きで1または-1。
+`normally_closed=true`は常閉接点。押下・断線で到達側に変わる。
+到達への変化で原点を自動採用し、到達中は近づく方向だけ止める。接点情報が欠けている
+場合は、その接点を使う軸の入力を止める。スイッチ未確認の既定構成では設定を無効にしている。
 
-原点出しはジョグで行う。オペレータが`direction`の向きへ軸を動かし、接点が到達した
-瞬間にhostがその位置へ`origin_position`を割り当てる。目標値も同じ値へ置き直すので、
-採用の前後で軸は動かない。到達している間は`direction`の向きの入力だけを捨て、
-逆向きには戻せる。
+通信断、基板再起動、実測の不連続、モータ応答喪失を検出したら運転を止め、原点確認を
+要求する。電源再投入を位置の変化だけで完全に検出できるわけではないため、モータの
+再通電後は原点を確認し直す。
 
-`normally_closed = true`はB接点配線を表す。平常時に接点が閉じているため、押下と
-断線がどちらも「到達」になり、断線しても機構へ突っ込まない側に倒れる。
+## 調整値の適用と保存
 
-`[axes.limit]`を省いた軸はスイッチを持たず、GUIの「現在位置を原点に」だけで採用する。
-可動域`minimum`/`maximum`のクランプは原点を採用した軸にのみ効く。採用前に効かせると
-暫定原点を基準にした範囲でスイッチまで届かなくなるためである。
+`[parameters]`にはcctlの全33項目を指定する。名前とIDは
+[デバイスプロトコル](device_protocol.md)を参照。
+既定ファイルには起動用の低い速度・電流上限を含め、全項目を明示している。
 
-## svmd PWMサーボ
+接続時にはSAFEにしてPCの値を1項目ずつ送り、`PARAM <id> <value>`応答と照合する。
+基板に保存済みの値があってもPCを優先する。応答なし、不一致、拒否の間は運転できない。
+確認は基板の設定値についてであり、モータ内部への反映や物理動作の確認ではない。
 
-`[[pwm_servos]]`を追加すると、hostはcctlのFDCAN2ゲートウェイを介してsvmdへ周期的に
-SETを送る。ENABLEは明示的なRUN時だけ送り、STOPやWatchdog停止後に周期送信で
-再有効化しない。`initial_us`と範囲は500..2500us内、channelは0..3で重複不可。
+GUIの「一時適用」は稼働中hostの設定だけを変更する。「適用中の設定を保存」で読込元
+ファイルに書き戻す。保存は同じディレクトリの一時ファイルから置換し、次回起動時に
+読み込む。原点オフセットはセッション限定で、保存しない。
 
-```toml
-[[pwm_servos]]
-name = "gripper"
-channel = 0
-input_axis = 3
-input_sign = 1.0
-speed_us_per_second = 500.0
-minimum_us = 900
-maximum_us = 2100
-initial_us = 1500
-enabled = true
-```
+CAN先の基板の調整値は`[svmd_parameters]`、`[dcmd_parameters]`、
+`[serial_svmd_parameters]`。設定した項目を送り、IDと適用値を含む応答で確認する。
+対応したFWが必要。周辺基板単体を再通電した場合は、停止して設定を再適用する。
 
-## serial_svmd / STS3215
+## 周辺機構の定義
 
-serial_svmdはcctlのFDCAN2経由で繋ぐため、接続先は指定しない。サーボだけを並べる。
-IDは1..253で重複不可、位置は0..4095、`move_speed`は0..1000、`acceleration`は0..254とする。
+`[[pwm_servos]]`、`[serial_svmd]`、`[[serial_svmd.servos]]`、`[[dc_motors]]`は
+既存のデバイス定義として保持する。現在の操縦経路の駆動対象はr・θ・z。
+周辺機構のパラメータ送信・受信表示・停止は対応しているが、これらの定義を追加するだけで
+把持・EE方位補償・受け渡し・シュート操作が有効になるわけではない。
 
-```toml
-[serial_svmd]
-
-[[serial_svmd.servos]]
-name = "arm"
-id = 12
-input_axis = 4
-input_sign = 1.0
-speed_position_per_second = 500.0
-minimum_position = 1000
-maximum_position = 3000
-initial_position = 2000
-move_speed = 400
-acceleration = 30
-enabled = true
-```
-
-## cctlの実行時パラメータ
-
-`[parameters]`に書いた値を、能力確認が通った直後にcctlへ送る。省略した項目はFWの
-既定値が残る。名前とidの対応は[device_protocol.md](device_protocol.md)の実行時
-パラメータ表を参照。
-
-```toml
-[parameters]
-m3508_vel_kp = 0.9
-m3508_max_current_ma = 6000.0
-el05_limit_cur = 6.0
-slot1_max = 30000.0
-```
-
-CAN先の基板は`[svmd_parameters]`、`[dcmd_parameters]`、`[serial_svmd_parameters]`に
-書く。cctlのFDCAN2を通って同じタイミングで届く。
-
-```toml
-[dcmd_parameters]
-max_duty = 300.0
-ramp_step = 2.0
-
-[serial_svmd_parameters]
-servo_baud = 1000000.0
-```
-
-FWはRAMだけに保持するので、電源やUSBを入れ直すとhostが自動で送り直す。
-ゲイン調整のたびにFWを書き込む必要はない。
-
-調整中はGUIの「7 パラメータ」画面から直接変更できる。読み出し・編集・送信が
-その場でできるので、値を決めてからこのファイルへ書き写す使い方になる。
-
-## 安全動作
-
-hostはcctlのプロトコルと必要なCANバスを確認するまでRUNを送らない。CAN先の基板
-（svmd、DCMD、serial_svmd）の能力はcctlの`DEVICE`からは分からないため、RUNの前提には
-含めない。コントローラ入力の送信が止まると各FWの250ms Watchdogが出力を切る。
-GUIのSpaceによるSTOPは、cctlと使用中のCAN先すべてへ配信する。
+PWMサーボはchannel 0..3、パルス幅500..2500µs。STS3215はID 1..253、位置0..4095、
+速度0..1000、加速度0..254。serial_svmdはcctlのFDCAN2経由で接続する。
