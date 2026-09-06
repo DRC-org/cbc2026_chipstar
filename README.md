@@ -30,6 +30,6 @@ HAL 非依存ロジックのホスト側テストは [tests/](tests/README.md) �
 cargo run --locked --manifest-path host/Cargo.toml --bin host -- --simulate
 ```
 
-GUIは操縦・調整・診断の3画面。起動済みhostには`hostctl`から接続できる。
+GUIは操縦・調整・診断・文書の4画面。起動済みhostには`hostctl`から接続できる。
 操作権、停止復帰、設定保存の手順は[host操作ガイド](docs/host_operation.md)、
 開発時の責務分担と拡張先は[hostアーキテクチャ](docs/host_architecture.md)を参照。
