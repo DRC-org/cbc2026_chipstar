@@ -232,16 +232,21 @@ impl BridgeApp {
         };
 
         if self.shared.queue_command(command) {
-            // 送信が止まっていると目標指令が流れず、RUNしてもWatchdogで止まる。
-            if command == Command::Run && !self.shared.sending_enabled() {
-                self.message = Some(
-                    "RUN を送りましたが、コントローラ入力の送信が無効です。\
-                     下のチェックを入れてください。"
-                        .to_owned(),
-                );
-            } else {
-                self.message = Some(format!("{label} → {}", command.to_line()));
+            // RUNしても動かない典型的な原因を、その場で指摘する。
+            let mut missing = Vec::new();
+            if command == Command::Run {
+                if !self.shared.sending_enabled() {
+                    missing.push("コントローラ入力の送信が無効です");
+                }
+                if enabled_slots == Some(0) {
+                    missing.push("有効な軸がありません");
+                }
             }
+            self.message = Some(if missing.is_empty() {
+                format!("{label} → {}", command.to_line())
+            } else {
+                format!("RUN を送りましたが動きません: {}。", missing.join("、"))
+            });
         } else {
             self.message = Some("FWの能力確認を待っています。".to_owned());
         }
@@ -511,6 +516,19 @@ impl BridgeApp {
             .telemetry
             .as_ref()
             .map(|telemetry| telemetry.enabled_slots);
+
+        // RUN中に有効な軸がないと、指令が出ずフィードバックも返らない。
+        // 「動かない」ときの原因として一番多いので、常時見えるようにする。
+        if let Some(telemetry) = &status.telemetry
+            && telemetry.mode == RunMode::Run
+            && telemetry.enabled_slots == 0
+        {
+            ui.colored_label(
+                egui::Color32::from_rgb(200, 140, 0),
+                "RUN 中ですが有効な軸がありません。動かす軸を有効にしてください。",
+            );
+        }
+
         let mut clicked = None;
 
         for (index, (operation, label)) in OPERATIONS.iter().enumerate() {

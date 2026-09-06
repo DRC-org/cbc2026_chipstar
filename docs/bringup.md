@@ -59,6 +59,8 @@ DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250
 3. 機構を安全な初期姿勢に置き、対象slotだけ`HOME <mask>`を送る。
 4. SAFEのまま、FWのネイティブ単位で小さな`TARGET`を設定する。
 5. 対象slotだけ`ENABLE <mask> 1`にし、退避可能な状態で`RUN`を送る。
+   **`RUN`だけでは動かない。**slotが有効でないとFWは指令を送らず、
+   モータからのフィードバックも返らないため実測値が更新されない。
 6. 目標と実測の向き、換算、可動域を確認し、直ちに`STOP`できる状態を保つ。
 7. `SAFE`へ戻してslotを無効化し、次のslotを確認する。
 
