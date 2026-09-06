@@ -98,6 +98,23 @@ acceleration = 30
 enabled = true
 ```
 
+## cctlの実行時パラメータ
+
+`[parameters]`に書いた値を、能力確認が通った直後にcctlへ送る。省略した項目はFWの
+既定値が残る。名前とidの対応は[device_protocol.md](device_protocol.md)の実行時
+パラメータ表を参照。
+
+```toml
+[parameters]
+m3508_vel_kp = 0.9
+m3508_max_current_ma = 6000.0
+el05_limit_cur = 6.0
+slot1_max = 30000.0
+```
+
+FWはRAMだけに保持するので、電源やUSBを入れ直すとhostが自動で送り直す。
+ゲイン調整のたびにFWを書き込む必要はない。
+
 ## 安全動作
 
 hostはcctlのプロトコルと必要なCANバスを確認するまでRUNを送らない。CAN先の基板
