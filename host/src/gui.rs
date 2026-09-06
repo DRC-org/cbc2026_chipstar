@@ -609,6 +609,8 @@ impl BridgeApp {
             ui.horizontal(|ui| {
                 let (mark, color) = if origin.captured {
                     ("採用済み", egui::Color32::from_rgb(0, 150, 0))
+                } else if origin.lost {
+                    ("要再設定", egui::Color32::from_rgb(200, 60, 60))
                 } else {
                     ("未採用", egui::Color32::from_rgb(200, 140, 0))
                 };
@@ -629,6 +631,13 @@ impl BridgeApp {
                     self.shared.request_origin(index);
                 }
             });
+        }
+        if status.origins.iter().any(|origin| origin.lost) {
+            ui.colored_label(
+                egui::Color32::from_rgb(200, 60, 60),
+                "モータの電源が入り直したため原点が無効になりました。\
+                 モータは電源投入時の姿勢を0とするので、採り直すまで可動域は信用できません。",
+            );
         }
         ui.label("未採用の軸は可動域の制限が効きません。低速で当ててください。");
     }

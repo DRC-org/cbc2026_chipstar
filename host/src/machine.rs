@@ -398,6 +398,8 @@ impl MachineProfile {
 pub struct OriginState {
     pub name: String,
     pub unit: String,
+    /// 採用済みだった原点を、フィードバックの途切れや飛びで失ったか。
+    pub lost: bool,
     /// 原点を採用済みか。未採用の間は可動域のクランプを行わない。
     pub captured: bool,
     /// リミットスイッチに到達しているか。スイッチを持たない軸は None。
@@ -411,6 +413,9 @@ pub struct MachineController {
     /// 機体単位の0に対応するネイティブ値。原点採用でずらす。
     origins_native: Vec<f32>,
     origin_captured: Vec<bool>,
+    origin_lost: Vec<bool>,
+    /// 実測値の前回値。電源再投入による飛びを見つけるために持つ。
+    last_measured: Vec<Option<f32>>,
     /// 接点の前回値。立ち上がりの検出に使う。
     last_contacts: Option<u8>,
     pwm_targets_us: Vec<f32>,
@@ -436,6 +441,8 @@ impl MachineController {
         Self {
             origins_native: vec![0.0; profile.axes.len()],
             origin_captured: vec![false; profile.axes.len()],
+            origin_lost: vec![false; profile.axes.len()],
+            last_measured: vec![None; profile.axes.len()],
             last_contacts: None,
             profile,
             targets,
@@ -453,16 +460,51 @@ impl MachineController {
             .iter()
             .zip(&self.targets)
             .zip(&self.origin_captured)
-            .map(|((axis, target), captured)| OriginState {
+            .enumerate()
+            .map(|(index, ((axis, target), captured))| OriginState {
                 name: axis.name.clone(),
                 unit: axis.unit.clone(),
                 captured: *captured,
+                lost: self.origin_lost[index],
                 at_limit: axis
                     .limit
                     .and_then(|limit| contacts.map(|contacts| limit.reached(contacts))),
                 position: *target,
             })
             .collect()
+    }
+
+    /// 原点が信用できなくなった軸を見つける。
+    ///
+    /// EL05もDMも、電源を入れ直すとその時点の姿勢が0になる。hostが持っている
+    /// 機体座標との対応はそこで崩れるが、実測値は何事もなかったように0付近を
+    /// 返すため、気づかないとソフトリミットが実際とずれたまま動いてしまう。
+    ///
+    /// 検出は2つ。RUN中の応答途絶（FWが `stale` で通知する）と、1周期では
+    /// ありえない実測値の飛び。どちらも起きたら原点を捨て、採り直しを求める。
+    fn check_feedback_continuity(&mut self, telemetry: Option<&Telemetry>) {
+        let Some(telemetry) = telemetry else {
+            return;
+        };
+        for index in 0..self.profile.axes.len() {
+            let axis = &self.profile.axes[index];
+            let Some(slot) = telemetry.slots.get(axis.slot as usize) else {
+                continue;
+            };
+            let measured = slot.measured;
+            // ジョグ0.2秒ぶんを超える移動は、テレメトリ1周期(50ms)では起こらない。
+            // 通常のジョグは1周期あたり0.05秒ぶんしか進まないので4倍の余裕がある。
+            let jump_limit = (axis.speed_per_second * axis.native_per_unit * 0.2).abs();
+            let jumped = self.last_measured[index].is_some_and(|previous| {
+                jump_limit > 0.0 && (measured - previous).abs() > jump_limit
+            });
+            let stale = telemetry.stale_slots & (1 << axis.slot) != 0;
+            if (jumped || stale) && self.origin_captured[index] {
+                self.origin_captured[index] = false;
+                self.origin_lost[index] = true;
+            }
+            self.last_measured[index] = Some(measured);
+        }
     }
 
     /// いまの実測位置を目標として取り込む。
@@ -507,6 +549,7 @@ impl MachineController {
         self.origins_native[index] = slot.measured - axis.origin_position * axis.native_per_unit;
         self.targets[index] = axis.origin_position;
         self.origin_captured[index] = true;
+        self.origin_lost[index] = false;
         true
     }
 
@@ -527,6 +570,8 @@ impl MachineController {
     ) -> Vec<String> {
         let dt = elapsed_s.clamp(0.0, MAX_INPUT_INTERVAL_S);
         let contacts = telemetry.and_then(|telemetry| telemetry.contacts);
+
+        self.check_feedback_continuity(telemetry);
 
         // 接点の立ち上がりでその軸の原点を採る。ジョグで当てるだけで原点が決まる。
         if let (Some(contacts), Some(previous)) = (contacts, self.last_contacts) {
@@ -843,6 +888,50 @@ direction = -1.0
 "#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn power_cycling_a_motor_invalidates_the_origin() {
+        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let steady = telemetry_with(0, [5.0, 0.0, 0.0]);
+        machine.update(&neutral_input(), 0.1, Some(&steady));
+        assert!(machine.capture_origin(0, Some(&steady)));
+        assert!(machine.origin_states(None)[0].captured);
+
+        // モータが入り直して実測が0へ飛ぶ。1周期では起こりえない移動量。
+        let restarted = telemetry_with(0, [0.0, 0.0, 0.0]);
+        machine.update(&neutral_input(), 0.1, Some(&restarted));
+        let origins = machine.origin_states(None);
+        assert!(!origins[0].captured, "原点を捨てていない");
+        assert!(origins[0].lost, "失ったことを伝えていない");
+    }
+
+    #[test]
+    fn feedback_loss_reported_by_the_board_invalidates_the_origin() {
+        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let steady = telemetry_with(0, [5.0, 0.0, 0.0]);
+        machine.update(&neutral_input(), 0.1, Some(&steady));
+        assert!(machine.capture_origin(0, Some(&steady)));
+
+        let lost = Telemetry { stale_slots: 0b001, ..telemetry_with(0, [5.0, 0.0, 0.0]) };
+        machine.update(&neutral_input(), 0.1, Some(&lost));
+        assert!(!machine.origin_states(None)[0].captured);
+        assert!(machine.origin_states(None)[0].lost);
+    }
+
+    #[test]
+    fn normal_jogging_does_not_invalidate_the_origin() {
+        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let start = telemetry_with(0, [0.0, 0.0, 0.0]);
+        machine.update(&neutral_input(), 0.1, Some(&start));
+        assert!(machine.capture_origin(0, Some(&start)));
+
+        // ジョグ相当の連続した移動では原点を捨てない。
+        for step in 1..20 {
+            let moving = telemetry_with(0, [step as f32 * 0.4, 0.0, 0.0]);
+            machine.update(&neutral_input(), 0.05, Some(&moving));
+            assert!(machine.origin_states(None)[0].captured, "step {step} で捨てた");
+        }
     }
 
     #[test]
