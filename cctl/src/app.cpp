@@ -134,7 +134,7 @@ void applyCommand(const domain::Command& command) {
                 char text[96];
                 std::snprintf(text, sizeof(text),
                               "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=%lu "
-                              "params=%s",
+                              "params=%s jog=1",
                               static_cast<unsigned long>(
                                   controller.parameters().getMs(domain::ParamId::WatchdogMs)),
                               param_store::present() ? "stored" : "default");
@@ -162,6 +162,11 @@ void applyCommand(const domain::Command& command) {
         case domain::CommandKind::Target:
             if (!controller.setTarget(command.slot, command.target)) {
                 sendText("ERR code=OUT_OF_RANGE");
+            }
+            break;
+        case domain::CommandKind::Jog:
+            if (!controller.setJog(command.slot, command.target)) {
+                sendText("ERR code=JOG_REJECTED");
             }
             break;
         case domain::CommandKind::CanTx:

@@ -188,10 +188,11 @@ Command parseCommand(const char* line, std::size_t length) {
         }
         return command;
     }
-    if (count == 3 && equalsIgnoreCase(tokens[0], "TARGET")) {
+    if (count == 3 && (equalsIgnoreCase(tokens[0], "TARGET") ||
+                       equalsIgnoreCase(tokens[0], "JOG"))) {
         if (parseU8(tokens[1], 0, SLOT_COUNT - 1, command.slot) &&
             parseFloat(tokens[2], command.target)) {
-            command.kind = CommandKind::Target;
+            command.kind = equalsIgnoreCase(tokens[0], "JOG") ? CommandKind::Jog : CommandKind::Target;
         }
         return command;
     }
@@ -210,6 +211,7 @@ bool extendsDeadline(CommandKind kind) {
     switch (kind) {
         case CommandKind::Run:
         case CommandKind::Target:
+        case CommandKind::Jog:
         case CommandKind::Heartbeat:
             return true;
         default:

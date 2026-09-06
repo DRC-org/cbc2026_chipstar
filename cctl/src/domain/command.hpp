@@ -17,6 +17,7 @@ enum class CommandKind : uint8_t {
     Enable,
     Home,
     Target,
+    Jog,
     CanTx,
     ParamSet,
     ParamGet,

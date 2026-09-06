@@ -7,6 +7,7 @@
 #include "domain/run_state.hpp"
 #include "domain/feedback_watch.hpp"
 #include "domain/parameters.hpp"
+#include "domain/jog.hpp"
 #include "el05_motor.hpp"
 #include "m3508_motor.hpp"
 
@@ -28,6 +29,7 @@ class ActuatorController {
   void home(uint8_t slots);
 
   bool setTarget(uint8_t slot, float value);
+  bool setJog(uint8_t slot, float velocity);
 
   // 実行時パラメータ。書き込みなしで実機調整を終えるための入口。
   // 通信IDの差し替えはSAFE中だけ受理する。
@@ -72,6 +74,8 @@ class ActuatorController {
   DmMotor slot2_;
   C620Group c620_group_;
   float targets_[domain::SLOT_COUNT] = {};
+  domain::Jog jog_[domain::SLOT_COUNT];
+  uint32_t last_jog_ms_ = 0;
   domain::RunMode mode_ = domain::RunMode::Safe;
   uint8_t enabled_slots_ = 0;
   domain::FeedbackWatch feedback_;

@@ -61,6 +61,7 @@ add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     cctl/line_reader_test.cpp
     cctl/telemetry_test.cpp
     cctl/command_test.cpp
+    cctl/jog_test.cpp
     cctl/command_queue_test.cpp
     cctl/dm_codec_test.cpp
     cctl/el05_codec_test.cpp

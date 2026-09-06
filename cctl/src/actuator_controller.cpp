@@ -102,6 +102,7 @@ void ActuatorController::begin() {
 
 bool ActuatorController::setTarget(uint8_t slot, float value) {
   if (!std::isfinite(value)) return false;
+  if (slot < domain::SLOT_COUNT) jog_[slot].reset(measured(slot));
   switch (slot) {
     case 0:
       if (value < parameters_.get(domain::ParamId::Slot0Min) ||
@@ -128,6 +129,17 @@ bool ActuatorController::setTarget(uint8_t slot, float value) {
     default:
       return false;
   }
+}
+
+bool ActuatorController::setJog(uint8_t slot, float velocity) {
+  if (slot >= domain::SLOT_COUNT || !std::isfinite(velocity) ||
+      !slotActive(static_cast<uint8_t>(1U << slot))) return false;
+  const float caps[] = {
+      parameters_.get(domain::ParamId::El05LimitSpd),
+      parameters_.get(domain::ParamId::M3508MaxRpm) * 6.0f,
+      parameters_.get(domain::ParamId::DmPosVelLimit)};
+  jog_[slot].command(std::clamp(velocity, -caps[slot], caps[slot]), measured(slot));
+  return true;
 }
 
 float ActuatorController::target(uint8_t slot) const {
@@ -169,8 +181,7 @@ uint8_t ActuatorController::errorBits(uint8_t slot) const {
 void ActuatorController::dispatchRx(const domain::CanFrame& frame) {
   const uint32_t now = HAL_GetTick();
   if (frame.extended) {
-    slot0_.onFeedback(frame.id, frame.data);
-    feedback_.markSeen(0, now);
+    if (slot0_.onFeedback(frame.id, frame.data)) feedback_.markSeen(0, now);
   } else if (frame.id == slot1_.feedbackId()) {
     slot1_.onFeedback(static_cast<uint16_t>(frame.id), frame.data);
     feedback_.markSeen(1, now);
@@ -208,6 +219,11 @@ void ActuatorController::applySlotStates() {
 
 void ActuatorController::setMode(domain::RunMode mode) {
   if (mode_ == mode) return;
+  for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
+    jog_[slot].reset(measured(slot));
+    targets_[slot] = measured(slot);
+  }
+  slot1_.setTargetMotorDeg(targets_[1]);
   mode_ = mode;
   applySlotStates();
 }
@@ -232,6 +248,20 @@ void ActuatorController::home(uint8_t slots) {
 void ActuatorController::update() {
   checkFeedback(HAL_GetTick());
   const uint32_t now = HAL_GetTick();
+
+  const float jog_dt = static_cast<float>(now - last_jog_ms_) * 0.001f;
+  last_jog_ms_ = now;
+  for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
+    if (!slotActive(static_cast<uint8_t>(1U << slot))) {
+      jog_[slot].reset(measured(slot));
+    } else if (jog_[slot].active()) {
+      const uint8_t min_id = static_cast<uint8_t>(domain::ParamId::Slot0Min) + slot * 2;
+      targets_[slot] = jog_[slot].step(measured(slot), jog_dt,
+          parameters_.get(static_cast<domain::ParamId>(min_id)),
+          parameters_.get(static_cast<domain::ParamId>(min_id + 1)));
+      if (slot == 1) slot1_.setTargetMotorDeg(targets_[slot]);
+    }
+  }
 
   // 有効でないslotの目標を実測へ追従させる。トルクが切れている間に手で
   // 動かしても、そこが次の保持点になる。非常停止して退避させたあとRUNへ
