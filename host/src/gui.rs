@@ -640,21 +640,50 @@ impl BridgeApp {
             );
         }
         ui.label("未採用の軸は可動域の制限が効きません。低速で当ててください。");
+
+        ui.horizontal(|ui| {
+            let mut soft_limits = self.shared.soft_limits();
+            if ui
+                .checkbox(&mut soft_limits, "可動域で止める")
+                .on_hover_text(
+                    "外すと、いまの原点から見た可動域の外へもジョグできます。原点を採り\
+                     直す位置まで動かすときに使います。基板側のslot可動域は効いたままです。",
+                )
+                .changed()
+            {
+                self.shared.set_soft_limits(soft_limits);
+            }
+            if ui
+                .button("モータを再初期化")
+                .on_hover_text(
+                    "モータ側の制御モードと速度・電流制限を入れ直します。モータの電源を\
+                     入れ直したあとに実行してください。SAFEのときだけ受け付けます。",
+                )
+                .clicked()
+            {
+                self.shared.queue_line("REINIT 7".to_owned());
+            }
+        });
     }
 
 
-    /// 実行時パラメータの表示と変更。FWはRAM保持なので、電源を入れ直すと
-    /// 既定値へ戻り、機体プロファイルの値がhostから送り直される。
+    /// 実行時パラメータの表示と変更。cctlは変更を基板のFlashへ書き戻すので、
+    /// 電源を入れ直しても詰めた値のまま立ち上がる。
     fn parameters_ui(&mut self, ui: &mut egui::Ui) {
         use crate::machine::PARAMETER_NAMES;
         ui.heading("実行時パラメータ");
         ui.label(
-            "ゲイン・上限・CAN ID・周期を書き込みなしで変更します。RAM保持で、電源を\
-             入れ直すと既定値に戻ります。恒久的にしたい値は config/rtheta.toml の \
-             [parameters] に書いてください。",
+            "ゲイン・上限・CAN ID・周期を書き込みなしで変更します。変更はSAFEのあいだに\
+             基板へ保存され、電源を入れ直しても残ります。config/rtheta.toml の \
+             [parameters] は、保存が無いときの初期値として使われます。",
         );
 
         let status = self.shared.status_snapshot();
+        match status.device.as_ref().map(|device| device.parameters_stored) {
+            Some(true) => ui.label("基板は保存済みの値で動いています。"),
+            Some(false) => ui.label("基板に保存はありません。機体プロファイルの値が入っています。"),
+            None => ui.label("基板の状態が不明です。"),
+        };
         if self.shared.tests.enabled() {
             ui.label("動作テスト中は変更できません。");
             return;
@@ -678,6 +707,16 @@ impl BridgeApp {
             }
             ui.label(format!("読み出し済み: {} / {}", status.parameters.len(), PARAMETER_NAMES.len()));
         });
+        if ui
+            .button("保存を消して既定値に戻す")
+            .on_hover_text(
+                "基板の保存を消し、FWの既定値へ戻します。次の接続で機体プロファイルの\
+                 値が入ります。SAFEのときだけ受け付けます。",
+            )
+            .clicked()
+        {
+            self.shared.queue_line("PARAMDEF".to_owned());
+        }
 
         // 最初にFWの値が届いた時点で編集欄を埋める。毎フレーム上書きすると
         // 入力中の値が戻ってしまうので一度だけにする。

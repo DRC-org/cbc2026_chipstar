@@ -413,6 +413,7 @@ pub struct MachineController {
     /// 機体単位の0に対応するネイティブ値。原点採用でずらす。
     origins_native: Vec<f32>,
     origin_captured: Vec<bool>,
+    soft_limits: bool,
     origin_lost: Vec<bool>,
     /// 実測値の前回値。電源再投入による飛びを見つけるために持つ。
     last_measured: Vec<Option<f32>>,
@@ -441,6 +442,7 @@ impl MachineController {
         Self {
             origins_native: vec![0.0; profile.axes.len()],
             origin_captured: vec![false; profile.axes.len()],
+            soft_limits: true,
             origin_lost: vec![false; profile.axes.len()],
             last_measured: vec![None; profile.axes.len()],
             last_contacts: None,
@@ -507,6 +509,14 @@ impl MachineController {
         }
     }
 
+    /// 機体座標の可動域で目標を止めるかを切り替える。
+    ///
+    /// 原点を採り直すときは、いまの原点から見た可動域の外へ動かす必要がある。
+    /// 外しても基板側のslot絶対可動域は効いたままなので、機構は保護される。
+    pub fn set_soft_limits(&mut self, enabled: bool) {
+        self.soft_limits = enabled;
+    }
+
     /// いまの実測位置を目標として取り込む。
     ///
     /// 目標を過去の値のまま RUN すると、機体がその位置まで戻ろうとして跳ねる。
@@ -525,7 +535,7 @@ impl MachineController {
             if !value.is_finite() {
                 continue;
             }
-            self.targets[index] = if self.origin_captured[index] {
+            self.targets[index] = if self.origin_captured[index] && self.soft_limits {
                 value.clamp(axis.minimum, axis.maximum)
             } else {
                 value
@@ -612,7 +622,7 @@ impl MachineController {
                 // スイッチのある軸は、採用前にクランプするとスイッチまで届かない。
                 // スイッチのない軸は届く先がないので、起動時姿勢を基準に最初から
                 // 制限する。θのケーブル巻き込みを無制限にしないため。
-                if self.origin_captured[index] || limit.is_none() {
+                if self.soft_limits && (self.origin_captured[index] || limit.is_none()) {
                     *target = target.clamp(minimum, maximum);
                 }
             }

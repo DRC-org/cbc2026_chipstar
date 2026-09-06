@@ -121,6 +121,7 @@ pub fn run(shared: Arc<Shared>) {
 
         // 指令はコントローラの有無にも送信停止にも関係なく送る。
         // 立ち上げ中はコントローラを繋がないこともあり、STOP は常に届く必要がある。
+        machine.set_soft_limits(shared.soft_limits());
         for index in shared.take_origin_requests() {
             machine.capture_origin(index, telemetry.as_ref());
         }
@@ -213,8 +214,9 @@ pub fn run(shared: Arc<Shared>) {
             }
             if let Some(device) = parse_device_info(&line) {
                 // 能力確認が通った直後に、機体プロファイルの調整値を投入する。
-                // FWはRAM保持なので、再接続のたびに送り直す。
-                if device.board == "cctl" && !parameters_sent {
+                // 基板が保存済みの値を持っているときは投入しない。実機で詰めた
+                // 値を、プロファイルの初期値で上書きしてしまうため。
+                if device.board == "cctl" && !parameters_sent && !device.parameters_stored {
                     parameters_sent = true;
                     for parameter in cfg.machine.parameter_lines() {
                         let _ = link.write_line(&parameter);

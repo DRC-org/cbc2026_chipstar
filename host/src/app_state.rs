@@ -54,6 +54,7 @@ pub struct Shared {
     config: Mutex<BridgeConfig>,
     config_gen: AtomicU64,
     sending_enabled: AtomicBool,
+    soft_limits: AtomicBool,
     running: AtomicBool,
     status: Mutex<Status>,
     /// GUI が積み、ワーカーが送る指令行。
@@ -69,6 +70,7 @@ impl Shared {
             config: Mutex::new(config),
             config_gen: AtomicU64::new(0),
             sending_enabled: AtomicBool::new(true),
+            soft_limits: AtomicBool::new(true),
             running: AtomicBool::new(true),
             status: Mutex::new(Status::default()),
             commands: Mutex::new(VecDeque::new()),
@@ -88,6 +90,15 @@ impl Shared {
 
     pub fn config_generation(&self) -> u64 {
         self.config_gen.load(Ordering::Acquire)
+    }
+
+    /// 機体座標の可動域で目標を止めるか。原点を採り直す間は外す。
+    pub fn soft_limits(&self) -> bool {
+        self.soft_limits.load(Ordering::Relaxed)
+    }
+
+    pub fn set_soft_limits(&self, enabled: bool) {
+        self.soft_limits.store(enabled, Ordering::Relaxed);
     }
 
     pub fn sending_enabled(&self) -> bool {
