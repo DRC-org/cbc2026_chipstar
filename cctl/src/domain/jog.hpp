@@ -19,6 +19,7 @@ class Jog {
   }
   bool active() const { return active_; }
   float step(float measured, float dt, float minimum, float maximum) {
+    if (!(minimum < maximum)) { target_ = measured; return target_; }
     if (velocity_ != 0) {
       const float lead = std::abs(velocity_) * 0.1f;
       target_ = std::clamp(target_ + velocity_ * std::clamp(dt, 0.0f, 0.02f),

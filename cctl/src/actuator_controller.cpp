@@ -60,8 +60,8 @@ void ActuatorController::flushParameters() {
   constexpr uint32_t QUIET_MS = 1000;
   if (!param_dirty_ || mode_ != domain::RunMode::Safe) return;
   if (HAL_GetTick() - param_dirty_ms_ < QUIET_MS) return;
-  param_dirty_ = false;
-  param_store::save(parameters_);
+  if (param_store::save(parameters_)) param_dirty_ = false;
+  else param_dirty_ms_ = HAL_GetTick();
 }
 
 bool ActuatorController::resetParameters() {
@@ -291,6 +291,8 @@ void ActuatorController::update() {
 
 bool ActuatorController::setParameter(uint8_t id, float value) {
   if (domain::requiresSafe(id) && mode_ != domain::RunMode::Safe) return false;
+  if (!domain::Parameters::valid(id, value)) return false;
+  if (parameters_.get(id) == value) return true;
   if (!parameters_.set(id, value)) return false;
   applyParameter(id);
   param_dirty_ = true;
@@ -337,6 +339,8 @@ void ActuatorController::applyParameter(uint8_t id) {
       break;
     case ParamId::C620EscId:
       slot1_.setEscId(parameters_.getU8(ParamId::C620EscId));
+      c620_group_.reset(domain::c620::groupCommandId(slot1_.escId()));
+      c620_group_.add(slot1_);
       break;
     case ParamId::DmCanId:
     case ParamId::DmMstId:

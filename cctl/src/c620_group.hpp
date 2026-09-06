@@ -22,6 +22,9 @@ class C620Group {
   // 全メンバの指令を 1 フレームにまとめて送る。
   bool send();
 
+  // メンバを再登録する前に指令グループを切り替える。SAFE中に呼ぶ。
+  void reset(uint16_t command_id) { frame_ = domain::c620::CommandFrame(command_id); count_ = 0; }
+
   std::size_t size() const { return count_; }
 
  private:
