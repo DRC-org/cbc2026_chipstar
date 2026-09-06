@@ -10,7 +10,7 @@ fn neutral_input() -> ControllerState {
 
 #[test]
 fn embedded_profile_is_valid() {
-    let profile = MachineProfile::load(None).unwrap();
+    let profile = MachineProfile::embedded().unwrap();
     assert_eq!(profile.axes.len(), 3);
     assert_eq!(profile.axes[0].name, "r");
 }
@@ -18,7 +18,7 @@ fn embedded_profile_is_valid() {
 #[test]
 fn every_axis_can_be_jogged_for_manual_checks() {
     // 配線後の手動確認とホーミングに必要。動かせない軸があると原点が採れない。
-    let profile = MachineProfile::load(None).unwrap();
+    let profile = MachineProfile::embedded().unwrap();
     for axis in &profile.axes {
         assert!(
             axis.input_axis.is_some() && axis.speed_per_second > 0.0,
@@ -52,28 +52,6 @@ initial = 0.0
 }
 
 #[test]
-fn sends_named_parameters_as_numeric_ids() {
-    let source = profile_with_parameters("m3508_vel_kp = 0.9\nwatchdog_ms = 300.0");
-    let profile = MachineProfile::parse(&source).unwrap();
-    let lines = profile.parameter_lines();
-    assert!(lines.contains(&"PARAM 4 0.90000".to_owned()));
-    assert!(lines.contains(&"PARAM 30 300.00000".to_owned()));
-}
-
-#[test]
-fn sends_can_board_parameters_through_the_gateway() {
-    let source = format!(
-        "{EMBEDDED_PROFILE}\n[dcmd_parameters]\nmax_duty = 1000.0\n\n[serial_svmd_parameters]\nservo_baud = 1000000.0\n"
-    );
-    let profile = MachineProfile::parse(&source).unwrap();
-    let lines = profile.parameter_lines();
-    // DCMD id 0 (max_duty) = 1000.0f = 0x447A0000
-    assert!(lines.contains(&"CAN 2 784 01070000447A0000".to_owned()));
-    // serial_svmd id 0 (servo_baud) = 1000000.0f = 0x49742400
-    assert!(lines.contains(&"CAN 2 800 0109000049742400".to_owned()));
-}
-
-#[test]
 fn rejects_unknown_parameter_names() {
     let source = profile_with_parameters("no_such_gain = 1.0");
     assert!(MachineProfile::parse(&source).is_err());
@@ -87,7 +65,7 @@ fn rejects_duplicate_slots() {
 
 #[test]
 fn converts_manual_velocity_to_native_units() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     machine.set_soft_limits(false);
     let mut input = neutral_input();
     input.axes[1] = 0.5;
@@ -98,7 +76,7 @@ fn converts_manual_velocity_to_native_units() {
 
 #[test]
 fn deadzone_nonfinite_input_and_low_speed_are_bounded() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     machine.set_soft_limits(false);
     let t = telemetry_with(0, [0.0; 3]);
     let mut input = neutral_input();
@@ -198,7 +176,7 @@ direction = -1.0
 
 #[test]
 fn power_cycling_a_motor_invalidates_the_origin() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     let steady = telemetry_with(0, [5.0, 0.0, 0.0]);
     machine.observe(&steady);
     assert!(machine.capture_origin(0, Some(&steady)));
@@ -214,7 +192,7 @@ fn power_cycling_a_motor_invalidates_the_origin() {
 
 #[test]
 fn feedback_loss_reported_by_the_board_invalidates_the_origin() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     let steady = telemetry_with(0, [5.0, 0.0, 0.0]);
     machine.observe(&steady);
     assert!(machine.capture_origin(0, Some(&steady)));
@@ -230,7 +208,7 @@ fn feedback_loss_reported_by_the_board_invalidates_the_origin() {
 
 #[test]
 fn normal_jogging_does_not_invalidate_the_origin() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     let start = telemetry_with(0, [0.0, 0.0, 0.0]);
     machine.observe(&start);
     assert!(machine.capture_origin(0, Some(&start)));
@@ -248,7 +226,7 @@ fn normal_jogging_does_not_invalidate_the_origin() {
 
 #[test]
 fn neutral_command_holds_after_manual_repositioning() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     machine.observe(&telemetry_with(0, [0.2, 0.0, 0.0]));
     let moved = telemetry_with(0, [0.4, 0.0, 0.0]);
     machine.observe(&moved);
@@ -261,7 +239,7 @@ fn neutral_command_holds_after_manual_repositioning() {
 
 #[test]
 fn holding_needs_feedback() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     machine.observe(&telemetry_with(0, [0.4, 0.0, 0.0]));
     let before = machine.target("r").unwrap();
     machine.hold_at_measured(None);
@@ -317,7 +295,7 @@ fn adjustment_allows_origin_search_and_normal_mode_enforces_bounds() {
 
 #[test]
 fn switchless_axis_needs_an_origin_before_normal_motion() {
-    let machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let machine = MachineController::new(MachineProfile::embedded().unwrap());
     let mut input = neutral_input();
     input.axes[0] = 1.0;
     assert_eq!(
@@ -336,7 +314,7 @@ fn unknown_contacts_block_only_axes_with_a_configured_switch() {
     input.axes[1] = 1.0;
     for (profile, blocked) in [
         (profile_with_limits(), true),
-        (MachineProfile::load(None).unwrap(), false),
+        (MachineProfile::embedded().unwrap(), false),
     ] {
         let mut machine = MachineController::new(profile);
         machine.set_soft_limits(false);
@@ -352,7 +330,7 @@ fn unknown_contacts_block_only_axes_with_a_configured_switch() {
 
 #[test]
 fn axis_without_a_switch_is_captured_only_by_hand() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     let telemetry = telemetry_with(0b011, [0.0, 3000.0, 0.0]);
     machine.observe(&telemetry);
     let theta = 1;

@@ -1,25 +1,9 @@
 use super::*;
 
 impl Runtime {
-    fn authorize(&mut self, request: &Request, manual: bool) -> Result<()> {
-        if request.action == "stop" {
-            return Ok(());
-        }
-        if manual {
-            if self.ai.is_some() {
-                bail!("AI操作中です。停止は常に操作できます");
-            }
-        } else {
-            if self.ai.is_none() || self.ai != request.token {
-                bail!("claimで操作権を取得し、tokenを指定してください");
-            }
-            self.ai_contact = Instant::now();
-        }
-        Ok(())
-    }
     pub(super) fn request(&mut self, req: &Request, manual: bool) -> Result<Reply> {
         if req.action == "claim" {
-            if manual || self.ai.is_some() {
+            if manual || self.authority.active() {
                 bail!("操作権は使用中です");
             }
             self.stop(false)?;
@@ -28,19 +12,23 @@ impl Runtime {
                 std::process::id(),
                 SystemTime::now().duration_since(UNIX_EPOCH)?.as_nanos()
             );
-            self.ai = Some(token.clone());
-            self.ai_contact = Instant::now();
+            self.authority.claim(token.clone(), Instant::now());
             return Ok(Reply {
                 token: Some(token),
                 ..Reply::data(String::new())
             });
         }
-        self.authorize(req, manual)?;
+        self.authority.authorize(
+            req.token.as_deref(),
+            manual,
+            req.action == "stop",
+            Instant::now(),
+        )?;
         match req.action.as_str() {
             "heartbeat" => {}
             "release" => {
                 self.stop(false)?;
-                self.ai = None;
+                self.authority.release();
             }
             "run" => self.start()?,
             "stop" => self.stop(false)?,
@@ -53,7 +41,7 @@ impl Runtime {
                 self.send("SAFE")?;
             }
             "origin" => {
-                if self.running || self.awaiting_run.is_some() || !self.fresh() {
+                if self.drive.running() || self.drive.awaiting().is_some() || !self.fresh() {
                     bail!("停止して最新の実測位置を確認してください");
                 }
                 let index = self
@@ -69,7 +57,7 @@ impl Runtime {
                 return Ok(Reply::data("hostの原点に採用しました".into()));
             }
             "adjustment" => {
-                if self.running || self.awaiting_run.is_some() {
+                if self.drive.running() || self.drive.awaiting().is_some() {
                     bail!("停止してから切り替えてください");
                 }
                 self.adjustment = req.flag.unwrap_or(false);
@@ -94,12 +82,11 @@ impl Runtime {
                     }
                     self.manual_input.axes[index] = value;
                 } else {
-                    self.ai_input.axes[index] = value;
-                    self.ai_input_time[index] = Some(Instant::now());
+                    self.authority.set_input(index, value, Instant::now());
                 }
             }
             "connection" => {
-                if self.running || self.awaiting_run.is_some() {
+                if self.drive.running() || self.drive.awaiting().is_some() {
                     bail!("停止してから接続先を変更してください");
                 }
                 let connection: crate::application::app_state::Connection =
@@ -127,7 +114,7 @@ impl Runtime {
                 self.last_hello = Instant::now() - Duration::from_secs(2);
             }
             "reinit" => {
-                if self.running || self.awaiting_run.is_some() || !self.fresh() {
+                if self.drive.running() || self.drive.awaiting().is_some() || !self.fresh() {
                     bail!("停止して接続を確認してください");
                 }
                 let axis = self
@@ -144,7 +131,7 @@ impl Runtime {
                 self.machine.invalidate_origins();
             }
             "apply" => {
-                if self.running || self.awaiting_run.is_some() {
+                if self.drive.running() || self.drive.awaiting().is_some() {
                     bail!("停止してから設定を適用してください");
                 }
                 let profile =
@@ -164,21 +151,11 @@ impl Runtime {
                 self.shared.update_status(|s| s.saved = false);
             }
             "save" => {
-                if self.running || self.awaiting_run.is_some() {
+                if self.drive.running() || self.drive.awaiting().is_some() {
                     bail!("停止してから保存してください");
                 }
-                let text = toml::to_string_pretty(&self.cfg.machine)?;
                 let path = &self.cfg.profile_path;
-                let tmp = path.with_extension(format!("toml.{}.new", std::process::id()));
-                use std::io::Write;
-                let mut file = std::fs::OpenOptions::new()
-                    .write(true)
-                    .create_new(true)
-                    .open(&tmp)?;
-                file.write_all(text.as_bytes())?;
-                file.sync_all()?;
-                drop(file);
-                std::fs::rename(&tmp, path)?;
+                crate::transport::profile_store::save(path, &self.cfg.machine)?;
                 self.shared.update_status(|s| s.saved = true);
                 return Ok(Reply::data(format!("保存しました: {}", path.display())));
             }

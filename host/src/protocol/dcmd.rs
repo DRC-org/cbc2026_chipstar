@@ -1,32 +1,4 @@
 //! DCMD v1: signed duty in permille through cctl FDCAN2.
-use anyhow::{Result, bail};
-use serde::{Deserialize, Serialize};
-
-#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
-pub struct MotorProfile {
-    pub name: String,
-    pub channel: u8,
-    pub input_axis: usize,
-    pub input_sign: f32,
-    pub maximum_duty: u16,
-}
-
-pub fn validate(motors: &[MotorProfile]) -> Result<()> {
-    let mut mask = 0u8;
-    for motor in motors {
-        if motor.channel != 0
-            || mask & (1 << motor.channel) != 0
-            || motor.input_axis >= 6
-            || motor.input_sign.abs() != 1.0
-            || motor.maximum_duty > 900
-            || motor.name.is_empty()
-        {
-            bail!("DCMDのchannel、入力、Duty上限が不正です");
-        }
-        mask |= 1 << motor.channel;
-    }
-    Ok(())
-}
 
 pub fn line(op: u8, channel: u8, duty: i16) -> String {
     let bytes = duty.to_be_bytes();
@@ -34,25 +6,6 @@ pub fn line(op: u8, channel: u8, duty: i16) -> String {
         "CAN 2 784 01{op:02X}{channel:02X}00{:02X}{:02X}0000",
         bytes[0], bytes[1]
     )
-}
-
-pub fn targets(motors: &[MotorProfile], axes: &[f32; 6]) -> Vec<String> {
-    motors
-        .iter()
-        .map(|motor| {
-            let input = axes[motor.input_axis];
-            let input = if !input.is_finite() || input.abs() < 0.1 {
-                0.0
-            } else {
-                input.clamp(-1.0, 1.0)
-            };
-            line(
-                4,
-                motor.channel,
-                (input * motor.input_sign * f32::from(motor.maximum_duty)).round() as i16,
-            )
-        })
-        .collect()
 }
 
 #[derive(Clone, Debug)]
@@ -157,18 +110,6 @@ mod tests {
         let status = parse_status("CAN_RX bus=2 id=785 data=0100010100640000").unwrap();
         assert_eq!(status.duty, [100, 0]);
         assert!(parse_status("CAN_RX bus=2 id=769 data=010001030064FC7C").is_none());
-    }
-
-    #[test]
-    fn profile_limits_input_and_rejects_duplicate_channels() {
-        let mut profile =
-            crate::machine::MachineProfile::parse(include_str!("../../config/dcmd.toml")).unwrap();
-        assert_eq!(
-            targets(&profile.dc_motors, &[0.0, -2.0, 0.0, 0.05, 0.0, 0.0]),
-            vec![line(4, 0, -100)]
-        );
-        profile.dc_motors[0].channel = 1;
-        assert!(validate(&profile.dc_motors).is_err());
     }
 
     #[test]

@@ -1,6 +1,6 @@
 //! 操縦、調整、診断。操作はローカルAPIと同じ受付を通す。
 use crate::{
-    application::app_state::Shared, interface::control_api::Request, machine::MachineProfile,
+    application::app_state::Shared, application::command::Request, machine::MachineProfile,
 };
 use eframe::egui::{self, Color32, FontData, RichText};
 use std::{sync::Arc, time::Duration};

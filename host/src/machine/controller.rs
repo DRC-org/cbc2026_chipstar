@@ -1,5 +1,5 @@
 use super::profile::*;
-use crate::{input::controller::ControllerState, protocol::telemetry::Telemetry};
+use crate::{input::ControllerState, protocol::telemetry::Telemetry};
 use serde::Serialize;
 const STICK_DEADZONE: f32 = 0.1;
 

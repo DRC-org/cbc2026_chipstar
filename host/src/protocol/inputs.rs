@@ -1,7 +1,7 @@
 //! 基板が報告する接点とDIPの状態。接点はGNDへ閉じたとき1。
 //!
 //! cctlの接点は`STATE`の`sw=`で常時届くため、ここでは要求応答型の基板だけを扱う。
-use crate::diagnostics::fw_test::Board;
+use super::board::Board;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputState {

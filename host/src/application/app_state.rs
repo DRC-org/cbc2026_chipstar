@@ -1,6 +1,6 @@
 //! GUI・ローカルAPI・ワーカーが共有する操作受付とスナップショット。
 use crate::{
-    interface::control_api::{Reply, Request},
+    application::command::{Reply, Request},
     machine::{MachineProfile, OriginState},
 };
 use serde::{Deserialize, Serialize};

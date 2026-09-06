@@ -17,7 +17,7 @@ fn telemetry(native: f32) -> Telemetry {
 }
 #[test]
 fn frozen_feedback_does_not_accumulate_a_manual_position_target() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     let t = telemetry(5.0);
     machine.observe(&t);
     assert!(machine.capture_origin(0, Some(&t)));
@@ -34,7 +34,7 @@ fn frozen_feedback_does_not_accumulate_a_manual_position_target() {
 }
 #[test]
 fn displayed_position_uses_the_captured_offset() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     let start = telemetry(5.0);
     machine.observe(&start);
     machine.capture_origin(0, Some(&start));
@@ -53,7 +53,7 @@ fn displayed_position_uses_the_captured_offset() {
 }
 #[test]
 fn holding_outside_a_soft_limit_does_not_command_a_return() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     let start = telemetry(0.0);
     machine.capture_origin(0, Some(&start));
     machine.hold_at_measured(Some(&telemetry(8.0)));

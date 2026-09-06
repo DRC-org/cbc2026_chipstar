@@ -3,3 +3,4 @@ mod controller;
 mod profile;
 pub use controller::{MachineController, OriginState};
 pub use profile::*;
+pub mod dc_motor;

@@ -1,4 +1,11 @@
-use crate::machine::MachineProfile;
+use crate::{
+    machine::{MachineProfile, PARAMETER_NAMES, ParameterMap},
+    protocol::{
+        dcmd,
+        parameters::{ParameterBoard, ParameterKey, ParameterValue},
+        serial_svmd, svmd,
+    },
+};
 use anyhow::{Result, bail};
 use std::{
     collections::VecDeque,
@@ -6,29 +13,14 @@ use std::{
 };
 
 pub struct Settings {
-    pending: VecDeque<(String, String, f32)>,
+    pending: VecDeque<ParameterValue>,
     sent: Option<Instant>,
     pub confirmed: usize,
     pub expected: usize,
 }
 impl Settings {
     pub fn new(profile: &MachineProfile) -> Self {
-        let pending: VecDeque<_> = profile
-            .parameter_lines()
-            .into_iter()
-            .filter_map(|line| {
-                if let Some((key, value)) = parameter(&line) {
-                    Some((line, key, value))
-                } else {
-                    let words: Vec<_> = line.split_whitespace().collect();
-                    let id: u16 = words.get(2)?.parse().ok()?;
-                    let data = *words.get(3)?;
-                    let key = format!("{}:{}", id + 4, u8::from_str_radix(&data[4..6], 16).ok()?);
-                    let value = f32::from_bits(u32::from_str_radix(&data[8..16], 16).ok()?);
-                    Some((line, key, value))
-                }
-            })
-            .collect();
+        let pending: VecDeque<_> = parameter_plan(profile).into();
         Self {
             expected: pending.len(),
             pending,
@@ -39,7 +31,7 @@ impl Settings {
     pub fn ready(&self) -> bool {
         self.pending.is_empty()
     }
-    pub fn next(&mut self) -> Result<Option<String>> {
+    pub fn poll_command(&mut self) -> Result<Option<String>> {
         if self
             .sent
             .is_some_and(|t| t.elapsed() > Duration::from_secs(1))
@@ -49,26 +41,26 @@ impl Settings {
         if self.sent.is_some() {
             return Ok(None);
         }
-        if let Some((line, _, _)) = self.pending.front() {
+        if let Some(parameter) = self.pending.front() {
             self.sent = Some(Instant::now());
-            return Ok(Some(line.clone()));
+            return Ok(Some(parameter.command()));
         }
         Ok(None)
     }
     pub fn receive(&mut self, line: &str) -> Result<()> {
-        let Some((key, value)) = parameter(line) else {
+        let Some(ParameterValue { key, value }) = ParameterValue::parse_reply(line) else {
             return Ok(());
         };
-        let Some((_, expected_key, expected_value)) = self.pending.front() else {
+        let Some(expected) = self.pending.front() else {
             return Ok(());
         };
-        if self.sent.is_none() || &key != expected_key {
+        if self.sent.is_none() || key != expected.key {
             return Ok(());
         }
         if !value.is_finite()
-            || (value - expected_value).abs() > 0.0001_f32.max(expected_value.abs() * 0.00001)
+            || (value - expected.value).abs() > 0.0001_f32.max(expected.value.abs() * 0.00001)
         {
-            bail!("設定の応答値がPCと不一致です: {key}");
+            bail!("設定の応答値がPCと不一致です: {key:?}");
         }
         self.pending.pop_front();
         self.sent = None;
@@ -76,29 +68,49 @@ impl Settings {
         Ok(())
     }
 }
-fn parameter(line: &str) -> Option<(String, f32)> {
-    if let Some(body) = line.strip_prefix("PARAM ") {
-        let mut words = body.split_whitespace();
-        let id: u8 = words.next()?.parse().ok()?;
-        let value = words.next()?.parse().ok()?;
-        if words.next().is_some() {
-            return None;
-        }
-        return Some((format!("cctl:{id}"), value));
-    }
-    let body = line.strip_prefix("CAN_RX bus=2 id=")?;
-    let (id, data) = body.split_once(" data=")?;
-    if !["772", "788", "804"].contains(&id)
-        || data.len() != 16
-        || !data.is_ascii()
-        || !data.starts_with("01")
-    {
-        return None;
-    }
-    Some((
-        format!("{id}:{}", u8::from_str_radix(&data[2..4], 16).ok()?),
-        f32::from_bits(u32::from_str_radix(&data[8..16], 16).ok()?),
-    ))
+/// 検証済みプロファイルを送信順の設定値へ変換する。
+/// 基板とIDを保持し、指令文字列の逆解析で応答先を推測しない。
+pub fn parameter_plan(profile: &MachineProfile) -> Vec<ParameterValue> {
+    let boards: [(ParameterBoard, &ParameterMap, &[&str]); 4] = [
+        (ParameterBoard::Cctl, &profile.parameters, &PARAMETER_NAMES),
+        (
+            ParameterBoard::Svmd,
+            &profile.svmd_parameters,
+            &svmd::PARAMETER_NAMES,
+        ),
+        (
+            ParameterBoard::Dcmd,
+            &profile.dcmd_parameters,
+            &dcmd::PARAMETER_NAMES,
+        ),
+        (
+            ParameterBoard::SerialSvmd,
+            &profile.serial_svmd_parameters,
+            &serial_svmd::PARAMETER_NAMES,
+        ),
+    ];
+    boards
+        .into_iter()
+        .flat_map(|(board, values, names)| {
+            values.iter().map(move |(name, value)| {
+                let id = names
+                    .iter()
+                    .position(|entry| entry == name)
+                    .expect("MachineProfile must be validated before synchronization")
+                    as u8;
+                // ASCII基板の小数5桁という送信精度を、照合値にも適用する。
+                let value = if board == ParameterBoard::Cctl {
+                    format!("{value:.5}").parse().expect("formatted float")
+                } else {
+                    *value
+                };
+                ParameterValue {
+                    key: ParameterKey { board, id },
+                    value,
+                }
+            })
+        })
+        .collect()
 }
 
 #[cfg(test)]
@@ -110,11 +122,96 @@ mod tests {
         let mut sync = Settings::new(&profile);
         sync.receive("PARAM 9 1.0").unwrap();
         assert!(!sync.ready());
-        assert!(sync.next().unwrap().is_some());
+        assert!(sync.poll_command().unwrap().is_some());
         sync.receive("OK").unwrap();
         assert!(!sync.ready());
         assert!(sync.receive("PARAM 9 2.0").is_err());
         sync.receive("PARAM 9 1.0").unwrap();
         assert!(sync.ready());
+    }
+
+    #[test]
+    fn sends_named_parameters_as_numeric_ids() {
+        let mut profile = MachineProfile::embedded().unwrap();
+        profile.parameters.insert("m3508_vel_kp".into(), 0.9);
+        profile.parameters.insert("watchdog_ms".into(), 300.0);
+        let lines = parameter_plan(&profile)
+            .iter()
+            .map(ParameterValue::command)
+            .collect::<Vec<_>>();
+        assert!(lines.contains(&"PARAM 4 0.90000".to_owned()));
+        assert!(lines.contains(&"PARAM 30 300.00000".to_owned()));
+    }
+
+    #[test]
+    fn sends_can_board_parameters_through_the_gateway() {
+        let source = format!(
+            "{}\n[dcmd_parameters]\nmax_duty = 1000.0\n\n[serial_svmd_parameters]\nservo_baud = 1000000.0\n",
+            include_str!("../../config/rtheta.toml")
+        );
+        let profile = MachineProfile::parse(&source).unwrap();
+        let lines = parameter_plan(&profile)
+            .iter()
+            .map(ParameterValue::command)
+            .collect::<Vec<_>>();
+        // DCMD id 0 (max_duty) = 1000.0f = 0x447A0000
+        assert!(lines.contains(&"CAN 2 784 01070000447A0000".to_owned()));
+        // serial_svmd id 0 (servo_baud) = 1000000.0f = 0x49742400
+        assert!(lines.contains(&"CAN 2 800 0109000049742400".to_owned()));
+    }
+
+    #[test]
+    fn identical_parameter_ids_on_different_boards_do_not_cross_confirm() {
+        let mut profile = MachineProfile::embedded().unwrap();
+        profile.parameters.clear();
+        profile.svmd_parameters.insert("min_pulse_us".into(), 500.0);
+        profile.dcmd_parameters.insert("max_duty".into(), 500.0);
+        profile
+            .serial_svmd_parameters
+            .insert("servo_baud".into(), 1_000_000.0);
+        profile.validate().unwrap();
+        let mut sync = Settings::new(&profile);
+        assert_eq!(sync.expected, 3);
+        assert_eq!(
+            sync.poll_command().unwrap().unwrap(),
+            "CAN 2 768 0104000043FA0000"
+        );
+        sync.receive("CAN_RX bus=2 id=788 data=0100000043FA0000")
+            .unwrap();
+        assert_eq!(sync.confirmed, 0);
+        assert!(sync.poll_command().unwrap().is_none());
+        sync.receive("CAN_RX bus=2 id=772 data=0100000043FA0000")
+            .unwrap();
+        assert_eq!(
+            sync.poll_command().unwrap().unwrap(),
+            "CAN 2 784 0107000043FA0000"
+        );
+        sync.receive("CAN_RX bus=2 id=772 data=0100000043FA0000")
+            .unwrap();
+        assert_eq!(sync.confirmed, 1);
+        sync.receive("CAN_RX bus=2 id=788 data=0100000043FA0000")
+            .unwrap();
+        assert_eq!(
+            sync.poll_command().unwrap().unwrap(),
+            "CAN 2 800 0109000049742400"
+        );
+        assert!(
+            sync.receive("CAN_RX bus=2 id=804 data=010000007FC00000")
+                .is_err()
+        );
+        sync.receive("CAN_RX bus=2 id=804 data=0100000049742400")
+            .unwrap();
+        assert!(sync.ready());
+        assert_eq!(sync.confirmed, 3);
+    }
+
+    #[test]
+    fn missing_readback_times_out_without_sending_the_next_setting() {
+        let mut sync = Settings::new(&MachineProfile::embedded().unwrap());
+        assert!(sync.poll_command().unwrap().is_some());
+        sync.sent = Some(Instant::now() - Duration::from_secs(2));
+        assert!(sync.poll_command().is_err());
+        assert_eq!(sync.confirmed, 0);
+        assert!(!sync.ready());
     }
 }

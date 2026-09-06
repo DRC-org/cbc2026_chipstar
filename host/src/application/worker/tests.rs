@@ -1,7 +1,7 @@
 use super::*;
 #[test]
 fn restarting_a_subset_does_not_enable_axes_from_an_older_profile() {
-    let mut profile = MachineProfile::load(None).unwrap();
+    let mut profile = MachineProfile::embedded().unwrap();
     profile.axes.truncate(1);
     let shared = Arc::new(Shared::new(BridgeConfig {
         serial_device: "unused".into(),
@@ -29,7 +29,7 @@ fn ai_control_excludes_manual_changes_and_expires_without_resuming() {
         serial_device: "unused".into(),
         baud_rate: 115200,
         rate_hz: 20.0,
-        machine: MachineProfile::load(None).unwrap(),
+        machine: MachineProfile::embedded().unwrap(),
         profile_path: "/dev/null".into(),
         simulate: true,
     }));
@@ -62,16 +62,18 @@ fn ai_control_excludes_manual_changes_and_expires_without_resuming() {
             false,
         )
         .unwrap();
-    runtime.ai_input_time[1] = Some(Instant::now() - Duration::from_secs(1));
-    runtime.ai_input_time[0] = Some(Instant::now());
-    runtime.ai_input.axes[0] = 0.2;
+    runtime
+        .authority
+        .set_input(1, 0.5, Instant::now() - Duration::from_secs(1));
+    runtime.authority.set_input(0, 0.2, Instant::now());
     runtime.tick().unwrap();
-    assert_eq!(runtime.ai_input.axes[1], 0.0);
-    assert_eq!(runtime.ai_input.axes[0], 0.2);
-    assert!(runtime.ai.is_some());
-    runtime.ai_contact = Instant::now() - AI_LEASE - Duration::from_secs(1);
-    runtime.tick().unwrap();
-    assert!(runtime.ai.is_none());
-    assert!(!runtime.running);
-    assert!(runtime.awaiting_run.is_none());
+    assert_eq!(runtime.authority.input().unwrap().axes[1], 0.0);
+    assert_eq!(runtime.authority.input().unwrap().axes[0], 0.2);
+    assert!(runtime.authority.active());
+    runtime
+        .tick_at(Instant::now() + Duration::from_secs(31))
+        .unwrap();
+    assert!(!runtime.authority.active());
+    assert!(!runtime.drive.running());
+    assert!(runtime.drive.awaiting().is_none());
 }

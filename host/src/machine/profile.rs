@@ -3,8 +3,6 @@
 //! FWはslotのネイティブ単位だけを扱い、軸名、機械換算、入力割当はこの層に閉じる。
 
 use std::collections::HashSet;
-use std::fs;
-use std::path::Path;
 
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
@@ -149,7 +147,7 @@ pub const PARAMETER_NAMES: [&str; 33] = [
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct MachineProfile {
     #[serde(default)]
-    pub dc_motors: Vec<crate::protocol::dcmd::MotorProfile>,
+    pub dc_motors: Vec<super::dc_motor::MotorProfile>,
     pub protocol_version: u8,
     #[serde(default)]
     pub axes: Vec<AxisProfile>,
@@ -169,13 +167,9 @@ pub struct MachineProfile {
 }
 
 impl MachineProfile {
-    pub fn load(path: Option<&Path>) -> Result<Self> {
-        let source = match path {
-            Some(path) => fs::read_to_string(path)
-                .with_context(|| format!("機体プロファイルを読めません: {}", path.display()))?,
-            None => EMBEDDED_PROFILE.to_owned(),
-        };
-        Self::parse(&source)
+    /// コンパイル時に同梱した既定プロファイル。
+    pub fn embedded() -> Result<Self> {
+        Self::parse(EMBEDDED_PROFILE)
     }
 
     pub fn parse(source: &str) -> Result<Self> {
@@ -185,7 +179,7 @@ impl MachineProfile {
     }
 
     pub fn validate(&self) -> Result<()> {
-        crate::protocol::dcmd::validate(&self.dc_motors)?;
+        super::dc_motor::validate(&self.dc_motors)?;
         if self.protocol_version != 1 {
             bail!(
                 "未対応のプロトコルバージョンです: {}",
@@ -378,45 +372,6 @@ impl MachineProfile {
             }
         }
         Ok(())
-    }
-
-    /// 実行時パラメータの行。能力確認が済んだ直後に一度だけ送る。
-    /// cctlはASCII、CAN先の基板はゲートウェイ行になる。
-    pub fn parameter_lines(&self) -> Vec<String> {
-        let mut lines: Vec<String> = self
-            .parameters
-            .iter()
-            .filter_map(|(name, value)| {
-                let id = PARAMETER_NAMES.iter().position(|entry| entry == name)?;
-                Some(format!("PARAM {id} {value:.5}"))
-            })
-            .collect();
-        type BoardTable<'a> = (&'a ParameterMap, &'a [&'a str], fn(u8, f32) -> String);
-        let boards: [BoardTable; 3] = [
-            (
-                &self.svmd_parameters,
-                &crate::protocol::svmd::PARAMETER_NAMES,
-                crate::protocol::svmd::parameter_line,
-            ),
-            (
-                &self.dcmd_parameters,
-                &crate::protocol::dcmd::PARAMETER_NAMES,
-                crate::protocol::dcmd::parameter_line,
-            ),
-            (
-                &self.serial_svmd_parameters,
-                &crate::protocol::serial_svmd::PARAMETER_NAMES,
-                crate::protocol::serial_svmd::parameter_line,
-            ),
-        ];
-        for (values, names, encode) in boards {
-            for (name, value) in values {
-                if let Some(id) = names.iter().position(|entry| entry == name) {
-                    lines.push(encode(id as u8, *value));
-                }
-            }
-        }
-        lines
     }
 
     pub fn requires_can_bus_2(&self) -> bool {

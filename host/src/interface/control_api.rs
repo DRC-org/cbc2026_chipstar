@@ -8,57 +8,8 @@ use std::{
     time::Duration,
 };
 
-#[derive(Clone, Default, Debug, Serialize, Deserialize)]
-#[serde(deny_unknown_fields)]
-pub struct Request {
-    pub action: String,
-    pub token: Option<String>,
-    pub axis: Option<String>,
-    pub value: Option<f32>,
-    pub flag: Option<bool>,
-    pub text: Option<String>,
-}
-impl Request {
-    pub fn new(action: &str) -> Self {
-        Self {
-            action: action.into(),
-            ..Default::default()
-        }
-    }
-}
-#[derive(Debug, Serialize, Deserialize)]
-pub struct Reply {
-    pub ok: bool,
-    pub message: String,
-    pub data: String,
-    pub token: Option<String>,
-}
-impl Reply {
-    pub fn accepted() -> Self {
-        Self {
-            ok: true,
-            message: "受付済み。基板の反映はstatusで確認してください".into(),
-            data: String::new(),
-            token: None,
-        }
-    }
-    pub fn data(data: String) -> Self {
-        Self {
-            ok: true,
-            message: "確認済み".into(),
-            data,
-            token: None,
-        }
-    }
-    pub fn error(message: impl Into<String>) -> Self {
-        Self {
-            ok: false,
-            message: message.into(),
-            data: String::new(),
-            token: None,
-        }
-    }
-}
+pub use crate::application::command::{Reply, Request};
+
 pub fn default_socket() -> PathBuf {
     if let Some(path) = std::env::var_os("XDG_RUNTIME_DIR") {
         PathBuf::from(path).join("catchrobo-host.sock")
@@ -87,7 +38,6 @@ pub fn read_frame<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> Resu
     stream.read_exact(&mut data)?;
     Ok(toml::from_str(std::str::from_utf8(&data)?)?)
 }
-#[allow(dead_code)] // host本体とCLIで通信型を共有する。
 pub fn call(socket: &Path, request: &Request) -> Result<Reply> {
     let mut stream = UnixStream::connect(socket)?;
     stream.set_read_timeout(Some(Duration::from_secs(3)))?;

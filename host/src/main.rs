@@ -8,7 +8,7 @@ use host::{
     },
     gui,
     interface::{api_server, control_api},
-    machine::MachineProfile,
+    transport::profile_store,
 };
 use std::{path::PathBuf, sync::Arc, thread};
 
@@ -40,7 +40,7 @@ fn main() -> anyhow::Result<()> {
     let path = args
         .machine_profile
         .unwrap_or_else(|| PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("config/rtheta.toml"));
-    let machine = MachineProfile::load(Some(&path))?;
+    let machine = profile_store::load(&path)?;
     let server =
         api_server::Server::bind(&args.socket.unwrap_or_else(control_api::default_socket))?;
     let shared = Arc::new(Shared::new(BridgeConfig {

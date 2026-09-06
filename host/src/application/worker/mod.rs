@@ -1,9 +1,10 @@
 //! 機体接続と操作権を単一ワーカーが所有する。
+use super::authority::Authority;
 use crate::{
     application::app_state::{BridgeConfig, Shared},
+    application::command::{Reply, Request},
     application::settings::Settings,
-    input::controller::{self, ControllerState},
-    interface::control_api::{Reply, Request},
+    input::{ControllerState, controller},
     machine::{MachineController, MachineProfile},
     protocol::device::{DeviceInfo, parse_device_info},
     protocol::telemetry::{RunMode, Telemetry, parse_telemetry},
@@ -17,8 +18,25 @@ use std::{
 };
 
 const FRESH: Duration = Duration::from_millis(200);
-const AI_INPUT_TTL: Duration = Duration::from_millis(150);
-const AI_LEASE: Duration = Duration::from_secs(30);
+
+/// RUN要求の受付と、基板での反映を区別する。
+#[derive(Clone, Copy)]
+enum DriveState {
+    Stopped,
+    AwaitingRun(Instant),
+    Running,
+}
+impl DriveState {
+    fn running(self) -> bool {
+        matches!(self, Self::Running)
+    }
+    fn awaiting(self) -> Option<Instant> {
+        match self {
+            Self::AwaitingRun(sent) => Some(sent),
+            _ => None,
+        }
+    }
+}
 
 struct Runtime {
     shared: Arc<Shared>,
@@ -31,12 +49,8 @@ struct Runtime {
     rx: Option<Instant>,
     setup: bool,
     setup_error: bool,
-    running: bool,
-    awaiting_run: Option<Instant>,
-    ai: Option<String>,
-    ai_contact: Instant,
-    ai_input: ControllerState,
-    ai_input_time: [Option<Instant>; 6],
+    drive: DriveState,
+    authority: Authority,
     manual_input: ControllerState,
     gamepad_name: String,
     adjustment: bool,
@@ -58,12 +72,8 @@ impl Runtime {
             rx: None,
             setup: false,
             setup_error: false,
-            running: false,
-            awaiting_run: None,
-            ai: None,
-            ai_contact: Instant::now(),
-            ai_input: ControllerState::default(),
-            ai_input_time: [None; 6],
+            drive: DriveState::Stopped,
+            authority: Authority::default(),
             manual_input: ControllerState::default(),
             gamepad_name: String::new(),
             adjustment: false,
@@ -82,10 +92,8 @@ impl Runtime {
         self.rx.is_some_and(|t| t.elapsed() <= FRESH)
     }
     fn clear_drive(&mut self) {
-        self.running = false;
-        self.awaiting_run = None;
-        self.ai_input = ControllerState::default();
-        self.ai_input_time = [None; 6];
+        self.drive = DriveState::Stopped;
+        self.authority.clear_input();
     }
     fn stop(&mut self, cut: bool) -> Result<()> {
         self.clear_drive();
@@ -177,15 +185,11 @@ impl Runtime {
     }
     fn start(&mut self) -> Result<()> {
         self.ready()?;
-        let input = if self.ai.is_some() {
-            &self.ai_input
-        } else {
-            &self.manual_input
-        };
+        let input = self.authority.input().unwrap_or(&self.manual_input);
         if input.axes.iter().any(|v| !v.is_finite() || v.abs() >= 0.1) {
             bail!("スティックを中立に戻してください");
         }
-        if self.ai.is_none() && self.gamepad_name.is_empty() && !self.cfg.simulate {
+        if !self.authority.active() && self.gamepad_name.is_empty() && !self.cfg.simulate {
             bail!("DualSenseを接続してください");
         }
         let mask = self
@@ -200,7 +204,7 @@ impl Runtime {
         }
         self.send(&format!("ENABLE {mask} 1"))?;
         self.send("RUN")?;
-        self.awaiting_run = Some(Instant::now());
+        self.drive = DriveState::AwaitingRun(Instant::now());
         self.error.clear();
         self.reason = "基板の運転応答待ち".into();
         Ok(())
@@ -275,12 +279,12 @@ impl Runtime {
                     .axes
                     .iter()
                     .fold(0u8, |m, a| m | 1 << a.slot);
-                if self.running
+                if self.drive.running()
                     && (t.mode != RunMode::Run || t.enabled_slots & mask != mask || origin_lost)
                 {
                     self.fault("運転状態または原点を失いました".into());
                 }
-                if self.awaiting_run.is_some() && t.mode == RunMode::Run {
+                if self.drive.awaiting().is_some() && t.mode == RunMode::Run {
                     let mask = self
                         .cfg
                         .machine
@@ -288,8 +292,7 @@ impl Runtime {
                         .iter()
                         .fold(0u8, |m, a| m | 1 << a.slot);
                     if t.enabled_slots & mask == mask {
-                        self.running = true;
-                        self.awaiting_run = None;
+                        self.drive = DriveState::Running;
                         self.reason = "運転中".into();
                     }
                 }
@@ -298,18 +301,16 @@ impl Runtime {
         }
     }
     fn tick(&mut self) -> Result<()> {
+        self.tick_at(Instant::now())
+    }
+    fn tick_at(&mut self, now: Instant) -> Result<()> {
         self.receive();
-        if self.ai.is_some() && self.ai_contact.elapsed() > AI_LEASE {
+        if self.authority.expired(now) {
             self.stop(false)?;
-            self.ai = None;
+            self.authority.release();
             self.reason = "AI操作権の期限切れ。通常操縦は再開待ち".into();
         }
-        for (index, stamp) in self.ai_input_time.iter_mut().enumerate() {
-            if stamp.is_some_and(|t| t.elapsed() > AI_INPUT_TTL) {
-                self.ai_input.axes[index] = 0.0;
-                *stamp = None;
-            }
-        }
+        self.authority.expire_inputs(now);
         if !self.fresh() && self.rx.is_some() {
             self.fault("機体応答の期限切れ。原点を確認して再開してください".into());
             self.rx = None;
@@ -342,7 +343,7 @@ impl Runtime {
                 .as_ref()
                 .is_some_and(|t| t.mode == RunMode::Safe)
         {
-            match self.settings.next() {
+            match self.settings.poll_command() {
                 Ok(Some(line)) => self.send(&line)?,
                 Ok(None) => {}
                 Err(error) => {
@@ -352,20 +353,17 @@ impl Runtime {
             }
         }
         if self
-            .awaiting_run
+            .drive
+            .awaiting()
             .is_some_and(|t| t.elapsed() > Duration::from_millis(500))
         {
             self.fault("RUNの反映応答がありません".into());
         }
-        if self.running {
+        if self.drive.running() {
             if let Err(error) = self.ready() {
                 self.fault(error.to_string());
             } else {
-                let input = if self.ai.is_some() {
-                    &self.ai_input
-                } else {
-                    &self.manual_input
-                };
+                let input = self.authority.input().unwrap_or(&self.manual_input);
                 let slow = self.adjustment || input.buttons[9] != 0;
                 let lines = self
                     .machine
@@ -394,15 +392,11 @@ impl Runtime {
         self.shared.update_status(|s| {
             s.connected = self.fresh();
             s.configured = self.setup && self.settings.ready() && !self.setup_error;
-            s.ai_active = self.ai.is_some();
-            s.running = self.running;
+            s.ai_active = self.authority.active();
+            s.running = self.drive.running();
             s.origin_adjustment = self.adjustment;
             s.slow = self.adjustment || self.manual_input.buttons[9] != 0;
-            s.axes = if self.ai.is_some() {
-                self.ai_input.axes
-            } else {
-                self.manual_input.axes
-            };
+            s.axes = self.authority.input().unwrap_or(&self.manual_input).axes;
             s.origins = origins;
             s.gamepad = self.gamepad_name.clone();
             s.board_mode = self
@@ -410,7 +404,7 @@ impl Runtime {
                 .as_ref()
                 .map(|t| t.mode.label().to_owned())
                 .unwrap_or_default();
-            s.reason = if !self.running && self.awaiting_run.is_none() {
+            s.reason = if !self.drive.running() && self.drive.awaiting().is_none() {
                 self.ready()
                     .err()
                     .map(|e| e.to_string())
@@ -472,7 +466,7 @@ pub fn run(shared: Arc<Shared>) {
                     if buttons[5] != 0 && previous_buttons[5] == 0 {
                         let _ = runtime.stop(false);
                     }
-                    if runtime.ai.is_none()
+                    if !runtime.authority.active()
                         && buttons[6] != 0
                         && previous_buttons[6] == 0
                         && let Err(error) = runtime.start()
@@ -481,7 +475,7 @@ pub fn run(shared: Arc<Shared>) {
                     }
                     previous_buttons = buttons;
                 } else {
-                    if runtime.ai.is_none() && runtime.running {
+                    if !runtime.authority.active() && runtime.drive.running() {
                         runtime.fault("DualSenseが切断されました".into());
                     }
                     runtime.gamepad_name.clear();
