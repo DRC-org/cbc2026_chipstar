@@ -110,6 +110,33 @@ id 21..25（通信ID）の変更はSAFE中だけ受理する。走行中に宛�
 ピン割当、CANビットレート、バッファ長、slot数は初期化とメモリ配置に埋まっており、
 実行時には変更できない。
 
+### CAN先の基板
+
+svmd・DCMD・serial_svmdも同じ考え方で調整値を開けている。指令は各基板の
+`PARAM SET`（svmdはop `4`、DCMDはop `7`、serial_svmdはop `9`）で、
+byte 2 にパラメータid、byte 4..7 に float32 をbig endianで載せる。byte 3 は0。
+読み出しは持たない。受理の可否は各基板の状態通知で返る。
+
+| 基板 | id | 名前 | 内容 |
+|---|---|---|---|
+| svmd | 0..1 | `min_pulse_us` / `max_pulse_us` | 受理するパルス幅の範囲 |
+| svmd | 2 | `watchdog_ms` | 通信期限 |
+| DCMD | 0 | `max_duty` | 絶対Duty上限 [permille] |
+| DCMD | 1 | `ramp_interval_ms` | 出力を1段動かす間隔 |
+| DCMD | 2 | `ramp_step` | 1段あたりのDuty変化 |
+| DCMD | 3 | `reverse_brake_ms` | 方向反転前にゼロを保つ時間 |
+| DCMD | 4 | `watchdog_ms` | 通信期限 |
+| serial_svmd | 0 | `servo_baud` | STS3215バスのボーレート |
+| serial_svmd | 1 | `servo_timeout_ms` | サーボ応答の待ち時間 |
+| serial_svmd | 2 | `wait_for_write_status` | 書き込み命令の応答を待つか（0/1） |
+| serial_svmd | 3 | `watchdog_ms` | 通信期限 |
+
+`servo_baud` は、STS3215が工場出荷時1 Mbpsの個体だった場合の逃げ道である。
+書き込み環境のない場所でそれに当たっても、hostから合わせられる。
+
+STS3215の速度上限1000と加速度上限254、svmdのチャネル数は、デバイス側のプロトコルで
+決まる値なので調整対象にしない。
+
 `id`は10進の0..2047、`data`は0..8 byteを空白なしの16進表記にする。0 byteは`-`で
 表す。受信フレームは次の形式で通知する。FDCAN2は1Mbps固定で、拡張IDの送信は
 プロトコルv1では提供しない。

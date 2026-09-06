@@ -112,6 +112,18 @@ el05_limit_cur = 6.0
 slot1_max = 30000.0
 ```
 
+CAN先の基板は`[svmd_parameters]`、`[dcmd_parameters]`、`[serial_svmd_parameters]`に
+書く。cctlのFDCAN2を通って同じタイミングで届く。
+
+```toml
+[dcmd_parameters]
+max_duty = 300.0
+ramp_step = 2.0
+
+[serial_svmd_parameters]
+servo_baud = 1000000.0
+```
+
 FWはRAMだけに保持するので、電源やUSBを入れ直すとhostが自動で送り直す。
 ゲイン調整のたびにFWを書き込む必要はない。
 
