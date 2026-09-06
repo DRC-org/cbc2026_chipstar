@@ -26,11 +26,14 @@ void ActuatorController::begin() {
   HAL_Delay(50);
   slot0_.setRunMode(El05Motor::RunMode::Position);
   HAL_Delay(20);
-  slot0_.writeParamFloat(domain::el05::param::LIMIT_SPD, config::el05::LIMIT_SPD);
+  slot0_.writeParamFloat(domain::el05::param::LIMIT_SPD,
+                         parameters_.get(domain::ParamId::El05LimitSpd));
   HAL_Delay(20);
-  slot0_.writeParamFloat(domain::el05::param::LIMIT_CUR, config::el05::LIMIT_CUR);
+  slot0_.writeParamFloat(domain::el05::param::LIMIT_CUR,
+                         parameters_.get(domain::ParamId::El05LimitCur));
   HAL_Delay(20);
-  slot0_.writeParamFloat(domain::el05::param::LOC_KP, config::el05::LOC_KP);
+  slot0_.writeParamFloat(domain::el05::param::LOC_KP,
+                         parameters_.get(domain::ParamId::El05LocKp));
   HAL_Delay(20);
 
   slot1_.setTargetMotorDeg(0.0f);
@@ -48,16 +51,25 @@ bool ActuatorController::setTarget(uint8_t slot, float value) {
   if (!std::isfinite(value)) return false;
   switch (slot) {
     case 0:
-      if (value < config::limit::SLOT0_MIN || value > config::limit::SLOT0_MAX) return false;
+      if (value < parameters_.get(domain::ParamId::Slot0Min) ||
+          value > parameters_.get(domain::ParamId::Slot0Max)) {
+        return false;
+      }
       targets_[0] = value;
       return true;
     case 1:
-      if (value < config::limit::SLOT1_MIN || value > config::limit::SLOT1_MAX) return false;
+      if (value < parameters_.get(domain::ParamId::Slot1Min) ||
+          value > parameters_.get(domain::ParamId::Slot1Max)) {
+        return false;
+      }
       targets_[1] = value;
       slot1_.setTargetMotorDeg(value);
       return true;
     case 2:
-      if (value < config::limit::SLOT2_MIN || value > config::limit::SLOT2_MAX) return false;
+      if (value < parameters_.get(domain::ParamId::Slot2Min) ||
+          value > parameters_.get(domain::ParamId::Slot2Max)) {
+        return false;
+      }
       targets_[2] = value;
       return true;
     default:
@@ -129,16 +141,79 @@ void ActuatorController::home(uint8_t slots) {
 
 void ActuatorController::update() {
   const uint32_t now = HAL_GetTick();
-  if (now - last_m3508_ms_ >= config::period::M3508_MS) {
+  if (now - last_m3508_ms_ >= parameters_.getMs(domain::ParamId::M3508PeriodMs)) {
     last_m3508_ms_ = now;
     c620_group_.send();
   }
-  if (slotActive(domain::slot_bit::SLOT2) && now - last_dm_ms_ >= config::period::DM_MS) {
+  if (slotActive(domain::slot_bit::SLOT2) &&
+      now - last_dm_ms_ >= parameters_.getMs(domain::ParamId::DmPeriodMs)) {
     last_dm_ms_ = now;
-    slot2_.sendPositionVelocity(targets_[2], config::dm::POS_VEL_LIMIT);
+    slot2_.sendPositionVelocity(targets_[2], parameters_.get(domain::ParamId::DmPosVelLimit));
   }
-  if (slotActive(domain::slot_bit::SLOT0) && now - last_el05_ms_ >= config::period::EL05_MS) {
+  if (slotActive(domain::slot_bit::SLOT0) &&
+      now - last_el05_ms_ >= parameters_.getMs(domain::ParamId::El05PeriodMs)) {
     last_el05_ms_ = now;
     slot0_.setLocRef(targets_[0]);
+  }
+}
+
+bool ActuatorController::setParameter(uint8_t id, float value) {
+  if (domain::requiresSafe(id) && mode_ != domain::RunMode::Safe) return false;
+  if (!parameters_.set(id, value)) return false;
+  applyParameter(id);
+  return true;
+}
+
+// 変更をデバイスへ反映する。可動域と周期は参照側が毎回読むため何もしない。
+void ActuatorController::applyParameter(uint8_t id) {
+  using domain::ParamId;
+  switch (static_cast<ParamId>(id)) {
+    case ParamId::M3508PosKp:
+    case ParamId::M3508PosKi:
+    case ParamId::M3508PosKd:
+    case ParamId::M3508VelKp:
+    case ParamId::M3508VelKi:
+    case ParamId::M3508VelKd:
+      slot1_.setGains(parameters_.get(ParamId::M3508PosKp), parameters_.get(ParamId::M3508PosKi),
+                      parameters_.get(ParamId::M3508PosKd), parameters_.get(ParamId::M3508VelKp),
+                      parameters_.get(ParamId::M3508VelKi), parameters_.get(ParamId::M3508VelKd));
+      break;
+    case ParamId::M3508MaxRpm:
+      slot1_.setMaxRpm(parameters_.get(ParamId::M3508MaxRpm));
+      break;
+    case ParamId::M3508MaxCurrentMa:
+      slot1_.setMaxCurrentMilliAmp(parameters_.get(ParamId::M3508MaxCurrentMa));
+      break;
+    case ParamId::El05LocKp:
+      slot0_.writeParamFloat(domain::el05::param::LOC_KP, parameters_.get(ParamId::El05LocKp));
+      break;
+    case ParamId::El05LimitSpd:
+      slot0_.writeParamFloat(domain::el05::param::LIMIT_SPD,
+                             parameters_.get(ParamId::El05LimitSpd));
+      break;
+    case ParamId::El05LimitCur:
+      slot0_.writeParamFloat(domain::el05::param::LIMIT_CUR,
+                             parameters_.get(ParamId::El05LimitCur));
+      break;
+    case ParamId::DmPMax:
+    case ParamId::DmVMax:
+    case ParamId::DmTMax:
+      slot2_.setRange(parameters_.get(ParamId::DmPMax), parameters_.get(ParamId::DmVMax),
+                      parameters_.get(ParamId::DmTMax));
+      break;
+    case ParamId::C620EscId:
+      slot1_.setEscId(parameters_.getU8(ParamId::C620EscId));
+      break;
+    case ParamId::DmCanId:
+    case ParamId::DmMstId:
+      slot2_.setIds(parameters_.getU16(ParamId::DmCanId), parameters_.getU16(ParamId::DmMstId));
+      break;
+    case ParamId::El05MotorId:
+    case ParamId::El05HostId:
+      slot0_.setIds(parameters_.getU8(ParamId::El05MotorId),
+                    parameters_.getU8(ParamId::El05HostId));
+      break;
+    default:
+      break;
   }
 }

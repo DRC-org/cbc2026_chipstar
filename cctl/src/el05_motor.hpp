@@ -33,6 +33,11 @@ class El05Motor {
 
   // ---- パラメータ -------------------------------------------------------
   bool writeParamFloat(uint16_t param, float value);
+
+  void setIds(uint8_t motor_id, uint8_t host_id) {
+    motor_id_ = motor_id;
+    host_id_ = host_id;
+  }
   bool writeParamU8(uint16_t param, uint8_t value);
   // 読み出しを要求する。値は応答フレームとして後から届く。
   bool requestParam(uint16_t param);

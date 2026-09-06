@@ -57,6 +57,15 @@ class DmMotor {
   // モータ内部コイルの温度[degC]。
   uint8_t rotorTemperature() const { return feedback_.rotor_temperature_c; }
 
+  // モータ側の設定に合わせる。ずれるとフレームの符号化が食い違う。
+  void setRange(float p_max, float v_max, float t_max) {
+    range_ = domain::dm::Range{p_max, v_max, t_max};
+  }
+  void setIds(uint16_t can_id, uint16_t mst_id) {
+    can_id_ = can_id;
+    mst_id_ = mst_id;
+  }
+
   // 直近に届いたレジスタ応答。PMAX などを実機から読むのに使う。
   bool hasRegisterReply() const { return has_register_reply_; }
   uint8_t lastRegisterId() const { return last_register_id_; }

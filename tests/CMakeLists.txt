@@ -51,6 +51,7 @@ add_firmware_tests(svmd_tests ${REPO_ROOT}/svmd/src
 add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     digital_inputs_test.cpp
     cctl/device_config_test.cpp
+    cctl/parameters_test.cpp
     cctl/c620_codec_test.cpp
     cctl/line_reader_test.cpp
     cctl/telemetry_test.cpp
@@ -65,6 +66,7 @@ add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     ${REPO_ROOT}/cctl/src/domain/line_reader.cpp
     ${REPO_ROOT}/cctl/src/domain/telemetry.cpp
     ${REPO_ROOT}/cctl/src/domain/command.cpp
+    ${REPO_ROOT}/cctl/src/domain/parameters.cpp
     ${REPO_ROOT}/cctl/src/domain/command_queue.cpp
     ${REPO_ROOT}/cctl/src/domain/led_pattern.cpp
     ${REPO_ROOT}/cctl/src/domain/dm_codec.cpp

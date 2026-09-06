@@ -5,6 +5,7 @@
 #include "domain/command.hpp"
 #include "domain/command_queue.hpp"
 #include "domain/line_reader.hpp"
+#include "domain/parameters.hpp"
 #include "domain/telemetry.hpp"
 #include "domain/digital_inputs.hpp"
 #include "main.h"
@@ -63,6 +64,14 @@ void sendText(const char* text) {
     CDC_Transmit_FS(buffer, static_cast<uint16_t>(length + 1));
 }
 
+void sendParameter(uint8_t id) {
+    char text[64];
+    char value[32];
+    domain::formatFixed3(controller.parameters().get(id), value, sizeof(value));
+    std::snprintf(text, sizeof(text), "PARAM %u %s", static_cast<unsigned>(id), value);
+    sendText(text);
+}
+
 void applyCommand(const domain::Command& command) {
     switch (command.kind) {
         case domain::CommandKind::Hello:
@@ -102,6 +111,20 @@ void applyCommand(const domain::Command& command) {
                                                command.can_length)) {
                 sendText("ERR code=CAN_TX");
             }
+            break;
+        case domain::CommandKind::ParamSet:
+            if (!controller.setParameter(command.param_id, command.target)) {
+                sendText(domain::requiresSafe(command.param_id) &&
+                                 controller.mode() != domain::RunMode::Safe
+                             ? "ERR code=BUSY"
+                             : "ERR code=OUT_OF_RANGE");
+            } else {
+                sendParameter(command.param_id);
+            }
+            break;
+        case domain::CommandKind::ParamGet:
+            if (command.param_id >= domain::PARAM_COUNT) sendText("ERR code=OUT_OF_RANGE");
+            else sendParameter(command.param_id);
             break;
         case domain::CommandKind::None:
             break;

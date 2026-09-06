@@ -5,6 +5,7 @@
 #include "dm_motor.hpp"
 #include "domain/can_frame.hpp"
 #include "domain/run_state.hpp"
+#include "domain/parameters.hpp"
 #include "el05_motor.hpp"
 #include "m3508_motor.hpp"
 
@@ -26,6 +27,11 @@ class ActuatorController {
   void home(uint8_t slots);
 
   bool setTarget(uint8_t slot, float value);
+
+  // 実行時パラメータ。書き込みなしで実機調整を終えるための入口。
+  // 通信IDの差し替えはSAFE中だけ受理する。
+  bool setParameter(uint8_t id, float value);
+  const domain::Parameters& parameters() const { return parameters_; }
   float target(uint8_t slot) const;
   float measured(uint8_t slot) const;
   uint8_t errorBits() const;
@@ -34,6 +40,9 @@ class ActuatorController {
   void applySlotStates();
   bool slotActive(uint8_t bit) const;
 
+  void applyParameter(uint8_t id);
+
+  domain::Parameters parameters_;
   El05Motor slot0_;
   M3508Motor slot1_;
   DmMotor slot2_;

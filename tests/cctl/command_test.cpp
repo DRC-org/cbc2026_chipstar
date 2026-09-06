@@ -88,3 +88,23 @@ TEST_CASE("範囲外または余分な引数を拒否する") {
     CHECK(parse("TARGET 0 1 extra").kind == CommandKind::None);
 }
 
+
+TEST_CASE("パラメータの設定と読み出しを解釈する") {
+    const Command set = parse("PARAM 4 0.75");
+    CHECK(set.kind == CommandKind::ParamSet);
+    CHECK(set.param_id == 4);
+    CHECK(set.target == doctest::Approx(0.75f));
+
+    const Command get = parse("PARAM 4");
+    CHECK(get.kind == CommandKind::ParamGet);
+    CHECK(get.param_id == 4);
+
+    CHECK(parse("param 30 -12.5").kind == CommandKind::ParamSet);
+}
+
+TEST_CASE("パラメータの不正な指定を拒否する") {
+    CHECK(parse("PARAM").kind == CommandKind::None);
+    CHECK(parse("PARAM 256 1").kind == CommandKind::None);
+    CHECK(parse("PARAM 0 nan").kind == CommandKind::None);
+    CHECK(parse("PARAM 0 1 2").kind == CommandKind::None);
+}

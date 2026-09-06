@@ -135,6 +135,15 @@ Command parseCommand(const char* line, std::size_t length) {
         if (parseU8(tokens[1], 1, 255, command.protocol_version)) command.kind = CommandKind::Hello;
         return command;
     }
+    if (count >= 2 && count <= 3 && equalsIgnoreCase(tokens[0], "PARAM")) {
+        if (!parseU8(tokens[1], 0, 255, command.param_id)) return command;
+        if (count == 2) {
+            command.kind = CommandKind::ParamGet;
+            return command;
+        }
+        if (parseFloat(tokens[2], command.target)) command.kind = CommandKind::ParamSet;
+        return command;
+    }
     if (count == 2 && equalsIgnoreCase(tokens[0], "HOME")) {
         if (parseU8(tokens[1], 1, slot_bit::ALL, command.mask)) command.kind = CommandKind::Home;
         return command;

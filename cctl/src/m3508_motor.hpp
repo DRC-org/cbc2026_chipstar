@@ -39,6 +39,17 @@ class M3508Motor {
   // モータが個別に送ると互いの指令を打ち消してしまう。
   int16_t commandRaw();
 
+  // 実行時のゲイン調整。FWを書き直さずに実機で追い込むために開けてある。
+  void setGains(float pos_kp, float pos_ki, float pos_kd, float vel_kp, float vel_ki,
+                float vel_kd) {
+    pos_pid_.setGains(pos_kp, pos_ki, pos_kd);
+    vel_pid_.setGains(vel_kp, vel_ki, vel_kd);
+  }
+  void setMaxRpm(float value) { max_rpm_ = value; }
+  void setMaxCurrentMilliAmp(float value) { max_current_ma_ = value; }
+  // 宛先の差し替えはSAFE中だけ行う。
+  void setEscId(uint8_t esc_id) { esc_id_ = esc_id; }
+
   // PID を通さず電流[mA]を直接指令する。ゲイン調整前の素の確認に使う。
   void setDirectCurrent(float milli_amp);
   void clearDirectCurrent();
