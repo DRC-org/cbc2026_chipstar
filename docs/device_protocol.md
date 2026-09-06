@@ -22,7 +22,7 @@ host と各基板の間で使う、改行区切りASCIIプロトコル。1行は
 `key=value` 形式にする。
 
 ```text
-DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250
+DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=stored
 ERR code=BAD_COMMAND
 ERR code=OUT_OF_RANGE
 ```
@@ -104,9 +104,19 @@ DCMDの指令と応答の形式は[board_dcmd.md](board_dcmd.md)に定める。
 | `PARAM <id> <value>` | 実行時パラメータを設定 |
 | `PARAM <id>` | 実行時パラメータを読み出す |
 | `DMREG <rid> [値]` | DMドライバのレジスタを読み書き |
+| `REINIT <mask>` | 指定スロットのモータ設定を入れ直す |
+| `PARAMDEF` | 保存済みパラメータを消して既定値へ戻す |
 
 `mask` のbit 0..2はslot 0..2に対応する。`TARGET` はRUN中だけでなくSAFE中にも
 受理できるが、出力はRUNへ遷移するまで有効にならない。
+
+有効でないslotの目標は実測位置へ追従する。トルクが切れている間に手で動かしても
+そこが次の保持点になり、有効化した瞬間に元の位置へ戻ろうとすることがない。
+
+`REINIT` はモータ側の制御モードと速度・電流制限を書き直す。モータだけ電源が
+入り直すと、EL05は位置モードを、DMは位置速度モードを失うが、これらはcctlの
+起動時にしか書いていないため基板を再起動するまで戻らない。`REINIT` はその
+やり直しで、SAFE中だけ受理する。`OK` または `ERR code=BUSY` を返す。
 
 ```text
 STATE t=12345 mode=RUN en=7 a0=1.250/1.230 a1=-40.000/-39.500 a2=0.500/0.490 err=00 sw=5 stale=0
@@ -129,8 +139,16 @@ slotが`feedback_timeout_ms`を超えて応答しないと、FWはそのslotを�
 ## 実行時パラメータ
 
 FWを書き直さずに実機調整を終えられるよう、調整対象の定数はhostから変更できる。
-値はRAMだけに保持し、電源投入で既定値へ戻る。hostは能力確認が通った直後に
-機体プロファイルの値を送り直す。
+
+cctlは変更を基板のFlash最終ページへ書き戻すので、電源を入れ直しても詰めた値の
+まま立ち上がる。ページ消去でCPUが数十ms止まるため、書き戻すのはSAFE中に、
+最後の変更から1秒空いてからまとめて1回だけである。内容が保存済みと同じときは
+書かない。`DEVICE` の `params=stored` / `params=default` が保存の有無を示し、
+hostは保存があるときは機体プロファイルの値を送らない。実機で詰めた値を
+初期値で上書きしないためである。`PARAMDEF` で保存を消すと既定値へ戻る。
+
+cctl以外の基板はRAMだけに保持し、電源投入で既定値へ戻る。hostは能力確認が
+通った直後に機体プロファイルの値を送り直す。
 
 ```text
 PARAM 4 0.70000

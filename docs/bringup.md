@@ -32,7 +32,7 @@ USB CDCは改行区切りASCIIなので、GUIを使わず端末からも確認�
 
 ```text
 HELLO 1
-DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250
+DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=stored
 ```
 
 主な指令は次のとおり。
