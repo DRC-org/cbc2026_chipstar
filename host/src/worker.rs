@@ -150,6 +150,12 @@ pub fn run(shared: Arc<Shared>) {
                     }
                     Some((result, targets.last().cloned().unwrap_or_default()))
                 } else {
+                    // 送信を止めている間もHEARTBEATだけは流す。
+                    // 目標指令が途切れるとWatchdogでSTOPへ落ち、RUNを押しても
+                    // すぐ止まったように見える。重力負荷のあるz軸では、
+                    // 出力を切るより現在位置を保持する方が安全でもある。
+                    // コントローラ自体が外れた場合は何も送らず、Watchdogに任せる。
+                    let _ = link.write_line("HEARTBEAT");
                     None
                 };
 

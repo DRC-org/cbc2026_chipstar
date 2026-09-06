@@ -656,11 +656,32 @@ mod tests {
         }
     }
 
+    /// `[parameters]` の検証用に、最小構成のプロファイルを組み立てる。
+    fn profile_with_parameters(body: &str) -> String {
+        format!(
+            r#"
+protocol_version = 1
+
+[parameters]
+{body}
+
+[[axes]]
+name = "r"
+unit = "mm"
+slot = 0
+input_axis = 1
+speed_per_second = 10.0
+native_per_unit = 1.0
+minimum = -10.0
+maximum = 10.0
+initial = 0.0
+"#
+        )
+    }
+
     #[test]
     fn sends_named_parameters_as_numeric_ids() {
-        let source = format!(
-            "{EMBEDDED_PROFILE}\n[parameters]\nm3508_vel_kp = 0.9\nwatchdog_ms = 300.0\n"
-        );
+        let source = profile_with_parameters("m3508_vel_kp = 0.9\nwatchdog_ms = 300.0");
         let profile = MachineProfile::parse(&source).unwrap();
         let lines = profile.parameter_lines();
         assert!(lines.contains(&"PARAM 4 0.90000".to_owned()));
@@ -682,7 +703,7 @@ mod tests {
 
     #[test]
     fn rejects_unknown_parameter_names() {
-        let source = format!("{EMBEDDED_PROFILE}\n[parameters]\nno_such_gain = 1.0\n");
+        let source = profile_with_parameters("no_such_gain = 1.0");
         assert!(MachineProfile::parse(&source).is_err());
     }
 

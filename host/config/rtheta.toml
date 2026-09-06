@@ -1,6 +1,19 @@
 protocol_version = 1
 # serial_svmdを使う機体では、[serial_svmd]と[[serial_svmd.servos]]を追加する。
 
+# 立ち上げ用の安全側の上限。能力確認の直後にcctlへ送られる。
+# ゲインは机上値のままなので、実機で挙動を確かめながら緩めていく。
+# FWはRAM保持なので、ここを直してhostを起動し直せば反映される。
+[parameters]
+# M3508: 位置ループが出す速度指令と、C620へ出す電流を絞る。
+m3508_max_rpm = 500.0
+m3508_max_current_ma = 1000.0
+# EL05: ドライバ内の速度制限と電流制限。設定時にモータへ書き込まれる。
+el05_limit_spd = 1.0
+el05_limit_cur = 2.0
+# DM: 位置速度モードの速度上限。z軸は重力負荷があるので特に低速から。
+dm_pos_vel_limit = 1.0
+
 [[axes]]
 name = "r"
 unit = "mm"

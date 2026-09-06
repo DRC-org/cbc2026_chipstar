@@ -232,7 +232,16 @@ impl BridgeApp {
         };
 
         if self.shared.queue_command(command) {
-            self.message = Some(format!("{label} → {}", command.to_line()));
+            // 送信が止まっていると目標指令が流れず、RUNしてもWatchdogで止まる。
+            if command == Command::Run && !self.shared.sending_enabled() {
+                self.message = Some(
+                    "RUN を送りましたが、コントローラ入力の送信が無効です。\
+                     下のチェックを入れてください。"
+                        .to_owned(),
+                );
+            } else {
+                self.message = Some(format!("{label} → {}", command.to_line()));
+            }
         } else {
             self.message = Some("FWの能力確認を待っています。".to_owned());
         }
