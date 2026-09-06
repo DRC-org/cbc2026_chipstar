@@ -108,3 +108,28 @@ TEST_CASE("パラメータの不正な指定を拒否する") {
     CHECK(parse("PARAM 0 nan").kind == CommandKind::None);
     CHECK(parse("PARAM 0 1 2").kind == CommandKind::None);
 }
+
+TEST_CASE("DMドライバのレジスタ指令を解釈する") {
+    const Command read = parse("DMREG 10");
+    CHECK(read.kind == CommandKind::DmRegRead);
+    CHECK(read.param_id == 10);
+
+    // CTRL_MODE(0x0A) へ 2（位置速度モード）を書く。
+    const Command write = parse("DMREG 10 00000002");
+    CHECK(write.kind == CommandKind::DmRegWrite);
+    CHECK(write.param_id == 10);
+    CHECK(write.raw_value == 2);
+
+    // PMAX(0x15) へ 12.5f を書く。
+    const Command as_float = parse("DMREG 21 41480000");
+    CHECK(as_float.kind == CommandKind::DmRegWrite);
+    CHECK(as_float.raw_value == 0x41480000);
+}
+
+TEST_CASE("DMレジスタの不正な指定を拒否する") {
+    CHECK(parse("DMREG").kind == CommandKind::None);
+    CHECK(parse("DMREG 256").kind == CommandKind::None);
+    CHECK(parse("DMREG 10 2").kind == CommandKind::None);        // 8桁必須
+    CHECK(parse("DMREG 10 0000000G").kind == CommandKind::None);
+    CHECK(parse("DMREG 10 00000002 x").kind == CommandKind::None);
+}

@@ -31,6 +31,11 @@ class ActuatorController {
   // 実行時パラメータ。書き込みなしで実機調整を終えるための入口。
   // 通信IDの差し替えはSAFE中だけ受理する。
   bool setParameter(uint8_t id, float value);
+
+  // DMドライバのレジスタ。SAFE中だけ受理する。
+  bool readDmRegister(uint8_t rid);
+  bool writeDmRegister(uint8_t rid, uint32_t raw);
+  bool takeDmRegisterReply(uint8_t& rid, uint32_t& raw);
   const domain::Parameters& parameters() const { return parameters_; }
   float target(uint8_t slot) const;
   float measured(uint8_t slot) const;

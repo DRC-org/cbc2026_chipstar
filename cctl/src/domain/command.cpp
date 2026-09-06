@@ -104,6 +104,23 @@ bool parseFlag(const Token& token, bool& value) {
     return true;
 }
 
+// 8桁の16進で32bitを受ける。floatか整数かは呼び出し側が決める。
+bool parseHex32(const Token& token, uint32_t& value) {
+    if (token.length != 8) return false;
+    uint32_t result = 0;
+    for (std::size_t i = 0; i < token.length; ++i) {
+        const char c = token.begin[i];
+        uint32_t digit = 0;
+        if (c >= '0' && c <= '9') digit = static_cast<uint32_t>(c - '0');
+        else if (c >= 'a' && c <= 'f') digit = static_cast<uint32_t>(c - 'a' + 10);
+        else if (c >= 'A' && c <= 'F') digit = static_cast<uint32_t>(c - 'A' + 10);
+        else return false;
+        result = (result << 4) | digit;
+    }
+    value = result;
+    return true;
+}
+
 bool parseFloat(const Token& token, float& value) {
     if (token.length == 0 || token.length >= 24) return false;
     char buffer[24] = {};
@@ -133,6 +150,16 @@ Command parseCommand(const char* line, std::size_t length) {
 
     if (count == 2 && equalsIgnoreCase(tokens[0], "HELLO")) {
         if (parseU8(tokens[1], 1, 255, command.protocol_version)) command.kind = CommandKind::Hello;
+        return command;
+    }
+    // DMドライバのレジスタ。デバッグアシスタントなしでID・モードを設定するための口。
+    if (count >= 2 && count <= 3 && equalsIgnoreCase(tokens[0], "DMREG")) {
+        if (!parseU8(tokens[1], 0, 255, command.param_id)) return command;
+        if (count == 2) {
+            command.kind = CommandKind::DmRegRead;
+            return command;
+        }
+        if (parseHex32(tokens[2], command.raw_value)) command.kind = CommandKind::DmRegWrite;
         return command;
     }
     if (count >= 2 && count <= 3 && equalsIgnoreCase(tokens[0], "PARAM")) {

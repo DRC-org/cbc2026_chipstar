@@ -20,6 +20,8 @@ enum class CommandKind : uint8_t {
     CanTx,
     ParamSet,
     ParamGet,
+    DmRegRead,
+    DmRegWrite,
 };
 
 struct Command {
@@ -27,6 +29,7 @@ struct Command {
     uint8_t mask = 0;
     uint8_t slot = 0;
     uint8_t param_id = 0;
+    uint32_t raw_value = 0;
     uint8_t protocol_version = 0;
     bool value = false;
     float target = 0.0f;

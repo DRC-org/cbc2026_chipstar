@@ -27,6 +27,29 @@ ERR code=BAD_COMMAND
 ERR code=OUT_OF_RANGE
 ```
 
+### DMドライバのレジスタ
+
+DM-S3519のドライバは、CANのID `0x7FF` へ送る設定フレームでレジスタを読み書きできる。
+cctlはこれを `DMREG` として中継する。デバッグアシスタント（PC＋シリアル）がなくても
+CAN_ID、Master ID、制御モード、PMAX/VMAX/TMAXを設定できる。
+
+```text
+DMREG 10                  # レジスタ0x0A(CTRL_MODE)を読む
+DMREG 10 00000002         # 位置速度モード(2)を書く
+DMREG 21 41480000         # PMAX へ 12.5f を書く
+DMREG rid=10 raw=00000002 f=2.000
+```
+
+値は32bitを8桁の16進で指定する。floatか整数かはレジスタごとに決まっており、
+FWは解釈せずそのまま渡す。応答は生値とfloat解釈の両方を返すので、
+どちらのレジスタでも読み取れる。
+
+`DMREG` はSAFE中だけ受理する。走行中にIDやモードを変えると、指令の宛先と
+フィードバックの解釈が食い違うためである。応答は非同期に届く。
+
+主なレジスタ: `MST_ID`(0x07) / `ESC_ID`(0x08) / `TIMEOUT`(0x09) / `CTRL_MODE`(0x0A) /
+`PMAX`(0x15) / `VMAX`(0x16) / `TMAX`(0x17) / `ACC`(0x04) / `DEC`(0x05) / `BAUD`(0x23)。
+
 ## 基板アドレス
 
 svmd・DCMD・serial_svmdは、基板上のDIP（下位2bit）で0..3のアドレスを選ぶ。
@@ -76,6 +99,7 @@ DCMDの指令と応答の形式は[board_dcmd.md](board_dcmd.md)に定める。
 | `CAN 2 <id> <data>` | FDCAN2へ標準IDのClassic CANフレームを送信 |
 | `PARAM <id> <value>` | 実行時パラメータを設定 |
 | `PARAM <id>` | 実行時パラメータを読み出す |
+| `DMREG <rid> [値]` | DMドライバのレジスタを読み書き |
 
 `mask` のbit 0..2はslot 0..2に対応する。`TARGET` はRUN中だけでなくSAFE中にも
 受理できるが、出力はRUNへ遷移するまで有効にならない。

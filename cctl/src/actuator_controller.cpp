@@ -265,3 +265,21 @@ void ActuatorController::applyParameter(uint8_t id) {
       break;
   }
 }
+
+bool ActuatorController::readDmRegister(uint8_t rid) {
+  if (mode_ != domain::RunMode::Safe) return false;
+  return slot2_.requestRegister(rid);
+}
+
+bool ActuatorController::writeDmRegister(uint8_t rid, uint32_t raw) {
+  if (mode_ != domain::RunMode::Safe) return false;
+  return slot2_.writeRegister(rid, raw);
+}
+
+bool ActuatorController::takeDmRegisterReply(uint8_t& rid, uint32_t& raw) {
+  if (!slot2_.hasRegisterReply()) return false;
+  rid = slot2_.lastRegisterId();
+  raw = slot2_.lastRegisterRaw();
+  slot2_.clearRegisterReply();
+  return true;
+}

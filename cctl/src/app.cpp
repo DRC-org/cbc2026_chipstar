@@ -135,6 +135,14 @@ void applyCommand(const domain::Command& command) {
             if (command.param_id >= domain::PARAM_COUNT) sendText("ERR code=OUT_OF_RANGE");
             else sendParameter(command.param_id);
             break;
+        case domain::CommandKind::DmRegRead:
+            if (!controller.readDmRegister(command.param_id)) sendText("ERR code=BUSY");
+            break;
+        case domain::CommandKind::DmRegWrite:
+            if (!controller.writeDmRegister(command.param_id, command.raw_value)) {
+                sendText("ERR code=BUSY");
+            }
+            break;
         case domain::CommandKind::None:
             break;
     }
@@ -220,6 +228,20 @@ extern "C" void loop(void) {
         ui.showStatus(controller.target(0), controller.target(1), controller.target(2),
                       static_cast<uint8_t>(controller.errorBits(0) | controller.errorBits(1) |
                                            controller.errorBits(2)));
+    }
+
+    // DMのレジスタ応答は非同期に届く。届いた時点で1行返す。
+    uint8_t reg_id = 0;
+    uint32_t reg_raw = 0;
+    if (controller.takeDmRegisterReply(reg_id, reg_raw)) {
+        float as_float = 0.0f;
+        std::memcpy(&as_float, &reg_raw, sizeof(as_float));
+        char value[32];
+        domain::formatFixed3(as_float, value, sizeof(value));
+        char text[80];
+        std::snprintf(text, sizeof(text), "DMREG rid=%u raw=%08lX f=%s",
+                      static_cast<unsigned>(reg_id), static_cast<unsigned long>(reg_raw), value);
+        sendText(text);
     }
 
     static uint32_t last_telemetry_ms = 0;

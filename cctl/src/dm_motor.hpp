@@ -68,6 +68,7 @@ class DmMotor {
 
   // 直近に届いたレジスタ応答。PMAX などを実機から読むのに使う。
   bool hasRegisterReply() const { return has_register_reply_; }
+  void clearRegisterReply() { has_register_reply_ = false; }
   uint8_t lastRegisterId() const { return last_register_id_; }
   uint32_t lastRegisterRaw() const { return last_register_raw_; }
   float lastRegisterFloat() const;
