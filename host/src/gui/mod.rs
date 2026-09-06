@@ -23,6 +23,7 @@ enum Screen {
     Operate,
     Tune,
     Diagnose,
+    Documents,
 }
 
 pub struct BridgeApp {
@@ -36,6 +37,13 @@ pub struct BridgeApp {
     help_open: bool,
     stop_requested: bool,
     log_filter: String,
+    documents: documents::Documents,
+    profile_file: String,
+    profile_file_base: String,
+    requested_jog: Option<(String, f32)>,
+    active_jog: Option<String>,
+    vim: shortcuts::Vim,
+    navigation: Option<Action>,
     connection: crate::application::app_state::Connection,
 }
 impl BridgeApp {
@@ -47,6 +55,7 @@ impl BridgeApp {
             connection: crate::application::app_state::Connection {
                 serial_device: config.serial_device,
                 baud_rate: config.baud_rate,
+                simulate: Some(config.simulate),
             },
             shared,
             screen: Screen::Operate,
@@ -58,6 +67,13 @@ impl BridgeApp {
             help_open: false,
             stop_requested: false,
             log_filter: String::new(),
+            documents: documents::Documents::new(),
+            profile_file: config.profile_path.display().to_string(),
+            profile_file_base: config.profile_path.display().to_string(),
+            requested_jog: None,
+            active_jog: None,
+            vim: shortcuts::Vim::default(),
+            navigation: None,
         }
     }
     fn request(&mut self, request: Request) {
@@ -104,6 +120,20 @@ impl BridgeApp {
             }
             Action::Run if !self.stop_requested && Self::can_run(&status) => self.operation("run"),
             Action::Screen(screen) => self.screen = screen,
+            Action::Tab(direction) => {
+                let screens = [
+                    Screen::Operate,
+                    Screen::Tune,
+                    Screen::Diagnose,
+                    Screen::Documents,
+                ];
+                let index = screens
+                    .iter()
+                    .position(|screen| *screen == self.screen)
+                    .unwrap_or(0);
+                self.screen = screens[(index as i32 + direction).rem_euclid(4) as usize];
+            }
+            Action::Scroll(_) | Action::Edge(_) => self.navigation = Some(action),
             Action::Help => self.help_open = !self.help_open,
             Action::Apply if self.screen == Screen::Tune && self.can_apply(&status) => {
                 match MachineProfile::parse(&self.source) {
@@ -123,7 +153,10 @@ impl BridgeApp {
                 }
             }
             Action::Save if self.screen == Screen::Tune && self.can_save(&status) => {
-                self.operation("save")
+                self.request(Request {
+                    text: Some(self.profile_file.clone()),
+                    ..Request::new("save")
+                });
             }
             _ => {}
         }
@@ -173,11 +206,12 @@ impl BridgeApp {
                 (Screen::Operate, "F1   操縦"),
                 (Screen::Tune, "F2   調整"),
                 (Screen::Diagnose, "F3   診断"),
+                (Screen::Documents, "F4   文書"),
             ] {
                 let selected = self.screen == screen;
                 if ui
                     .add_sized(
-                        [110.0, 30.0],
+                        [110.0, 42.0],
                         egui::Button::new(RichText::new(label).color(if selected {
                             ACCENT
                         } else {
@@ -187,7 +221,7 @@ impl BridgeApp {
                         .stroke(if selected {
                             egui::Stroke::new(1.0, BORDER)
                         } else {
-                            egui::Stroke::NONE
+                            egui::Stroke::new(1.0, BG)
                         }),
                     )
                     .clicked()
@@ -196,8 +230,21 @@ impl BridgeApp {
                 }
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui.button("キー操作  F12").clicked() {
+                if ui
+                    .add_sized([140.0, 42.0], egui::Button::new("キー操作  F12"))
+                    .clicked()
+                {
                     self.dispatch(Action::Help);
+                }
+                if status.ai_active
+                    && ui
+                        .add_sized([170.0, 42.0], egui::Button::new("通常操縦へ戻す"))
+                        .on_hover_text(
+                            "停止・保持してAIの操作権を解除します。運転は自動再開しません。",
+                        )
+                        .clicked()
+                {
+                    self.operation("takeover");
                 }
             });
         });
@@ -217,7 +264,11 @@ impl BridgeApp {
                         for (key, action) in [
                             ("Esc / Space", "停止・保持"),
                             ("Ctrl+Enter", "運転再開"),
-                            ("F1 / F2 / F3", "操縦 / 調整 / 診断"),
+                            ("F1 / F2 / F3 / F4", "操縦 / 調整 / 診断 / 文書"),
+                            ("h / l", "前 / 次のタブ"),
+                            ("j / k", "下 / 上へスクロール"),
+                            ("Ctrl+d / Ctrl+u", "下 / 上へ半ページ移動"),
+                            ("gg / Shift+g", "ページの先頭 / 末尾"),
                             ("Ctrl+Shift+Enter", "一時適用（調整画面）"),
                             ("Ctrl+S", "適用中の設定を保存（調整画面）"),
                             ("F12", "この案内を開閉"),
@@ -240,11 +291,24 @@ impl eframe::App for BridgeApp {
     fn ui(&mut self, ui: &mut egui::Ui, _frame: &mut eframe::Frame) {
         ui.ctx().request_repaint_after(Duration::from_millis(50));
         self.stop_requested = false;
+        self.requested_jog = None;
+        let current_path = self.shared.config().profile_path.display().to_string();
+        if self.profile_file == self.profile_file_base {
+            self.profile_file = current_path.clone();
+        }
+        self.profile_file_base = current_path;
         let editing = ui.ctx().text_edit_focused();
         let action = ui.input(|input| {
             if input.focused {
-                shortcuts::resolve(&input.events, editing)
+                if let Some(action) = shortcuts::resolve(&input.events, editing) {
+                    self.vim.clear();
+                    Some(action)
+                } else {
+                    self.vim
+                        .resolve(&input.events, editing || self.help_open, input.time)
+                }
             } else {
+                self.vim.clear();
                 None
             }
         });
@@ -275,12 +339,35 @@ impl eframe::App for BridgeApp {
                     .id_salt(format!("page-{:?}", self.screen))
                     .max_height((ui.available_height() - 34.0).max(120.0))
                     .auto_shrink([false, false])
-                    .show(ui, |ui| match self.screen {
-                        Screen::Operate => self.operate(ui),
-                        Screen::Tune => {
-                            ui.add_enabled_ui(!status.ai_active, |ui| self.tune(ui));
+                    .show(ui, |ui| {
+                        let top = ui.cursor().min;
+                        if let Some(Action::Scroll(amount)) = self.navigation {
+                            let amount = if amount.is_infinite() {
+                                amount.signum() * ui.clip_rect().height() * 0.5
+                            } else {
+                                amount
+                            };
+                            ui.scroll_with_delta(egui::vec2(0.0, -amount));
                         }
-                        Screen::Diagnose => self.diagnose(ui),
+                        match self.screen {
+                            Screen::Operate => self.operate(ui),
+                            Screen::Tune => {
+                                ui.add_enabled_ui(!status.ai_active, |ui| self.tune(ui));
+                            }
+                            Screen::Diagnose => self.diagnose(ui),
+                            Screen::Documents => self.documents.show(ui),
+                        }
+                        if let Some(Action::Edge(start)) = self.navigation.take() {
+                            let point = if start { top } else { ui.min_rect().max };
+                            ui.scroll_to_rect(
+                                egui::Rect::from_min_size(point, egui::Vec2::ZERO),
+                                Some(if start {
+                                    egui::Align::TOP
+                                } else {
+                                    egui::Align::BOTTOM
+                                }),
+                            );
+                        }
                     });
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
@@ -327,6 +414,7 @@ impl eframe::App for BridgeApp {
                     }
                 });
             });
+        self.update_screen_input(ui.ctx());
         self.help(ui.ctx());
     }
     fn on_exit(&mut self) {
@@ -408,3 +496,9 @@ mod diagnose;
 mod operate;
 mod shortcuts;
 mod tune;
+
+mod manual;
+
+mod documents;
+
+mod parameter_help;

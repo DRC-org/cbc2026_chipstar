@@ -18,6 +18,16 @@ impl Runtime {
                 ..Reply::data(String::new())
             });
         }
+        if req.action == "takeover" {
+            if !manual {
+                bail!("通常操縦への切替はGUIから操作してください");
+            }
+            self.stop(false)?;
+            self.authority.release();
+            return Ok(Reply::data(
+                "通常操縦へ戻しました。運転再開を待っています".into(),
+            ));
+        }
         self.authority.authorize(
             req.token.as_deref(),
             manual,
@@ -26,6 +36,16 @@ impl Runtime {
         )?;
         match req.action.as_str() {
             "heartbeat" => {}
+            "manual_control" => {
+                if self.drive.running() || self.drive.awaiting().is_some() {
+                    bail!("停止してから操作方法を変更してください");
+                }
+                let screen_control = req.flag.context("操作方法が必要です")?;
+                self.stop(false)?;
+                self.screen_control = screen_control;
+                self.manual_input = ControllerState::default();
+                self.screen_input_times = [None; 6];
+            }
             "release" => {
                 self.stop(false)?;
                 self.authority.release();
@@ -77,10 +97,14 @@ impl Runtime {
                     .context("軸名が不正です")?;
                 let index = axis.input_axis.context("入力が割り当てられていません")?;
                 if manual {
-                    if !self.cfg.simulate {
-                        bail!("画面からの模擬入力は模擬接続専用です");
+                    if !self.screen_control {
+                        bail!("画面操作を選択してください");
+                    }
+                    if value != 0.0 && !self.drive.running() {
+                        bail!("運転再開してから操作してください");
                     }
                     self.manual_input.axes[index] = value;
+                    self.screen_input_times[index] = Some(Instant::now());
                 } else {
                     self.authority.set_input(index, value, Instant::now());
                 }
@@ -97,6 +121,14 @@ impl Runtime {
                 self.stop(true)?;
                 self.cfg.serial_device = connection.serial_device;
                 self.cfg.baud_rate = connection.baud_rate;
+                if let Some(simulate) = connection.simulate {
+                    self.cfg.simulate = simulate;
+                }
+                self.screen_control = self.cfg.simulate;
+                self.manual_input = ControllerState::default();
+                self.screen_input_times = [None; 6];
+                self.shared
+                    .update_status(|status| status.peripherals.clear());
                 self.shared.set_config(self.cfg.clone());
                 self.link = Link::new(
                     &self.cfg.serial_device,
@@ -154,8 +186,14 @@ impl Runtime {
                 if self.drive.running() || self.drive.awaiting().is_some() {
                     bail!("停止してから保存してください");
                 }
-                let path = &self.cfg.profile_path;
-                crate::transport::profile_store::save(path, &self.cfg.machine)?;
+                let path = req
+                    .text
+                    .as_ref()
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|| self.cfg.profile_path.clone());
+                crate::transport::profile_store::save(&path, &self.cfg.machine)?;
+                self.cfg.profile_path = path.clone();
+                self.shared.set_config(self.cfg.clone());
                 self.shared.update_status(|s| s.saved = true);
                 return Ok(Reply::data(format!("保存しました: {}", path.display())));
             }

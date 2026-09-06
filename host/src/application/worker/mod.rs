@@ -52,6 +52,8 @@ struct Runtime {
     drive: DriveState,
     authority: Authority,
     manual_input: ControllerState,
+    screen_control: bool,
+    screen_input_times: [Option<Instant>; 6],
     gamepad_name: String,
     adjustment: bool,
     last_hello: Instant,
@@ -65,6 +67,8 @@ impl Runtime {
             link: Link::new(&cfg.serial_device, cfg.baud_rate, cfg.simulate),
             machine: MachineController::new(cfg.machine.clone()),
             settings: Settings::new(&cfg.machine),
+            screen_control: cfg.simulate,
+            screen_input_times: [None; 6],
             cfg,
             shared,
             device: None,
@@ -94,6 +98,10 @@ impl Runtime {
     fn clear_drive(&mut self) {
         self.drive = DriveState::Stopped;
         self.authority.clear_input();
+        if self.screen_control {
+            self.manual_input = ControllerState::default();
+        }
+        self.screen_input_times = [None; 6];
     }
     fn stop(&mut self, cut: bool) -> Result<()> {
         self.clear_drive();
@@ -189,7 +197,11 @@ impl Runtime {
         if input.axes.iter().any(|v| !v.is_finite() || v.abs() >= 0.1) {
             bail!("スティックを中立に戻してください");
         }
-        if !self.authority.active() && self.gamepad_name.is_empty() && !self.cfg.simulate {
+        if !self.authority.active()
+            && self.gamepad_name.is_empty()
+            && !self.cfg.simulate
+            && !self.screen_control
+        {
             bail!("DualSenseを接続してください");
         }
         let mask = self
@@ -311,6 +323,14 @@ impl Runtime {
             self.reason = "AI操作権の期限切れ。通常操縦は再開待ち".into();
         }
         self.authority.expire_inputs(now);
+        if self.screen_control {
+            for (index, stamp) in self.screen_input_times.iter_mut().enumerate() {
+                if stamp.is_some_and(|time| now.duration_since(time) > Duration::from_millis(150)) {
+                    self.manual_input.axes[index] = 0.0;
+                    *stamp = None;
+                }
+            }
+        }
         if !self.fresh() && self.rx.is_some() {
             self.fault("機体応答の期限切れ。原点を確認して再開してください".into());
             self.rx = None;
@@ -364,7 +384,9 @@ impl Runtime {
                 self.fault(error.to_string());
             } else {
                 let input = self.authority.input().unwrap_or(&self.manual_input);
-                let slow = self.adjustment || input.buttons[9] != 0;
+                let slow = self.adjustment
+                    || (!self.authority.active() && self.screen_control)
+                    || input.buttons[9] != 0;
                 let lines = self
                     .machine
                     .jog_lines(input, self.telemetry.as_ref().unwrap(), slow);
@@ -390,12 +412,16 @@ impl Runtime {
     fn publish(&self) {
         let origins = self.machine.origin_states(self.telemetry.as_ref());
         self.shared.update_status(|s| {
+            s.simulated = self.cfg.simulate;
+            s.screen_control = self.screen_control;
             s.connected = self.fresh();
             s.configured = self.setup && self.settings.ready() && !self.setup_error;
             s.ai_active = self.authority.active();
             s.running = self.drive.running();
             s.origin_adjustment = self.adjustment;
-            s.slow = self.adjustment || self.manual_input.buttons[9] != 0;
+            s.slow = self.adjustment
+                || (!self.authority.active() && self.screen_control)
+                || self.authority.input().unwrap_or(&self.manual_input).buttons[9] != 0;
             s.axes = self.authority.input().unwrap_or(&self.manual_input).axes;
             s.origins = origins;
             s.gamepad = self.gamepad_name.clone();
@@ -461,12 +487,16 @@ pub fn run(shared: Arc<Shared>) {
                 let pad = gilrs.gamepad(id);
                 if pad.is_connected() {
                     runtime.gamepad_name = pad.name().into();
-                    runtime.manual_input = controller::read(&pad);
-                    let buttons = runtime.manual_input.buttons;
+                    let input = controller::read(&pad);
+                    let buttons = input.buttons;
+                    if !runtime.screen_control {
+                        runtime.manual_input = input;
+                    }
                     if buttons[5] != 0 && previous_buttons[5] == 0 {
                         let _ = runtime.stop(false);
                     }
                     if !runtime.authority.active()
+                        && !runtime.screen_control
                         && buttons[6] != 0
                         && previous_buttons[6] == 0
                         && let Err(error) = runtime.start()
@@ -475,11 +505,16 @@ pub fn run(shared: Arc<Shared>) {
                     }
                     previous_buttons = buttons;
                 } else {
-                    if !runtime.authority.active() && runtime.drive.running() {
+                    if !runtime.authority.active()
+                        && !runtime.screen_control
+                        && runtime.drive.running()
+                    {
                         runtime.fault("DualSenseが切断されました".into());
                     }
                     runtime.gamepad_name.clear();
-                    runtime.manual_input = ControllerState::default();
+                    if !runtime.screen_control {
+                        runtime.manual_input = ControllerState::default();
+                    }
                     selected = None;
                 }
             }

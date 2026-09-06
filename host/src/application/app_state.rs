@@ -20,6 +20,8 @@ use std::{
 pub struct Connection {
     pub serial_device: String,
     pub baud_rate: u32,
+    #[serde(default)]
+    pub simulate: Option<bool>,
 }
 
 #[derive(Clone)]
@@ -35,6 +37,7 @@ pub struct BridgeConfig {
 #[derive(Clone, Default, Serialize)]
 pub struct Status {
     pub simulated: bool,
+    pub screen_control: bool,
     pub connected: bool,
     pub configured: bool,
     pub ai_active: bool,

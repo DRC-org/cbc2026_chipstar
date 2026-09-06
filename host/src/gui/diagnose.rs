@@ -11,6 +11,12 @@ impl BridgeApp {
                 ui.label(RichText::new("接続先").strong());
                 ui.add_enabled_ui(can_change, |ui| {
                     ui.horizontal(|ui| {
+                        ui.label("接続方式");
+                        ui.selectable_value(&mut self.connection.simulate, Some(false), "実機");
+                        ui.selectable_value(&mut self.connection.simulate, Some(true), "模擬接続");
+                    });
+
+                    ui.horizontal(|ui| {
                         ui.label("ポート");
                         ui.add(
                             egui::TextEdit::singleline(&mut self.connection.serial_device)
@@ -73,54 +79,58 @@ impl BridgeApp {
         ui.add_space(12.0);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.collapsing("保守・周辺基板・配線", |ui| {
-                for (board, state) in &status.peripherals {
-                    ui.label(format!("{board} · 最終受信値：{state}"));
-                }
-                ui.collapsing("モータ再初期化", |ui| {
-                    ui.label(
+            egui::CollapsingHeader::new("保守・周辺基板")
+                .default_open(true)
+                .show(ui, |ui| {
+                    for (board, state) in &status.peripherals {
+                        ui.label(format!("{board} · 最終受信値：{state}"));
+                    }
+                    egui::CollapsingHeader::new("モータ再初期化")
+                        .default_open(true)
+                        .show(ui, |ui| {
+                            ui.label(
                     RichText::new(
                         "再通電後に制御モードを設定し直します。完了後は原点を再確認してください。",
                     )
                     .color(MUTED),
                 );
-                    ui.add_enabled_ui(can_change, |ui| {
-                        ui.horizontal_wrapped(|ui| {
-                            for axis in self.shared.config().machine.axes {
-                                if ui.button(format!("{} を再初期化", axis.name)).clicked() {
-                                    self.request(Request {
-                                        axis: Some(axis.name),
-                                        ..Request::new("reinit")
-                                    });
-                                }
-                            }
-                        });
-                    });
-                });
-                if status.simulated {
-                    ui.collapsing("模擬接続のテスト", |ui| {
-                        ui.add_enabled_ui(!status.ai_active, |ui| {
-                            ui.horizontal_wrapped(|ui| {
-                                for (label, fault) in [
-                                    ("通信断", "disconnect"),
-                                    ("接続復帰", "reconnect"),
-                                    ("次の指令を拒否", "reject"),
-                                ] {
-                                    if ui.button(label).clicked() {
-                                        self.request(Request {
-                                            text: Some(fault.into()),
-                                            ..Request::new("fault")
-                                        });
+                            ui.add_enabled_ui(can_change, |ui| {
+                                ui.horizontal_wrapped(|ui| {
+                                    for axis in self.shared.config().machine.axes {
+                                        if ui.button(format!("{} を再初期化", axis.name)).clicked()
+                                        {
+                                            self.request(Request {
+                                                axis: Some(axis.name),
+                                                ..Request::new("reinit")
+                                            });
+                                        }
                                     }
-                                }
+                                });
                             });
                         });
-                    });
-                }
-                ui.collapsing("配線ガイド", |ui| {
-                    ui.label(include_str!("../../../docs/wiring.md"));
+                    if status.simulated {
+                        egui::CollapsingHeader::new("模擬接続のテスト")
+                            .default_open(true)
+                            .show(ui, |ui| {
+                                ui.add_enabled_ui(!status.ai_active, |ui| {
+                                    ui.horizontal_wrapped(|ui| {
+                                        for (label, fault) in [
+                                            ("通信断", "disconnect"),
+                                            ("接続復帰", "reconnect"),
+                                            ("次の指令を拒否", "reject"),
+                                        ] {
+                                            if ui.button(label).clicked() {
+                                                self.request(Request {
+                                                    text: Some(fault.into()),
+                                                    ..Request::new("fault")
+                                                });
+                                            }
+                                        }
+                                    });
+                                });
+                            });
+                    }
                 });
-            });
         });
         ui.add_space(12.0);
         panel().show(ui, |ui| {

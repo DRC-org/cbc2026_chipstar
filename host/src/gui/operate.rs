@@ -140,6 +140,8 @@ impl BridgeApp {
             }
         });
         ui.add_space(12.0);
+        self.manual_controls(ui, &status);
+        ui.add_space(12.0);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
@@ -167,32 +169,5 @@ impl BridgeApp {
                 }
             });
         });
-        if status.simulated {
-            ui.add_space(12.0);
-            ui.add_enabled_ui(!status.ai_active, |ui| {
-                ui.collapsing("模擬スティック", |ui| {
-                    for axis in config.machine.axes {
-                        let mut value = axis.input_axis.map(|n| status.axes[n]).unwrap_or(0.0);
-                        ui.horizontal(|ui| {
-                            ui.label(&axis.name);
-                            if ui.add(egui::Slider::new(&mut value, -1.0..=1.0)).changed() {
-                                self.request(Request {
-                                    axis: Some(axis.name.clone()),
-                                    value: Some(value),
-                                    ..Request::new("input")
-                                });
-                            }
-                            if ui.button("中立").clicked() {
-                                self.request(Request {
-                                    axis: Some(axis.name),
-                                    value: Some(0.0),
-                                    ..Request::new("input")
-                                });
-                            }
-                        });
-                    }
-                });
-            });
-        }
     }
 }
