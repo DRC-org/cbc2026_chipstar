@@ -3,6 +3,7 @@
 #include "domain/controller.hpp"
 #include "domain/encoder.hpp"
 #include "domain/status_led.hpp"
+#include <cstring>
 
 extern "C" {
 extern CAN_HandleTypeDef hcan;
@@ -129,6 +130,14 @@ extern "C" void loop(void) {
     if (accepted && cmd.op == dcmd::Op::ParamSet &&
         cmd.param_id == static_cast<uint8_t>(dcmd::ParamId::PwmFrequencyHz)) {
       applyPwmPeriod();
+    }
+    if (accepted && cmd.op == dcmd::Op::ParamSet) {
+      const float value = controller.parameters().get(static_cast<dcmd::ParamId>(cmd.param_id));
+      uint32_t bits; std::memcpy(&bits, &value, sizeof(bits));
+      uint8_t report[8] = {1, cmd.param_id, 0, 0,
+          static_cast<uint8_t>(bits >> 24), static_cast<uint8_t>(bits >> 16),
+          static_cast<uint8_t>(bits >> 8), static_cast<uint8_t>(bits)};
+      send(dcmd::canId(0x314, address), report);
     }
     if (accepted && cmd.op == dcmd::Op::InputRead) {
       const domain::DigitalInputs& in = controller.inputs();
