@@ -113,6 +113,9 @@ fn yes() -> bool {
 
 /// cctlの実行時パラメータ。名前とidの対応は device_protocol.md の表に従う。
 /// FWを書き直さずに実機調整を終えるため、調整対象はすべてここへ書く。
+/// パラメータ名から値への対応。名前は device_protocol.md の表に従う。
+pub type ParameterMap = std::collections::BTreeMap<String, f32>;
+
 pub const PARAMETER_NAMES: [&str; 31] = [
     "m3508_pos_kp",
     "m3508_pos_ki",
@@ -159,7 +162,14 @@ pub struct MachineProfile {
     pub serial_svmd: Option<SerialSvmdProfile>,
     /// cctlへ起動時に送る実行時パラメータ。省略した項目はFWの既定値が残る。
     #[serde(default)]
-    pub parameters: std::collections::BTreeMap<String, f32>,
+    pub parameters: ParameterMap,
+    /// CAN先の基板へ送る実行時パラメータ。
+    #[serde(default)]
+    pub svmd_parameters: ParameterMap,
+    #[serde(default)]
+    pub dcmd_parameters: ParameterMap,
+    #[serde(default)]
+    pub serial_svmd_parameters: ParameterMap,
 }
 
 impl MachineProfile {
@@ -200,12 +210,23 @@ impl MachineProfile {
             bail!("軸またはサーボを1つ以上指定してください");
         }
 
-        for (name, value) in &self.parameters {
-            if !PARAMETER_NAMES.contains(&name.as_str()) {
-                bail!("未対応のパラメータ名です: {name}");
-            }
-            if !value.is_finite() {
-                bail!("パラメータに有限でない値があります: {name}");
+        let tables: [(&ParameterMap, &[&str]); 4] = [
+            (&self.parameters, &PARAMETER_NAMES),
+            (&self.svmd_parameters, &crate::svmd::PARAMETER_NAMES),
+            (&self.dcmd_parameters, &crate::dcmd::PARAMETER_NAMES),
+            (
+                &self.serial_svmd_parameters,
+                &crate::serial_svmd::PARAMETER_NAMES,
+            ),
+        ];
+        for (values, names) in tables {
+            for (name, value) in values {
+                if !names.contains(&name.as_str()) {
+                    bail!("未対応のパラメータ名です: {name}");
+                }
+                if !value.is_finite() {
+                    bail!("パラメータに有限でない値があります: {name}");
+                }
             }
         }
 
@@ -322,15 +343,43 @@ impl MachineProfile {
         Ok(())
     }
 
-    /// `PARAM <id> <value>` の行。能力確認が済んだ直後に一度だけ送る。
+    /// 実行時パラメータの行。能力確認が済んだ直後に一度だけ送る。
+    /// cctlはASCII、CAN先の基板はゲートウェイ行になる。
     pub fn parameter_lines(&self) -> Vec<String> {
-        self.parameters
+        let mut lines: Vec<String> = self
+            .parameters
             .iter()
             .filter_map(|(name, value)| {
                 let id = PARAMETER_NAMES.iter().position(|entry| entry == name)?;
                 Some(format!("PARAM {id} {value:.5}"))
             })
-            .collect()
+            .collect();
+        type BoardTable<'a> = (&'a ParameterMap, &'a [&'a str], fn(u8, f32) -> String);
+        let boards: [BoardTable; 3] = [
+            (
+                &self.svmd_parameters,
+                &crate::svmd::PARAMETER_NAMES,
+                crate::svmd::parameter_line,
+            ),
+            (
+                &self.dcmd_parameters,
+                &crate::dcmd::PARAMETER_NAMES,
+                crate::dcmd::parameter_line,
+            ),
+            (
+                &self.serial_svmd_parameters,
+                &crate::serial_svmd::PARAMETER_NAMES,
+                crate::serial_svmd::parameter_line,
+            ),
+        ];
+        for (values, names, encode) in boards {
+            for (name, value) in values {
+                if let Some(id) = names.iter().position(|entry| entry == name) {
+                    lines.push(encode(id as u8, *value));
+                }
+            }
+        }
+        lines
     }
 
     pub fn requires_can_bus_2(&self) -> bool {
@@ -587,6 +636,19 @@ mod tests {
         let lines = profile.parameter_lines();
         assert!(lines.contains(&"PARAM 4 0.90000".to_owned()));
         assert!(lines.contains(&"PARAM 30 300.00000".to_owned()));
+    }
+
+    #[test]
+    fn sends_can_board_parameters_through_the_gateway() {
+        let source = format!(
+            "{EMBEDDED_PROFILE}\n[dcmd_parameters]\nmax_duty = 1000.0\n\n[serial_svmd_parameters]\nservo_baud = 1000000.0\n"
+        );
+        let profile = MachineProfile::parse(&source).unwrap();
+        let lines = profile.parameter_lines();
+        // DCMD id 0 (max_duty) = 1000.0f = 0x447A0000
+        assert!(lines.contains(&"CAN 2 784 01070000447A0000".to_owned()));
+        // serial_svmd id 0 (servo_baud) = 1000000.0f = 0x49742400
+        assert!(lines.contains(&"CAN 2 800 0109000049742400".to_owned()));
     }
 
     #[test]

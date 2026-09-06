@@ -61,6 +61,22 @@ impl Command {
     }
 }
 
+/// serial_svmdの実行時パラメータ。
+pub const PARAMETER_NAMES: [&str; 4] = [
+    "servo_baud",
+    "servo_timeout_ms",
+    "wait_for_write_status",
+    "watchdog_ms",
+];
+
+pub fn parameter_line(id: u8, value: f32) -> String {
+    let bytes = value.to_be_bytes();
+    format!(
+        "CAN 2 800 0109{id:02X}00{:02X}{:02X}{:02X}{:02X}",
+        bytes[0], bytes[1], bytes[2], bytes[3]
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

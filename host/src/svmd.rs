@@ -35,6 +35,17 @@ impl Command {
     }
 }
 
+/// svmdの実行時パラメータ。
+pub const PARAMETER_NAMES: [&str; 3] = ["min_pulse_us", "max_pulse_us", "watchdog_ms"];
+
+pub fn parameter_line(id: u8, value: f32) -> String {
+    let bytes = value.to_be_bytes();
+    format!(
+        "CAN 2 768 0104{id:02X}00{:02X}{:02X}{:02X}{:02X}",
+        bytes[0], bytes[1], bytes[2], bytes[3]
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -129,6 +129,24 @@ pub fn parse_status(line: &str) -> Option<Status> {
     })
 }
 
+/// DCMDの実行時パラメータ。名前とidの対応は device_protocol.md の表に従う。
+pub const PARAMETER_NAMES: [&str; 5] = [
+    "max_duty",
+    "ramp_interval_ms",
+    "ramp_step",
+    "reverse_brake_ms",
+    "watchdog_ms",
+];
+
+/// `PARAM SET` のCANフレーム行。byte 4..7 に float32 を big endian で載せる。
+pub fn parameter_line(id: u8, value: f32) -> String {
+    let bytes = value.to_be_bytes();
+    format!(
+        "CAN 2 784 0107{id:02X}00{:02X}{:02X}{:02X}{:02X}",
+        bytes[0], bytes[1], bytes[2], bytes[3]
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
