@@ -17,10 +17,13 @@ class CanBus {
   // バスオフか。ACKの返らない送信が続くと入り、放置すると送受信とも止まったままになる。
   bool busOff() const { return (hcan_->Instance->PSR & FDCAN_PSR_BO) != 0; }
 
-  // バスオフから復帰させる。INITを落とすと復帰シーケンスが始まる。
-  // 競技中にバスが乱れただけで死んだままになるのを避けるため、周期的に呼ぶ。
+  // バスオフから復帰させる。競技中にバスが乱れただけで死んだままになるのを避ける。
+  //
+  // バスオフに入ってもHALのStateはBUSYのままなので、HAL_FDCAN_Start()は
+  // HAL_ERRORを返して何もしない。復帰にはCCCR.INITを直接落とす必要がある。
+  // INITを落とすと、11連続レセシブビットを129回観測する復帰シーケンスが始まる。
   void recover() {
-    if (busOff()) HAL_FDCAN_Start(hcan_);
+    if (busOff()) CLEAR_BIT(hcan_->Instance->CCCR, FDCAN_CCCR_INIT);
   }
 
   // 標準ID(11bit) データフレーム送信（最大8byte）。
