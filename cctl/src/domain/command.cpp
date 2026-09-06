@@ -173,4 +173,15 @@ Command parseCommand(const char* line, std::size_t length) {
     return command;
 }
 
+bool extendsDeadline(CommandKind kind) {
+    switch (kind) {
+        case CommandKind::Run:
+        case CommandKind::Target:
+        case CommandKind::Heartbeat:
+            return true;
+        default:
+            return false;
+    }
+}
+
 }  // namespace domain

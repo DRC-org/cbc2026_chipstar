@@ -174,6 +174,7 @@ void sendTelemetry() {
     telemetry.mode = controller.mode();
     telemetry.error_bits = controller.errorBits();
     telemetry.contacts = inputs.stable();
+    telemetry.stale_slots = controller.staleSlots();
 
     const std::size_t length = domain::formatTelemetry(
         telemetry, reinterpret_cast<char*>(line), domain::TELEMETRY_LINE_CAPACITY);
@@ -228,7 +229,8 @@ extern "C" void cctl_usbcdc_receive(const uint8_t* data, uint32_t length) {
     for (uint32_t i = 0; i < length; ++i) {
         if (!usb_line.push(static_cast<char>(data[i]))) continue;
         const domain::Command command = domain::parseCommand(usb_line.line(), usb_line.length());
-        if (command.kind != domain::CommandKind::None && commands.push(command)) {
+        if (command.kind != domain::CommandKind::None && commands.push(command) &&
+            domain::extendsDeadline(command.kind)) {
             last_contact_ms = HAL_GetTick();
         }
     }

@@ -45,6 +45,8 @@ void ActuatorController::begin() {
   last_m3508_ms_ = now;
   last_dm_ms_ = now;
   last_el05_ms_ = now;
+  for (auto& stamp : last_rx_ms_) stamp = now;
+  stale_slots_ = 0;
 }
 
 bool ActuatorController::setTarget(uint8_t slot, float value) {
@@ -95,12 +97,38 @@ uint8_t ActuatorController::errorBits() const {
 }
 
 void ActuatorController::dispatchRx(const domain::CanFrame& frame) {
+  const uint32_t now = HAL_GetTick();
   if (frame.extended) {
     slot0_.onFeedback(frame.id, frame.data);
+    last_rx_ms_[0] = now;
   } else if (frame.id == slot1_.feedbackId()) {
     slot1_.onFeedback(static_cast<uint16_t>(frame.id), frame.data);
+    last_rx_ms_[1] = now;
   } else if (frame.id == slot2_.feedbackId()) {
     slot2_.onFeedback(frame.data);
+    last_rx_ms_[2] = now;
+  }
+}
+
+// モータからの応答が途切れたslotを落とす。
+//
+// hostとの通信だけを見ていると、モータ側のCANが抜けても気づけない。
+// 位置ループは凍った実測値との差を見続け、電流上限のまま押し続ける。
+void ActuatorController::checkFeedback(uint32_t now) {
+  const uint32_t limit = parameters_.getMs(domain::ParamId::FeedbackTimeoutMs);
+  for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
+    const uint8_t bit = static_cast<uint8_t>(1U << slot);
+    if (mode_ != domain::RunMode::Run || (enabled_slots_ & bit) == 0) {
+      stale_slots_ = static_cast<uint8_t>(stale_slots_ & ~bit);
+      continue;
+    }
+    if (now - last_rx_ms_[slot] <= limit) {
+      stale_slots_ = static_cast<uint8_t>(stale_slots_ & ~bit);
+      continue;
+    }
+    // 出力を切ってから印を立てる。復帰にはhostからの再有効化を要求する。
+    stale_slots_ = static_cast<uint8_t>(stale_slots_ | bit);
+    setSlotsEnabled(bit, false);
   }
 }
 
@@ -140,6 +168,7 @@ void ActuatorController::home(uint8_t slots) {
 }
 
 void ActuatorController::update() {
+  checkFeedback(HAL_GetTick());
   const uint32_t now = HAL_GetTick();
   if (now - last_m3508_ms_ >= parameters_.getMs(domain::ParamId::M3508PeriodMs)) {
     last_m3508_ms_ = now;

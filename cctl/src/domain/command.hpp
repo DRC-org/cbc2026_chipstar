@@ -37,4 +37,11 @@ struct Command {
 
 Command parseCommand(const char* line, std::size_t length);
 
+// 通信期限を延ばす指令か。
+//
+// hostは接続維持のためHELLOを毎秒送る。これで期限が延びると、
+// ゲームパッドが外れて目標指令が止まってもWatchdogが働かない。
+// 実際に出力を動かす指令だけを「生きている」証拠として扱う。
+bool extendsDeadline(CommandKind kind);
+
 }  // namespace domain

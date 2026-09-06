@@ -35,12 +35,15 @@ class ActuatorController {
   float target(uint8_t slot) const;
   float measured(uint8_t slot) const;
   uint8_t errorBits() const;
+  // フィードバックが途絶えたslotのbit mask。
+  uint8_t staleSlots() const { return stale_slots_; }
 
  private:
   void applySlotStates();
   bool slotActive(uint8_t bit) const;
 
   void applyParameter(uint8_t id);
+  void checkFeedback(uint32_t now);
 
   domain::Parameters parameters_;
   El05Motor slot0_;
@@ -50,6 +53,8 @@ class ActuatorController {
   float targets_[domain::SLOT_COUNT] = {};
   domain::RunMode mode_ = domain::RunMode::Safe;
   uint8_t enabled_slots_ = 0;
+  uint32_t last_rx_ms_[domain::SLOT_COUNT] = {};
+  uint8_t stale_slots_ = 0;
   uint32_t last_m3508_ms_ = 0;
   uint32_t last_dm_ms_ = 0;
   uint32_t last_el05_ms_ = 0;

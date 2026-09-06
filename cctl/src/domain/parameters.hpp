@@ -48,6 +48,8 @@ enum class ParamId : uint8_t {
     El05PeriodMs,
     TelemetryPeriodMs,
     WatchdogMs,
+    // モータのフィードバックが途絶えたと判断するまでの時間 [ms]
+    FeedbackTimeoutMs,
     Count,
 };
 
