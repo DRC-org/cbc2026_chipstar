@@ -25,6 +25,8 @@ enum class CommandKind : uint8_t {
     CanStat,
     // モータ側の設定を入れ直す。モータが電源を入れ直すと制御モードを失う。
     Reinit,
+    // 保存済みパラメータを消して既定値へ戻す。
+    ParamDefault,
 };
 
 struct Command {

@@ -64,6 +64,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/telemetry.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/command.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/parameters.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/param_store.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/command_queue.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/dm_codec.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/el05_codec.cpp

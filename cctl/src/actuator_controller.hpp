@@ -37,6 +37,12 @@ class ActuatorController {
   // 失うが、cctlは起動時にしか設定していないため復帰できない。SAFE中のみ。
   bool reinitialize(uint8_t slots);
 
+  // 保存済みパラメータを消して既定値へ戻す。SAFE中のみ。
+  bool resetParameters();
+
+  // 変更されたパラメータを不揮発へ書き戻す。毎周期呼んでよい。
+  void flushParameters();
+
   // DMドライバのレジスタ。SAFE中だけ受理する。
   bool readDmRegister(uint8_t rid);
   bool writeDmRegister(uint8_t rid, uint32_t raw);
@@ -54,10 +60,13 @@ class ActuatorController {
   bool slotActive(uint8_t bit) const;
 
   void applyParameter(uint8_t id);
+  void applyAllParameters();
   void initMotor(uint8_t slot);
   void checkFeedback(uint32_t now);
 
   domain::Parameters parameters_;
+  uint32_t param_dirty_ms_ = 0;
+  bool param_dirty_ = false;
   El05Motor slot0_;
   M3508Motor slot1_;
   DmMotor slot2_;

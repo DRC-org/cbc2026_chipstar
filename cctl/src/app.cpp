@@ -6,6 +6,7 @@
 #include "domain/command_queue.hpp"
 #include "domain/line_reader.hpp"
 #include "domain/parameters.hpp"
+#include "param_store.hpp"
 #include "domain/status_led.hpp"
 #include "domain/telemetry.hpp"
 #include "domain/digital_inputs.hpp"
@@ -132,9 +133,11 @@ void applyCommand(const domain::Command& command) {
             } else {
                 char text[96];
                 std::snprintf(text, sizeof(text),
-                              "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=%lu",
+                              "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=%lu "
+                              "params=%s",
                               static_cast<unsigned long>(
-                                  controller.parameters().getMs(domain::ParamId::WatchdogMs)));
+                                  controller.parameters().getMs(domain::ParamId::WatchdogMs)),
+                              param_store::present() ? "stored" : "default");
                 sendText(text);
             }
             break;
@@ -199,6 +202,10 @@ void applyCommand(const domain::Command& command) {
             break;
         case domain::CommandKind::Reinit:
             if (!controller.reinitialize(command.mask)) sendText("ERR code=BUSY");
+            else sendText("OK");
+            break;
+        case domain::CommandKind::ParamDefault:
+            if (!controller.resetParameters()) sendText("ERR code=BUSY");
             else sendText("OK");
             break;
         case domain::CommandKind::CanStat:
@@ -297,6 +304,7 @@ extern "C" void loop(void) {
     }
 
     controller.update();
+    controller.flushParameters();
 
     // バスオフからの自動復帰。放置すると電源を入れ直すまでCANが死ぬ。
     static uint32_t last_recover_ms = 0;

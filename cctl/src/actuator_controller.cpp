@@ -1,5 +1,7 @@
 #include "actuator_controller.hpp"
 
+#include "param_store.hpp"
+
 #include "device_config.hpp"
 #include "domain/dm_codec.hpp"
 
@@ -49,6 +51,27 @@ void ActuatorController::initMotor(uint8_t slot) {
   targets_[slot] = measured(slot);
 }
 
+void ActuatorController::applyAllParameters() {
+  for (uint8_t id = 0; id < domain::PARAM_COUNT; ++id) applyParameter(id);
+}
+
+// ページ消去でCPUが数十ms止まる。SAFE中に、変更が落ち着いてから1回だけ書く。
+void ActuatorController::flushParameters() {
+  constexpr uint32_t QUIET_MS = 1000;
+  if (!param_dirty_ || mode_ != domain::RunMode::Safe) return;
+  if (HAL_GetTick() - param_dirty_ms_ < QUIET_MS) return;
+  param_dirty_ = false;
+  param_store::save(parameters_);
+}
+
+bool ActuatorController::resetParameters() {
+  if (mode_ != domain::RunMode::Safe) return false;
+  parameters_.reset();
+  applyAllParameters();
+  param_dirty_ = false;
+  return param_store::clear();
+}
+
 bool ActuatorController::reinitialize(uint8_t slots) {
   if (mode_ != domain::RunMode::Safe) return false;
   for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
@@ -59,6 +82,10 @@ bool ActuatorController::reinitialize(uint8_t slots) {
 }
 
 void ActuatorController::begin() {
+  // 実機で詰めた値は保存されている。モータへ書き込む前に取り込む。
+  param_store::load(parameters_);
+  applyAllParameters();
+
   initMotor(2);
   initMotor(0);
   initMotor(1);
@@ -236,6 +263,8 @@ bool ActuatorController::setParameter(uint8_t id, float value) {
   if (domain::requiresSafe(id) && mode_ != domain::RunMode::Safe) return false;
   if (!parameters_.set(id, value)) return false;
   applyParameter(id);
+  param_dirty_ = true;
+  param_dirty_ms_ = HAL_GetTick();
   return true;
 }
 
