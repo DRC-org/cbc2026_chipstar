@@ -37,8 +37,10 @@ add_firmware_tests(serial_svmd_tests ${REPO_ROOT}/serial_svmd/src
     digital_inputs_test.cpp
     serial_svmd/sts3215_protocol_test.cpp
     serial_svmd/servo_command_test.cpp
+    serial_svmd/servo_can_test.cpp
     ${REPO_ROOT}/serial_svmd/src/domain/sts3215_protocol.cpp
     ${REPO_ROOT}/serial_svmd/src/domain/servo_command.cpp
+    ${REPO_ROOT}/serial_svmd/src/domain/servo_can.cpp
 )
 
 add_firmware_tests(svmd_tests ${REPO_ROOT}/svmd/src

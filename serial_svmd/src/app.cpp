@@ -1,4 +1,5 @@
 #include "device_config.hpp"
+#include "domain/servo_can.hpp"
 #include "domain/servo_command.hpp"
 #include "domain/digital_inputs.hpp"
 #include "main.h"
@@ -9,6 +10,7 @@
 #include <cstring>
 
 extern "C" {
+extern CAN_HandleTypeDef hcan;     // cctl FDCAN2
 extern UART_HandleTypeDef huart1;  // STS3215 bus
 extern UART_HandleTypeDef huart2;  // upstream USB serial
 }
@@ -20,6 +22,9 @@ volatile uint8_t g_servo_error_flags = 0;
 
 namespace {
 enum class Mode : uint8_t { Safe, Run, Stop };
+
+// 指令の届いた経路。応答は来た側へ返す。
+enum class Link : uint8_t { Serial, Can };
 
 struct ServoState {
   uint8_t id = 0;
@@ -38,6 +43,8 @@ char line[config::LINE_CAPACITY] = {};
 std::size_t line_length = 0;
 bool line_overflow = false;
 domain::DigitalInputs inputs(63);
+bool bus_ready = false;
+Link source = Link::Serial;
 
 void sampleInputs() {
   const uint16_t a = GPIOA->IDR;
@@ -48,7 +55,33 @@ void sampleInputs() {
   inputs.sample(raw, static_cast<uint8_t>((~b >> 4) & 15), HAL_GetTick());
 }
 
+void sendCan(uint16_t id, const uint8_t* data) {
+  if (!bus_ready) return;
+  CAN_TxHeaderTypeDef header = {};
+  header.StdId = id;
+  header.IDE = CAN_ID_STD;
+  header.RTR = CAN_RTR_DATA;
+  header.DLC = 8;
+  uint32_t mailbox = 0;
+  HAL_CAN_AddTxMessage(&hcan, &header, const_cast<uint8_t*>(data), &mailbox);
+}
+
+void sendStatus(domain::servo_can::Status status) {
+  uint8_t count = 0;
+  for (const auto& servo : servos) {
+    if (servo.used) ++count;
+  }
+  uint8_t frame[8];
+  domain::servo_can::encodeStatus(status, static_cast<uint8_t>(mode), count, frame);
+  sendCan(domain::servo_can::STATUS_ID, frame);
+}
+
+// USART2へはASCIIの1行、CANへは拒否として返す。
 void reply(const char* text) {
+  if (source == Link::Can) {
+    sendStatus(domain::servo_can::Status::Rejected);
+    return;
+  }
   HAL_UART_Transmit(&huart2, reinterpret_cast<const uint8_t*>(text),
                     static_cast<uint16_t>(std::strlen(text)), 20);
   static const uint8_t newline = '\n';
@@ -99,6 +132,12 @@ void setMode(Mode next) {
 }
 
 void reportPosition(uint8_t id, uint16_t position, bool enabled) {
+  if (source == Link::Can) {
+    uint8_t frame[8];
+    domain::servo_can::encodePosition(id, position, enabled, bus.lastServoError(), frame);
+    sendCan(domain::servo_can::POSITION_ID, frame);
+    return;
+  }
   char output[80] = {};
   std::snprintf(output, sizeof(output), "SERVO_STATE id=%u position=%u enabled=%u error=%02X",
                 static_cast<unsigned>(id), static_cast<unsigned>(position),
@@ -110,8 +149,13 @@ void apply(const domain::ServoCommand& command) {
   switch (command.kind) {
     case domain::ServoCommandKind::Hello:
       protocol_ready = command.protocol_version == config::PROTOCOL_VERSION;
-      reply(protocol_ready ? "DEVICE protocol=1 board=serial_svmd slots=16 watchdog_ms=250"
-                           : "ERR code=BAD_VERSION");
+      if (source == Link::Can) {
+        sendStatus(protocol_ready ? domain::servo_can::Status::Ok
+                                  : domain::servo_can::Status::Rejected);
+      } else {
+        reply(protocol_ready ? "DEVICE protocol=1 board=serial_svmd slots=16 watchdog_ms=250"
+                             : "ERR code=BAD_VERSION");
+      }
       break;
     case domain::ServoCommandKind::Safe:
       setMode(Mode::Safe);
@@ -164,12 +208,46 @@ void apply(const domain::ServoCommand& command) {
     case domain::ServoCommandKind::None:
       break;
     case domain::ServoCommandKind::InputRead: {
+      if (source == Link::Can) {
+        uint8_t frame[8];
+        domain::servo_can::encodeInputs(inputs.raw(), inputs.stable(), inputs.dip(),
+                                        inputs.available(), frame);
+        sendCan(domain::servo_can::INPUT_ID, frame);
+        break;
+      }
       char text[96];
       std::snprintf(text, sizeof(text), "INPUT_STATE raw=%u stable=%u dip=%u available=%u",
                     inputs.raw(), inputs.stable(), inputs.dip(), inputs.available());
       reply(text);
       break;
     }
+  }
+}
+
+// cctlのFDCAN2から届いた指令を、USART2と同じ状態機械へ入れる。
+void pollCan(void) {
+  for (uint8_t count = 0; count < 4 && HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0); ++count) {
+    CAN_RxHeaderTypeDef header = {};
+    uint8_t data[8] = {};
+    if (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &header, data) != HAL_OK) break;
+    if (header.IDE != CAN_ID_STD || header.RTR != CAN_RTR_DATA ||
+        header.StdId != domain::servo_can::COMMAND_ID) {
+      continue;
+    }
+    domain::ServoCommand command;
+    source = Link::Can;
+    if (domain::servo_can::parse(data, header.DLC, command)) {
+      last_contact_ms = HAL_GetTick();
+      apply(command);
+      if (command.kind != domain::ServoCommandKind::Read &&
+          command.kind != domain::ServoCommandKind::InputRead &&
+          command.kind != domain::ServoCommandKind::Hello) {
+        sendStatus(domain::servo_can::Status::Ok);
+      }
+    } else {
+      sendStatus(domain::servo_can::Status::Rejected);
+    }
+    source = Link::Serial;
   }
 }
 
@@ -199,10 +277,22 @@ extern "C" void setup(void) {
   mode = Mode::Safe;
   protocol_ready = false;
   last_contact_ms = HAL_GetTick();
+
+  CAN_FilterTypeDef filter = {};
+  filter.FilterBank = 0;
+  filter.FilterMode = CAN_FILTERMODE_IDMASK;
+  filter.FilterScale = CAN_FILTERSCALE_32BIT;
+  filter.FilterIdHigh = domain::servo_can::COMMAND_ID << 5;
+  filter.FilterMaskIdHigh = 0x7FF << 5;
+  filter.FilterFIFOAssignment = CAN_FILTER_FIFO0;
+  filter.FilterActivation = ENABLE;
+  bus_ready = HAL_CAN_ConfigFilter(&hcan, &filter) == HAL_OK &&
+              HAL_CAN_Start(&hcan) == HAL_OK;
 }
 
 extern "C" void loop(void) {
   sampleInputs();
+  pollCan();
   for (uint8_t count = 0; count < 64; ++count) {
     uint8_t byte = 0;
     if (HAL_UART_Receive(&huart2, &byte, 1, 0) != HAL_OK) break;
@@ -213,5 +303,6 @@ extern "C" void loop(void) {
   if (mode == Mode::Run && now - last_contact_ms > config::WATCHDOG_MS) {
     setMode(Mode::Stop);
     protocol_ready = false;
+    sendStatus(domain::servo_can::Status::Timeout);
   }
 }
