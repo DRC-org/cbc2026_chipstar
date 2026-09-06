@@ -317,6 +317,24 @@ void consume(uint8_t byte) {
   line_length = 0;
   line_overflow = false;
 }
+// USART2はポーリングで受ける。サーボバス(USART1)の送受信でループが数十ms止まる
+// ため、その間に届いたバイトは取りこぼす。問題は取りこぼしそのものではなく、
+// オーバーラン(ORE)を放置するとRXNEが二度と立たず受信が永久に止まることで、
+// HAL_UART_Receiveはこのフラグを落とさない。RDRを直接読み、明示的に落とす。
+void pollSerial() {
+  for (uint8_t count = 0; count < 64; ++count) {
+    const uint32_t status = huart2.Instance->ISR;
+    if (status & (USART_ISR_ORE | USART_ISR_FE | USART_ISR_NE)) {
+      huart2.Instance->ICR = USART_ICR_ORECF | USART_ICR_FECF | USART_ICR_NCF;
+      // 途中まで受けた行は欠けているので捨てる。
+      line_length = 0;
+      line_overflow = false;
+    }
+    if ((status & USART_ISR_RXNE) == 0) break;
+    consume(static_cast<uint8_t>(huart2.Instance->RDR & 0xFF));
+  }
+}
+
 }  // namespace
 
 extern "C" void setup(void) {
@@ -342,11 +360,7 @@ extern "C" void setup(void) {
 extern "C" void loop(void) {
   sampleInputs();
   pollCan();
-  for (uint8_t count = 0; count < 64; ++count) {
-    uint8_t byte = 0;
-    if (HAL_UART_Receive(&huart2, &byte, 1, 0) != HAL_OK) break;
-    consume(byte);
-  }
+  pollSerial();
 
   const uint32_t now = HAL_GetTick();
   updateLeds(now);
