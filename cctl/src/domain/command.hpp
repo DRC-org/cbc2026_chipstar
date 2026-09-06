@@ -23,6 +23,8 @@ enum class CommandKind : uint8_t {
     DmRegRead,
     DmRegWrite,
     CanStat,
+    // モータ側の設定を入れ直す。モータが電源を入れ直すと制御モードを失う。
+    Reinit,
 };
 
 struct Command {

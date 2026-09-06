@@ -130,7 +130,7 @@ void applyCommand(const domain::Command& command) {
                 sendText("ERR code=BAD_VERSION");
                 break;
             } else {
-                char text[80];
+                char text[96];
                 std::snprintf(text, sizeof(text),
                               "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=%lu",
                               static_cast<unsigned long>(
@@ -196,6 +196,10 @@ void applyCommand(const domain::Command& command) {
             else if (!controller.writeDmRegister(command.param_id, command.raw_value)) {
                 sendText("ERR code=CAN_TX");
             }
+            break;
+        case domain::CommandKind::Reinit:
+            if (!controller.reinitialize(command.mask)) sendText("ERR code=BUSY");
+            else sendText("OK");
             break;
         case domain::CommandKind::CanStat:
             sendCanStat(1, motor_bus, motor_bus_ready);
@@ -319,7 +323,7 @@ extern "C" void loop(void) {
         std::memcpy(&as_float, &reg_raw, sizeof(as_float));
         char value[32];
         domain::formatFixed3(as_float, value, sizeof(value));
-        char text[80];
+        char text[96];
         std::snprintf(text, sizeof(text), "DMREG rid=%u raw=%08lX f=%s",
                       static_cast<unsigned>(reg_id), static_cast<unsigned long>(reg_raw), value);
         sendText(text);

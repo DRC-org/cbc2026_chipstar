@@ -139,3 +139,16 @@ TEST_CASE("CANの診断指令を解釈する") {
     CHECK(parse("canstat").kind == CommandKind::CanStat);
     CHECK(parse("CANSTAT 1").kind == CommandKind::None);
 }
+
+TEST_CASE("モータの再初期化を解釈する") {
+    const auto reinit = parse("REINIT 5");
+    CHECK(reinit.kind == CommandKind::Reinit);
+    CHECK(reinit.mask == 5);
+    CHECK(parse("reinit 7").kind == CommandKind::Reinit);
+}
+
+TEST_CASE("再初期化の不正な指定を拒否する") {
+    CHECK(parse("REINIT 0").kind == CommandKind::None);
+    CHECK(parse("REINIT 8").kind == CommandKind::None);
+    CHECK(parse("REINIT").kind == CommandKind::None);
+}

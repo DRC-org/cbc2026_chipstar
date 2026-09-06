@@ -17,27 +17,51 @@ ActuatorController::ActuatorController(CanBus& bus)
   c620_group_.add(slot1_);
 }
 
+// モータ側の設定を書き込む。電源投入直後は応答が遅いので間を空ける。
+void ActuatorController::initMotor(uint8_t slot) {
+  switch (slot) {
+    case 0:
+      slot0_.disable(true);
+      HAL_Delay(50);
+      slot0_.setRunMode(El05Motor::RunMode::Position);
+      HAL_Delay(20);
+      slot0_.writeParamFloat(domain::el05::param::LIMIT_SPD,
+                             parameters_.get(domain::ParamId::El05LimitSpd));
+      HAL_Delay(20);
+      slot0_.writeParamFloat(domain::el05::param::LIMIT_CUR,
+                             parameters_.get(domain::ParamId::El05LimitCur));
+      HAL_Delay(20);
+      slot0_.writeParamFloat(domain::el05::param::LOC_KP,
+                             parameters_.get(domain::ParamId::El05LocKp));
+      HAL_Delay(20);
+      break;
+    case 1:
+      // C620に設定はない。積算角の目標だけ現在位置に置き直す。
+      slot1_.setTargetMotorDeg(slot1_.motorDeg());
+      break;
+    default:
+      slot2_.disable();
+      HAL_Delay(50);
+      slot2_.setControlMode(DmMotor::ControlMode::PositionVelocity);
+      HAL_Delay(50);
+      break;
+  }
+  targets_[slot] = measured(slot);
+}
+
+bool ActuatorController::reinitialize(uint8_t slots) {
+  if (mode_ != domain::RunMode::Safe) return false;
+  for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
+    if ((slots & (1U << slot)) != 0) initMotor(slot);
+  }
+  feedback_.reset(HAL_GetTick());
+  return true;
+}
+
 void ActuatorController::begin() {
-  slot2_.disable();
-  HAL_Delay(50);
-  slot2_.setControlMode(DmMotor::ControlMode::PositionVelocity);
-  HAL_Delay(50);
-
-  slot0_.disable(true);
-  HAL_Delay(50);
-  slot0_.setRunMode(El05Motor::RunMode::Position);
-  HAL_Delay(20);
-  slot0_.writeParamFloat(domain::el05::param::LIMIT_SPD,
-                         parameters_.get(domain::ParamId::El05LimitSpd));
-  HAL_Delay(20);
-  slot0_.writeParamFloat(domain::el05::param::LIMIT_CUR,
-                         parameters_.get(domain::ParamId::El05LimitCur));
-  HAL_Delay(20);
-  slot0_.writeParamFloat(domain::el05::param::LOC_KP,
-                         parameters_.get(domain::ParamId::El05LocKp));
-  HAL_Delay(20);
-
-  slot1_.setTargetMotorDeg(0.0f);
+  initMotor(2);
+  initMotor(0);
+  initMotor(1);
   mode_ = domain::RunMode::Safe;
   enabled_slots_ = 0;
   applySlotStates();
@@ -181,6 +205,16 @@ void ActuatorController::home(uint8_t slots) {
 void ActuatorController::update() {
   checkFeedback(HAL_GetTick());
   const uint32_t now = HAL_GetTick();
+
+  // 有効でないslotの目標を実測へ追従させる。トルクが切れている間に手で
+  // 動かしても、そこが次の保持点になる。非常停止して退避させたあとRUNへ
+  // 戻したとき、hostからの最初のTARGETが届く前に元の位置へ戻り出すのを防ぐ。
+  for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
+    if (slotActive(static_cast<uint8_t>(1U << slot))) continue;
+    targets_[slot] = measured(slot);
+    if (slot == 1) slot1_.setTargetMotorDeg(targets_[1]);
+  }
+
   if (now - last_m3508_ms_ >= parameters_.getMs(domain::ParamId::M3508PeriodMs)) {
     last_m3508_ms_ = now;
     c620_group_.send();

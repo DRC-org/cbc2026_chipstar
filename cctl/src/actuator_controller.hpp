@@ -33,6 +33,10 @@ class ActuatorController {
   // 通信IDの差し替えはSAFE中だけ受理する。
   bool setParameter(uint8_t id, float value);
 
+  // モータ側の設定を入れ直す。モータが電源を入れ直すと制御モードなどを
+  // 失うが、cctlは起動時にしか設定していないため復帰できない。SAFE中のみ。
+  bool reinitialize(uint8_t slots);
+
   // DMドライバのレジスタ。SAFE中だけ受理する。
   bool readDmRegister(uint8_t rid);
   bool writeDmRegister(uint8_t rid, uint32_t raw);
@@ -50,6 +54,7 @@ class ActuatorController {
   bool slotActive(uint8_t bit) const;
 
   void applyParameter(uint8_t id);
+  void initMotor(uint8_t slot);
   void checkFeedback(uint32_t now);
 
   domain::Parameters parameters_;

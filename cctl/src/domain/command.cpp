@@ -172,6 +172,10 @@ Command parseCommand(const char* line, std::size_t length) {
         if (parseFloat(tokens[2], command.target)) command.kind = CommandKind::ParamSet;
         return command;
     }
+    if (count == 2 && equalsIgnoreCase(tokens[0], "REINIT")) {
+        if (parseU8(tokens[1], 1, slot_bit::ALL, command.mask)) command.kind = CommandKind::Reinit;
+        return command;
+    }
     if (count == 2 && equalsIgnoreCase(tokens[0], "HOME")) {
         if (parseU8(tokens[1], 1, slot_bit::ALL, command.mask)) command.kind = CommandKind::Home;
         return command;
