@@ -39,6 +39,8 @@ pub fn run(shared: Arc<Shared>) {
     let mut last_serial_svmd_hello = Instant::now();
     // 原点採用と接点判定は最新のテレメトリを基準にする。
     let mut telemetry = None;
+    // 調整値は接続ごとに一度だけ送る。FWはRAM保持なので再接続時に送り直す。
+    let mut parameters_sent = false;
 
     while shared.is_running() {
         if shared.tests.enabled() {
@@ -188,6 +190,14 @@ pub fn run(shared: Arc<Shared>) {
                 shared.update_status(|s| s.dcmd = Some(status));
             }
             if let Some(device) = parse_device_info(&line) {
+                // 能力確認が通った直後に、機体プロファイルの調整値を投入する。
+                // FWはRAM保持なので、再接続のたびに送り直す。
+                if device.board == "cctl" && !parameters_sent {
+                    parameters_sent = true;
+                    for parameter in cfg.machine.parameter_lines() {
+                        let _ = link.write_line(&parameter);
+                    }
+                }
                 shared.update_status(|s| {
                     s.device = Some(device);
                     s.serial_connected = true;

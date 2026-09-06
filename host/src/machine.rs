@@ -111,6 +111,42 @@ fn yes() -> bool {
     true
 }
 
+/// cctlの実行時パラメータ。名前とidの対応は device_protocol.md の表に従う。
+/// FWを書き直さずに実機調整を終えるため、調整対象はすべてここへ書く。
+pub const PARAMETER_NAMES: [&str; 31] = [
+    "m3508_pos_kp",
+    "m3508_pos_ki",
+    "m3508_pos_kd",
+    "m3508_max_rpm",
+    "m3508_vel_kp",
+    "m3508_vel_ki",
+    "m3508_vel_kd",
+    "m3508_max_current_ma",
+    "el05_loc_kp",
+    "el05_limit_spd",
+    "el05_limit_cur",
+    "dm_p_max",
+    "dm_v_max",
+    "dm_t_max",
+    "dm_pos_vel_limit",
+    "slot0_min",
+    "slot0_max",
+    "slot1_min",
+    "slot1_max",
+    "slot2_min",
+    "slot2_max",
+    "c620_esc_id",
+    "dm_can_id",
+    "dm_mst_id",
+    "el05_motor_id",
+    "el05_host_id",
+    "m3508_period_ms",
+    "dm_period_ms",
+    "el05_period_ms",
+    "telemetry_period_ms",
+    "watchdog_ms",
+];
+
 #[derive(Clone, Debug, Deserialize, PartialEq)]
 pub struct MachineProfile {
     #[serde(default)]
@@ -121,6 +157,9 @@ pub struct MachineProfile {
     #[serde(default)]
     pub pwm_servos: Vec<PwmServoProfile>,
     pub serial_svmd: Option<SerialSvmdProfile>,
+    /// cctlへ起動時に送る実行時パラメータ。省略した項目はFWの既定値が残る。
+    #[serde(default)]
+    pub parameters: std::collections::BTreeMap<String, f32>,
 }
 
 impl MachineProfile {
@@ -159,6 +198,15 @@ impl MachineProfile {
             && self.dc_motors.is_empty()
         {
             bail!("軸またはサーボを1つ以上指定してください");
+        }
+
+        for (name, value) in &self.parameters {
+            if !PARAMETER_NAMES.contains(&name.as_str()) {
+                bail!("未対応のパラメータ名です: {name}");
+            }
+            if !value.is_finite() {
+                bail!("パラメータに有限でない値があります: {name}");
+            }
         }
 
         let mut slots = HashSet::new();
@@ -272,6 +320,17 @@ impl MachineProfile {
             }
         }
         Ok(())
+    }
+
+    /// `PARAM <id> <value>` の行。能力確認が済んだ直後に一度だけ送る。
+    pub fn parameter_lines(&self) -> Vec<String> {
+        self.parameters
+            .iter()
+            .filter_map(|(name, value)| {
+                let id = PARAMETER_NAMES.iter().position(|entry| entry == name)?;
+                Some(format!("PARAM {id} {value:.5}"))
+            })
+            .collect()
     }
 
     pub fn requires_can_bus_2(&self) -> bool {
@@ -517,6 +576,23 @@ mod tests {
         let profile = MachineProfile::load(None).unwrap();
         assert_eq!(profile.axes.len(), 3);
         assert_eq!(profile.axes[0].name, "r");
+    }
+
+    #[test]
+    fn sends_named_parameters_as_numeric_ids() {
+        let source = format!(
+            "{EMBEDDED_PROFILE}\n[parameters]\nm3508_vel_kp = 0.9\nwatchdog_ms = 300.0\n"
+        );
+        let profile = MachineProfile::parse(&source).unwrap();
+        let lines = profile.parameter_lines();
+        assert!(lines.contains(&"PARAM 4 0.90000".to_owned()));
+        assert!(lines.contains(&"PARAM 30 300.00000".to_owned()));
+    }
+
+    #[test]
+    fn rejects_unknown_parameter_names() {
+        let source = format!("{EMBEDDED_PROFILE}\n[parameters]\nno_such_gain = 1.0\n");
+        assert!(MachineProfile::parse(&source).is_err());
     }
 
     #[test]
