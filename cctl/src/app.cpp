@@ -54,14 +54,45 @@ bool usbReady() {
            cdc->TxState == 0;
 }
 
+// USB CDCへの送信は前の転送が終わるまで受け付けられない。直接叩くと、
+// 50ms周期のSTATEと衝突した応答が黙って捨てられる。いったん積んでおき、
+// 送れるときにまとめて出す。
+constexpr std::size_t TX_CAPACITY = 2048;
+uint8_t tx_ring[TX_CAPACITY];
+std::size_t tx_head = 0;
+std::size_t tx_tail = 0;
+
+std::size_t txUsed() {
+    return tx_head >= tx_tail ? tx_head - tx_tail : TX_CAPACITY - tx_tail + tx_head;
+}
+
+// 積めない分は捨てる。溢れるのは受け手が読んでいないときなので、
+// 古い行を消して新しい行を残すより、送信済みの並びを保つ方を優先する。
+void enqueue(const uint8_t* data, std::size_t length) {
+    if (length > TX_CAPACITY - 1 - txUsed()) return;
+    for (std::size_t i = 0; i < length; ++i) {
+        tx_ring[tx_head] = data[i];
+        tx_head = (tx_head + 1) % TX_CAPACITY;
+    }
+}
+
+void pumpUsb() {
+    if (!usbReady() || txUsed() == 0) return;
+    // 転送完了までバッファが生きている必要があるので、静的な領域へ移す。
+    static uint8_t chunk[64];
+    std::size_t length = 0;
+    while (length < sizeof(chunk) && txUsed() != 0) {
+        chunk[length++] = tx_ring[tx_tail];
+        tx_tail = (tx_tail + 1) % TX_CAPACITY;
+    }
+    CDC_Transmit_FS(chunk, static_cast<uint16_t>(length));
+}
+
 void sendText(const char* text) {
-    if (!usbReady()) return;
-    static uint8_t buffer[96];
     const std::size_t length = std::strlen(text);
-    if (length + 1 > sizeof(buffer)) return;
-    std::memcpy(buffer, text, length);
-    buffer[length] = '\n';
-    CDC_Transmit_FS(buffer, static_cast<uint16_t>(length + 1));
+    enqueue(reinterpret_cast<const uint8_t*>(text), length);
+    const uint8_t newline = '\n';
+    enqueue(&newline, 1);
 }
 
 void sendParameter(uint8_t id) {
@@ -135,12 +166,16 @@ void applyCommand(const domain::Command& command) {
             if (command.param_id >= domain::PARAM_COUNT) sendText("ERR code=OUT_OF_RANGE");
             else sendParameter(command.param_id);
             break;
+        // モード違反とCAN送信失敗を分ける。混ぜると
+        // 「SAFEにし忘れ」と「モータが繋がっていない」を切り分けられない。
         case domain::CommandKind::DmRegRead:
-            if (!controller.readDmRegister(command.param_id)) sendText("ERR code=BUSY");
+            if (controller.mode() != domain::RunMode::Safe) sendText("ERR code=BUSY");
+            else if (!controller.readDmRegister(command.param_id)) sendText("ERR code=CAN_TX");
             break;
         case domain::CommandKind::DmRegWrite:
-            if (!controller.writeDmRegister(command.param_id, command.raw_value)) {
-                sendText("ERR code=BUSY");
+            if (controller.mode() != domain::RunMode::Safe) sendText("ERR code=BUSY");
+            else if (!controller.writeDmRegister(command.param_id, command.raw_value)) {
+                sendText("ERR code=CAN_TX");
             }
             break;
         case domain::CommandKind::None:
@@ -170,7 +205,6 @@ void sendCanFrame(const domain::CanFrame& frame) {
 }
 
 void sendTelemetry() {
-    if (!usbReady()) return;
     static uint8_t line[domain::TELEMETRY_LINE_CAPACITY + 1];
     domain::Telemetry telemetry;
     telemetry.uptime_ms = HAL_GetTick();
@@ -190,7 +224,7 @@ void sendTelemetry() {
         telemetry, reinterpret_cast<char*>(line), domain::TELEMETRY_LINE_CAPACITY);
     if (length == 0) return;
     line[length] = '\n';
-    CDC_Transmit_FS(line, static_cast<uint16_t>(length + 1));
+    enqueue(line, length + 1);
 }
 }  // namespace
 
@@ -245,10 +279,11 @@ extern "C" void loop(void) {
     }
 
     static uint32_t last_telemetry_ms = 0;
-    if (now - last_telemetry_ms >= config::period::TELEMETRY_MS) {
+    if (now - last_telemetry_ms >= controller.parameters().getMs(domain::ParamId::TelemetryPeriodMs)) {
         last_telemetry_ms = now;
         sendTelemetry();
     }
+    pumpUsb();
 }
 
 extern "C" void cctl_usbcdc_receive(const uint8_t* data, uint32_t length) {

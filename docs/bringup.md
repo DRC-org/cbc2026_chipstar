@@ -102,6 +102,22 @@ STATE t=12345 mode=RUN en=7 a0=1.250/1.230 a1=-40.000/-39.500 a2=0.500/0.490 err
 `RUN`はcctlと、プロファイルで使用する追加基板の能力確認が済むまで拒否される。
 コントローラが切断するか送信を停止すると、250ms Watchdogにより各FWが出力を切る。
 
+## 書き込み
+
+ST-LINK/V2 を cctl の J1 へ繋ぎ、STM32CubeCLT の CLI で書き込む。
+
+```sh
+cd cctl
+cmake --build --preset Debug
+/opt/st/stm32cubeclt_*/STM32CubeProgrammer/bin/STM32_Programmer_CLI \
+  -c port=SWD mode=UR -w build/Debug/DRC-CCTL2026.elf -v -rst
+```
+
+`mode=UR`（Under Reset）で接続する。書き込み後は USB CDC が再列挙されるので、
+`/dev/ttyACM*` の番号が変わることがある。
+
+書き込みだけなら USB CDC 側のケーブルは不要だが、動作確認には両方繋ぐ。
+
 ## 実機で残る確認
 
 クロスビルドと単体テストでは、配線、CAN終端、モータの正方向、実際の換算係数、
