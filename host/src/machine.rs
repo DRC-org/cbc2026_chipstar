@@ -739,9 +739,67 @@ mod tests {
         }
     }
 
+    /// リミットスイッチを持つ機体のプロファイル。
+    ///
+    /// 実機はまだスイッチ未取付で `config/rtheta.toml` の `[axes.limit]` を
+    /// 無効にしてあるため、リミットの検証はここで組み立てた構成で行う。
+    fn profile_with_limits() -> MachineProfile {
+        MachineProfile::parse(
+            r#"
+protocol_version = 1
+
+[[axes]]
+name = "r"
+unit = "mm"
+slot = 0
+input_axis = 1
+input_sign = 1.0
+speed_per_second = 100.0
+native_per_unit = 0.10005072
+minimum = 0.0
+maximum = 120.0
+initial = 0.0
+origin_position = 120.0
+
+[axes.limit]
+input = 0
+direction = 1.0
+
+[[axes]]
+name = "theta"
+unit = "deg"
+slot = 1
+input_axis = 0
+input_sign = 1.0
+speed_per_second = 90.0
+native_per_unit = 140.82353
+minimum = -180.0
+maximum = 180.0
+initial = 0.0
+
+[[axes]]
+name = "z"
+unit = "mm"
+slot = 2
+input_axis = 3
+input_sign = 1.0
+speed_per_second = 30.0
+native_per_unit = 0.15707964
+minimum = 0.0
+maximum = 75.0
+initial = 0.0
+
+[axes.limit]
+input = 1
+direction = -1.0
+"#,
+        )
+        .unwrap()
+    }
+
     #[test]
     fn captures_origin_on_the_limit_edge_without_moving_the_axis() {
-        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let mut machine = MachineController::new(profile_with_limits());
         let mut input = neutral_input();
         input.axes[1] = 1.0;
 
@@ -761,7 +819,7 @@ mod tests {
 
     #[test]
     fn limit_blocks_only_the_direction_that_reaches_it() {
-        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let mut machine = MachineController::new(profile_with_limits());
         let reached = telemetry_with(0b010, [8.0, 0.0, 0.0]);
         machine.update(&neutral_input(), 0.1, Some(&telemetry_with(0b011, [8.0, 0.0, 0.0])));
         machine.update(&neutral_input(), 0.1, Some(&reached));
@@ -781,7 +839,7 @@ mod tests {
 
     #[test]
     fn clamps_travel_only_after_the_origin_is_known() {
-        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let mut machine = MachineController::new(profile_with_limits());
         let mut input = neutral_input();
         input.axes[1] = -1.0;
 
@@ -845,9 +903,8 @@ mod tests {
 
     #[test]
     fn rejects_a_limit_on_a_contact_the_board_does_not_have() {
-        let source = EMBEDDED_PROFILE.replace("input = 0
-direction = 1.0", "input = 3
-direction = 1.0");
+        // 接点は0..2しかない。3を指定した構成は受け付けない。
+        let source = format!("{EMBEDDED_PROFILE}\n[axes.limit]\ninput = 3\ndirection = 1.0\n");
         assert!(MachineProfile::parse(&source).is_err());
     }
 
