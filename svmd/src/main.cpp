@@ -4,6 +4,7 @@
 
 #include "domain/servo_can_protocol.hpp"
 #include "domain/status_led.hpp"
+#include <cstring>
 
 namespace proto = domain::servo_can;
 
@@ -92,6 +93,14 @@ void apply(const proto::Command& command) {
             break;
         case proto::CommandKind::ParamSet:
             parameters.set(command.param_id, command.value);
+            {
+                const float value = parameters.get(static_cast<proto::ParamId>(command.param_id));
+                uint32_t bits; std::memcpy(&bits, &value, sizeof(bits));
+                const uint8_t report[8] = {1, command.param_id, 0, 0,
+                    static_cast<uint8_t>(bits >> 24), static_cast<uint8_t>(bits >> 16),
+                    static_cast<uint8_t>(bits >> 8), static_cast<uint8_t>(bits)};
+                CAN.write(CanMsg(CanStandardId(proto::canId(0x304, address)), sizeof(report), report));
+            }
             break;
         case proto::CommandKind::Invalid:
             return;
