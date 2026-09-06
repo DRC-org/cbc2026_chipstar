@@ -17,7 +17,7 @@
 | MCU ペリフェラル | ハンドル | ピン | AF | 設定 | 用途 |
 |---|---|---|---|---|---|
 | USART1 | `huart1` | PA9=TX, PA10=RX | AF7 | 115200, 8-N-1 | サーボ（絶縁・半二重） |
-| USART2 | `huart2` | PB3=TX, PA15=RX | AF7 | 38400, 8-N-1 | USB シリアル |
+| USART2 | `huart2` | PB3=TX, PA15=RX | AF7 | 115200, 8-N-1 | USB シリアル |
 | CAN | `hcan` | PA11=RX, PA12=TX | AF9 | 1Mbps, AutoBusOff 有効 | 上位との通信 |
 | TIM3 | `htim3` | — | — | `PSC=0, ARR=65535`（未使用） | — |
 

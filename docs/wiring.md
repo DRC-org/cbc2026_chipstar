@@ -100,7 +100,7 @@ FDCAN1 に繋ぐモータの ID 割当は [cctl_can_bus.md](cctl_can_bus.md)。
 | コネクタ | 用途 | ピン |
 |---|---|---|
 | J1 / J2 | **CAN — 機体での接続経路（cctl FDCAN2）** | 1=GND, 2=CAN_L, 3=CAN_H, 4=+5V |
-| J15 | USART2 の USB シリアル（38400 baud、基板単体で触る用） | USB-C |
+| J15 | USART2 の USB シリアル（115200 baud、基板単体で触る用） | USB-C |
 | J16 | USB_Servo（サーボバス直結、SW4 で切替） | USB-C |
 | J10 | サーボ電源 +BATT 入力 | 1=GNDPWR, 2=+BATT |
 | J11〜J14 | STS3215 サーボ 1〜4 | 1=GNDPWR, 2=+BATT, 3=SIG |

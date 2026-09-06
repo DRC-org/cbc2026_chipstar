@@ -48,8 +48,8 @@ cargo run --bin fw_test -- --board serial-svmd --serial-device /dev/ttyUSB0
 
 `network` は機体を組んだ状態向けで、cctlのUSB 1本のまま cctl・svmd・DCMD を
 繋ぎ替えずに扱う。それ以外は対象ごとに1つずつ起動する。svmd/DCMDはcctlのFDCAN2を経由する。
-serial_svmdはUSART2のUSBシリアル変換器へ直接接続し、既定38400 baud。
-それ以外は既定115200 baud。必要なら `--baud-rate` で指定する。
+serial_svmdはUSART2のUSBシリアル変換器へ直接接続する。
+UARTは全基板115200 baudに統一している。必要なら `--baud-rate` で指定する。
 CANは1 Mbps、コネクタと接続の全体像は [wiring.md](wiring.md) を参照。
 GUIでは「6 配線」タブで同じ内容を見られる。
 

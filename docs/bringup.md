@@ -8,7 +8,7 @@ hostは明示的なRUN時に必要なチャネルを有効化する。
 
 - cctlのFDCAN1にはEL05、M3508/C620、DMを接続し、FDCAN2にはsvmdを接続する。
 - CANは終端抵抗、GND共有、1Mbpsを確認する。
-- serial_svmdの上位UARTは38400 bps、STS3215側UARTは115200 bpsである。
+- UARTは全系統115200 bpsに統一している（serial_svmdの上位UART、STS3215バス、cctlのUSBシリアル）。
 - 機体固有の換算、可動域、入力割当、サーボIDをhostの機体プロファイルに設定する。
 
 設定形式は[host_machine_profile.md](host_machine_profile.md)、バス構成は
