@@ -1,10 +1,6 @@
 use super::profile::*;
-use crate::{
-    input::controller::ControllerState,
-    protocol::{svmd, telemetry::Telemetry},
-};
+use crate::{input::controller::ControllerState, protocol::telemetry::Telemetry};
 use serde::Serialize;
-const MAX_INPUT_INTERVAL_S: f32 = 0.1;
 const STICK_DEADZONE: f32 = 0.1;
 
 /// 軸ごとの原点の状態。GUI 表示用。
@@ -34,26 +30,11 @@ pub struct MachineController {
     last_measured: Vec<Option<f32>>,
     /// 接点の前回値。立ち上がりの検出に使う。
     last_contacts: Option<u8>,
-    pwm_targets_us: Vec<f32>,
-    serial_targets: Vec<f32>,
-    /// 位置読み出しの巡回位置。
-    serial_read_cursor: usize,
 }
 
 impl MachineController {
     pub fn new(profile: MachineProfile) -> Self {
         let targets = profile.axes.iter().map(|axis| axis.initial).collect();
-        let pwm_targets_us = profile
-            .pwm_servos
-            .iter()
-            .map(|servo| f32::from(servo.initial_us))
-            .collect();
-        let serial_targets = profile
-            .serial_svmd
-            .iter()
-            .flat_map(|board| &board.servos)
-            .map(|servo| f32::from(servo.initial_position))
-            .collect();
         Self {
             origins_native: vec![0.0; profile.axes.len()],
             origin_captured: vec![false; profile.axes.len()],
@@ -63,9 +44,6 @@ impl MachineController {
             last_contacts: None,
             profile,
             targets,
-            pwm_targets_us,
-            serial_targets,
-            serial_read_cursor: 0,
         }
     }
 
@@ -186,96 +164,23 @@ impl MachineController {
         true
     }
 
-    pub fn update(
-        &mut self,
-        input: &ControllerState,
-        elapsed_s: f32,
-        telemetry: Option<&Telemetry>,
-    ) -> Vec<String> {
-        let dt = elapsed_s.clamp(0.0, MAX_INPUT_INTERVAL_S);
-        let contacts = telemetry.and_then(|telemetry| telemetry.contacts);
-
-        self.check_feedback_continuity(telemetry);
-
-        // 接点の立ち上がりでその軸の原点を採る。ジョグで当てるだけで原点が決まる。
+    /// 実測値と接点から原点状態だけを更新する。出力指令は生成しない。
+    pub fn observe(&mut self, telemetry: &Telemetry) {
+        self.check_feedback_continuity(Some(telemetry));
+        let contacts = telemetry.contacts;
         if let (Some(contacts), Some(previous)) = (contacts, self.last_contacts) {
             for index in 0..self.profile.axes.len() {
                 let Some(limit) = self.profile.axes[index].limit else {
                     continue;
                 };
                 if limit.reached(contacts) && !limit.reached(previous) {
-                    self.capture_origin(index, telemetry);
+                    self.capture_origin(index, Some(telemetry));
                 }
             }
         }
         if contacts.is_some() {
             self.last_contacts = contacts;
         }
-
-        let mut lines = Vec::with_capacity(self.profile.axes.len());
-        for index in 0..self.profile.axes.len() {
-            let axis = &self.profile.axes[index];
-            let (slot, native_per_unit) = (axis.slot, axis.native_per_unit);
-            let (minimum, maximum) = (axis.minimum, axis.maximum);
-            let (input_axis, input_sign) = (axis.input_axis, axis.input_sign);
-            let speed_per_second = axis.speed_per_second;
-            let limit = axis.limit;
-
-            if let Some(axis_index) = input_axis {
-                let raw = input.axes[axis_index];
-                let mut value = if raw.abs() < STICK_DEADZONE { 0.0 } else { raw };
-                // 到達している間はスイッチへ近づく向きだけを捨てる。逆向きには戻せる。
-                if let (Some(limit), Some(contacts)) = (limit, contacts)
-                    && limit.reached(contacts)
-                    && value * input_sign * limit.direction > 0.0
-                {
-                    value = 0.0;
-                }
-                let target = &mut self.targets[index];
-                *target += value * input_sign * speed_per_second * dt;
-                // スイッチのある軸は、採用前にクランプするとスイッチまで届かない。
-                // スイッチのない軸は届く先がないので、起動時姿勢を基準に最初から
-                // 制限する。θのケーブル巻き込みを無制限にしないため。
-                if self.soft_limits && (self.origin_captured[index] || limit.is_none()) {
-                    *target = target.clamp(minimum, maximum);
-                }
-            }
-            let native = self.targets[index] * native_per_unit + self.origins_native[index];
-            lines.push(format!("TARGET {slot} {native:.5}"));
-        }
-
-        for (servo, target) in self.profile.pwm_servos.iter().zip(&mut self.pwm_targets_us) {
-            if let Some(index) = servo.input_axis {
-                let raw = input.axes[index];
-                let value = if raw.abs() < STICK_DEADZONE { 0.0 } else { raw };
-                *target = (*target + value * servo.input_sign * servo.speed_us_per_second * dt)
-                    .clamp(f32::from(servo.minimum_us), f32::from(servo.maximum_us));
-            }
-            lines.push(
-                svmd::Command::Set {
-                    channel: servo.channel,
-                    pulse_us: target.round() as u16,
-                }
-                .to_cctl_line(),
-            );
-        }
-        lines.extend(crate::protocol::dcmd::targets(
-            &self.profile.dc_motors,
-            &input.axes,
-        ));
-        lines.extend(self.serial_svmd_lines(input, dt));
-        lines
-    }
-
-    /// 原点・接点の観測は停止中にも行う。位置目標は積算しない。
-    pub fn observe(&mut self, telemetry: &Telemetry) {
-        let neutral = ControllerState {
-            axes: [0.0; 6],
-            buttons: [0; 17],
-        };
-        self.hold_at_measured(Some(telemetry));
-        // 既存の接点エッジ処理を共有し、生成された出力は送信しない。
-        self.update(&neutral, 0.0, Some(telemetry));
         self.hold_at_measured(Some(telemetry));
     }
 
@@ -333,53 +238,6 @@ impl MachineController {
                 format!("JOG {} {:.5}", axis.slot, velocity * axis.native_per_unit)
             })
             .collect()
-    }
-
-    fn serial_svmd_lines(&mut self, input: &ControllerState, dt: f32) -> Vec<String> {
-        let Some(board) = &self.profile.serial_svmd else {
-            return Vec::new();
-        };
-        let mut lines = Vec::with_capacity(board.servos.len() * 2);
-        for (servo, target) in board.servos.iter().zip(&mut self.serial_targets) {
-            if let Some(index) = servo.input_axis {
-                let raw = input.axes[index];
-                let value = if raw.abs() < STICK_DEADZONE { 0.0 } else { raw };
-                *target = (*target
-                    + value * servo.input_sign * servo.speed_position_per_second * dt)
-                    .clamp(
-                        f32::from(servo.minimum_position),
-                        f32::from(servo.maximum_position),
-                    );
-            }
-            lines.push(
-                crate::protocol::serial_svmd::Command::Target {
-                    id: servo.id,
-                    position: target.round() as u16,
-                    speed: servo.move_speed,
-                    acceleration: servo.acceleration,
-                }
-                .to_cctl_line(),
-            );
-            lines.push(
-                crate::protocol::serial_svmd::Command::Enable {
-                    id: servo.id,
-                    enabled: servo.enabled,
-                }
-                .to_cctl_line(),
-            );
-        }
-        // 実測位置は1周期に1IDずつ巡回して読む。目標送信を遅らせないため。
-        if !board.servos.is_empty() {
-            let index = self.serial_read_cursor % board.servos.len();
-            self.serial_read_cursor = self.serial_read_cursor.wrapping_add(1);
-            lines.push(
-                crate::protocol::serial_svmd::Command::Read {
-                    id: board.servos[index].id,
-                }
-                .to_cctl_line(),
-            );
-        }
-        lines
     }
 
     #[cfg(test)]

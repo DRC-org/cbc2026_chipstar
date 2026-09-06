@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::protocol::telemetry::{RunMode, SlotState};
 fn telemetry(native: f32) -> Telemetry {

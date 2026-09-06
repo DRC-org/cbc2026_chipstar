@@ -1,4 +1,3 @@
-
 use super::*;
 use crate::machine::profile::EMBEDDED_PROFILE;
 
@@ -87,31 +86,28 @@ fn rejects_duplicate_slots() {
 }
 
 #[test]
-fn integrates_input_and_converts_to_native_units() {
-    let profile = MachineProfile::load(None).unwrap();
-    let mut machine = MachineController::new(profile);
+fn converts_manual_velocity_to_native_units() {
+    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    machine.set_soft_limits(false);
     let mut input = neutral_input();
     input.axes[1] = 0.5;
-
-    let lines = machine.update(&input, 0.1, None);
-
-    assert!((machine.target("r").unwrap() - 0.5).abs() < 1e-5);
-    assert_eq!(lines[0], "TARGET 0 0.02000");
-    assert_eq!(lines[2], "TARGET 2 0.00000");
+    let lines = machine.jog_lines(&input, &telemetry_with(0, [0.0; 3]), false);
+    assert_eq!(lines[0], "JOG 0 0.20000");
+    assert_eq!(lines[2], "JOG 2 0.00000");
 }
 
 #[test]
-fn applies_deadzone_and_interval_limit() {
-    let profile = MachineProfile::load(None).unwrap();
-    let mut machine = MachineController::new(profile);
+fn deadzone_nonfinite_input_and_low_speed_are_bounded() {
+    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+    machine.set_soft_limits(false);
+    let t = telemetry_with(0, [0.0; 3]);
     let mut input = neutral_input();
-    input.axes[0] = 0.05;
-    machine.update(&input, 1.0, None);
-    assert_eq!(machine.target("theta"), Some(0.0));
-
-    input.axes[0] = 1.0;
-    machine.update(&input, 1.0, None);
-    assert_eq!(machine.target("theta"), Some(1.0));
+    for value in [0.05, f32::NAN, f32::INFINITY] {
+        input.axes[1] = value;
+        assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 0.00000");
+    }
+    input.axes[1] = 2.0;
+    assert_eq!(machine.jog_lines(&input, &t, true)[0], "JOG 0 0.08000");
 }
 
 /// SW1が閉じた状態（B接点の平常時）のテレメトリ。
@@ -204,13 +200,13 @@ direction = -1.0
 fn power_cycling_a_motor_invalidates_the_origin() {
     let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
     let steady = telemetry_with(0, [5.0, 0.0, 0.0]);
-    machine.update(&neutral_input(), 0.1, Some(&steady));
+    machine.observe(&steady);
     assert!(machine.capture_origin(0, Some(&steady)));
     assert!(machine.origin_states(None)[0].captured);
 
     // モータが入り直して実測が0へ飛ぶ。1周期では起こりえない移動量。
     let restarted = telemetry_with(0, [0.0, 0.0, 0.0]);
-    machine.update(&neutral_input(), 0.1, Some(&restarted));
+    machine.observe(&restarted);
     let origins = machine.origin_states(None);
     assert!(!origins[0].captured, "原点を捨てていない");
     assert!(origins[0].lost, "失ったことを伝えていない");
@@ -220,14 +216,14 @@ fn power_cycling_a_motor_invalidates_the_origin() {
 fn feedback_loss_reported_by_the_board_invalidates_the_origin() {
     let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
     let steady = telemetry_with(0, [5.0, 0.0, 0.0]);
-    machine.update(&neutral_input(), 0.1, Some(&steady));
+    machine.observe(&steady);
     assert!(machine.capture_origin(0, Some(&steady)));
 
     let lost = Telemetry {
         stale_slots: 0b001,
         ..telemetry_with(0, [5.0, 0.0, 0.0])
     };
-    machine.update(&neutral_input(), 0.1, Some(&lost));
+    machine.observe(&lost);
     assert!(!machine.origin_states(None)[0].captured);
     assert!(machine.origin_states(None)[0].lost);
 }
@@ -236,13 +232,13 @@ fn feedback_loss_reported_by_the_board_invalidates_the_origin() {
 fn normal_jogging_does_not_invalidate_the_origin() {
     let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
     let start = telemetry_with(0, [0.0, 0.0, 0.0]);
-    machine.update(&neutral_input(), 0.1, Some(&start));
+    machine.observe(&start);
     assert!(machine.capture_origin(0, Some(&start)));
 
     // ジョグ相当の連続した移動では原点を捨てない。
     for step in 1..20 {
         let moving = telemetry_with(0, [step as f32 * 0.02, 0.0, 0.0]);
-        machine.update(&neutral_input(), 0.05, Some(&moving));
+        machine.observe(&moving);
         assert!(
             machine.origin_states(None)[0].captured,
             "step {step} で捨てた"
@@ -251,35 +247,23 @@ fn normal_jogging_does_not_invalidate_the_origin() {
 }
 
 #[test]
-fn run_holds_the_current_position_instead_of_returning() {
+fn neutral_command_holds_after_manual_repositioning() {
     let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
-    let mut input = neutral_input();
-
-    // ジョグでrを進めてから、停止中に手で戻された状況をつくる。
-    input.axes[1] = 1.0;
-    for _ in 0..5 {
-        machine.update(&input, 0.1, None);
-    }
-    assert!(machine.target("r").unwrap() > 4.0);
-
-    // 実測は手で戻された位置。RUN前に取り込めば、その場を保持する。
+    machine.observe(&telemetry_with(0, [0.2, 0.0, 0.0]));
     let moved = telemetry_with(0, [0.4, 0.0, 0.0]);
-    machine.hold_at_measured(Some(&moved));
+    machine.observe(&moved);
     assert!((machine.target("r").unwrap() - 10.0).abs() < 1e-3);
-
-    // 直後の指令は実測と一致し、機体は動かない。
-    let lines = machine.update(&neutral_input(), 0.1, Some(&moved));
-    assert_eq!(lines[0], "TARGET 0 0.40000");
+    assert_eq!(
+        machine.jog_lines(&neutral_input(), &moved, false)[0],
+        "JOG 0 0.00000"
+    );
 }
 
 #[test]
 fn holding_needs_feedback() {
     let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
-    let mut input = neutral_input();
-    input.axes[1] = 1.0;
-    machine.update(&input, 0.1, None);
+    machine.observe(&telemetry_with(0, [0.4, 0.0, 0.0]));
     let before = machine.target("r").unwrap();
-    // テレメトリが無ければ何もしない。勝手に0へ飛ばさない。
     machine.hold_at_measured(None);
     assert_eq!(machine.target("r"), Some(before));
 }
@@ -287,101 +271,90 @@ fn holding_needs_feedback() {
 #[test]
 fn captures_origin_on_the_limit_edge_without_moving_the_axis() {
     let mut machine = MachineController::new(profile_with_limits());
-    let mut input = neutral_input();
-    input.axes[1] = 1.0;
-
-    // 平常時はSW1もSW2も閉じている（B接点）。
-    machine.update(&input, 0.1, Some(&telemetry_with(0b011, [0.0; 3])));
+    machine.observe(&telemetry_with(0b011, [0.0; 3]));
     assert!(!machine.origin_states(None)[0].captured);
-
-    // rが前進しきってSW1が開く。その瞬間の実測値に最大位置を割り当てる。
     let reached = telemetry_with(0b010, [8.0, 0.0, 0.0]);
-    let lines = machine.update(&input, 0.1, Some(&reached));
+    machine.observe(&reached);
     let origins = machine.origin_states(Some(&reached));
     assert!(origins[0].captured);
     assert!((origins[0].position - 120.0).abs() < 1e-3);
-    // 採用の前後で軸を動かさない。
-    assert_eq!(lines[0], "TARGET 0 8.00000");
+    assert!((origins[0].target - origins[0].position).abs() < 1e-3);
+    assert_eq!(
+        machine.jog_lines(&neutral_input(), &reached, false)[0],
+        "JOG 0 0.00000"
+    );
 }
 
 #[test]
 fn limit_blocks_only_the_direction_that_reaches_it() {
     let mut machine = MachineController::new(profile_with_limits());
+    machine.observe(&telemetry_with(0b011, [8.0, 0.0, 0.0]));
     let reached = telemetry_with(0b010, [8.0, 0.0, 0.0]);
-    machine.update(
-        &neutral_input(),
-        0.1,
-        Some(&telemetry_with(0b011, [8.0, 0.0, 0.0])),
+    machine.observe(&reached);
+    let mut input = neutral_input();
+    input.axes[1] = 1.0;
+    assert_eq!(
+        machine.jog_lines(&input, &reached, false)[0],
+        "JOG 0 0.00000"
     );
-    machine.update(&neutral_input(), 0.1, Some(&reached));
-
-    // 前進側は捨てる。
-    let mut forward = neutral_input();
-    forward.axes[1] = 1.0;
-    machine.update(&forward, 0.1, Some(&reached));
-    assert!((machine.target("r").unwrap() - 120.0).abs() < 1e-3);
-
-    // 後退側は通し、スイッチから抜けられる。
-    let mut back = neutral_input();
-    back.axes[1] = -1.0;
-    machine.update(&back, 0.1, Some(&reached));
-    assert!(machine.target("r").unwrap() < 120.0);
-}
-
-#[test]
-fn clamps_travel_only_after_the_origin_is_known() {
-    let mut machine = MachineController::new(profile_with_limits());
-    let mut input = neutral_input();
     input.axes[1] = -1.0;
-
-    // 未採用の間は暫定原点基準のクランプを効かせない。
-    for _ in 0..5 {
-        machine.update(&input, 0.1, None);
-    }
-    assert!(machine.target("r").unwrap() < 0.0);
-
-    // 手動採用の後は可動域が意味を持ち、最大側で頭打ちになる。
-    let telemetry = telemetry_with(0b011, [0.0, 0.0, 0.0]);
-    assert!(machine.capture_origin(0, Some(&telemetry)));
-    assert!((machine.target("r").unwrap() - 120.0).abs() < 1e-3);
-    input.axes[1] = 1.0;
-    machine.update(&input, 0.1, Some(&telemetry));
-    assert!((machine.target("r").unwrap() - 120.0).abs() < 1e-3);
+    assert!(machine.jog_lines(&input, &reached, false)[0].starts_with("JOG 0 -10."));
 }
 
 #[test]
-fn clamps_switchless_axes_from_the_start() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+fn adjustment_allows_origin_search_and_normal_mode_enforces_bounds() {
+    let mut machine = MachineController::new(profile_with_limits());
+    let t = telemetry_with(0b011, [0.0; 3]);
     let mut input = neutral_input();
-    input.axes[0] = 1.0; // theta（スイッチなし）
-    for _ in 0..200 {
-        machine.update(&input, 0.1, None);
-    }
-    // 原点未採用でも可動域で頭打ちになる。ケーブルを巻き込ませない。
-    assert!((machine.target("theta").unwrap() - 180.0).abs() < 1e-3);
+    input.axes[1] = 1.0;
+    assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 0.00000");
+    machine.set_soft_limits(false);
+    assert!(machine.jog_lines(&input, &t, false)[0].starts_with("JOG 0 10."));
+    assert!(machine.capture_origin(0, Some(&t)));
+    machine.set_soft_limits(true);
+    assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 0.00000");
 }
 
 #[test]
-fn treats_unknown_contacts_as_no_limit_information() {
-    let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+fn switchless_axis_needs_an_origin_before_normal_motion() {
+    let machine = MachineController::new(MachineProfile::load(None).unwrap());
     let mut input = neutral_input();
-    input.axes[1] = 1.0;
-    // sw= を持たないFWでは、接点を「全て到達」と誤解して止めてはいけない。
-    let unknown = Telemetry {
+    input.axes[0] = 1.0;
+    assert_eq!(
+        machine.jog_lines(&input, &telemetry_with(0, [0.0; 3]), false)[1],
+        "JOG 1 0.00000"
+    );
+}
+
+#[test]
+fn unknown_contacts_block_only_axes_with_a_configured_switch() {
+    let t = Telemetry {
         contacts: None,
         ..telemetry_with(0, [0.0; 3])
     };
-    machine.update(&input, 0.1, Some(&unknown));
-    assert!(machine.target("r").unwrap() > 0.0);
-    assert!(!machine.origin_states(Some(&unknown))[0].captured);
-    assert_eq!(machine.origin_states(Some(&unknown))[0].at_limit, None);
+    let mut input = neutral_input();
+    input.axes[1] = 1.0;
+    for (profile, blocked) in [
+        (profile_with_limits(), true),
+        (MachineProfile::load(None).unwrap(), false),
+    ] {
+        let mut machine = MachineController::new(profile);
+        machine.set_soft_limits(false);
+        machine.observe(&t);
+        assert_eq!(
+            machine.jog_lines(&input, &t, false)[0] == "JOG 0 0.00000",
+            blocked
+        );
+        assert!(!machine.origin_states(Some(&t))[0].captured);
+        assert_eq!(machine.origin_states(Some(&t))[0].at_limit, None);
+    }
 }
 
 #[test]
 fn axis_without_a_switch_is_captured_only_by_hand() {
     let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
     let telemetry = telemetry_with(0b011, [0.0, 3000.0, 0.0]);
-    machine.update(&neutral_input(), 0.1, Some(&telemetry));
+    machine.observe(&telemetry);
     let theta = 1;
     assert_eq!(
         machine.origin_states(Some(&telemetry))[theta].at_limit,
@@ -394,8 +367,8 @@ fn axis_without_a_switch_is_captured_only_by_hand() {
     assert!(states[theta].captured);
     assert_eq!(states[theta].position, 0.0);
     // 採用直後は指令も実測に一致し、軸は動かない。
-    let lines = machine.update(&neutral_input(), 0.1, Some(&telemetry));
-    assert_eq!(lines[1], "TARGET 1 3000.00000");
+    let lines = machine.jog_lines(&neutral_input(), &telemetry, false);
+    assert_eq!(lines[1], "JOG 1 0.00000");
 }
 
 #[test]
@@ -406,24 +379,22 @@ fn rejects_a_limit_on_a_contact_the_board_does_not_have() {
 }
 
 #[test]
-fn validates_and_drives_pwm_servo_from_host_profile() {
+fn accepts_but_does_not_drive_pwm_servo_from_host_profile() {
     let source = format!(
         "{EMBEDDED_PROFILE}\n[[pwm_servos]]\nname = \"gripper\"\nchannel = 1\ninput_axis = 3\ninput_sign = -1.0\nspeed_us_per_second = 1000.0\nminimum_us = 900\nmaximum_us = 2100\ninitial_us = 1500\nenabled = true\n"
     );
     let profile = MachineProfile::parse(&source).unwrap();
     assert!(profile.requires_can_bus_2());
     let mut machine = MachineController::new(profile);
-    let mut input = neutral_input();
-    input.axes[3] = 1.0;
-
-    let lines = machine.update(&input, 0.1, None);
-
-    assert_eq!(lines[3], "CAN 2 768 0101010005780000");
-    assert_eq!(lines.len(), 4);
+    let t = telemetry_with(0, [0.0; 3]);
+    machine.observe(&t);
+    let lines = machine.jog_lines(&neutral_input(), &t, false);
+    assert_eq!(lines.len(), 3);
+    assert!(lines.iter().all(|line| line.starts_with("JOG ")));
 }
 
 #[test]
-fn validates_and_drives_serial_servo_from_host_profile() {
+fn accepts_but_does_not_drive_serial_servo_from_host_profile() {
     let source = format!(
         "{EMBEDDED_PROFILE}\n[serial_svmd]\n\n[[serial_svmd.servos]]\nname = \"arm\"\nid = 12\ninput_axis = 4\ninput_sign = 1.0\nspeed_position_per_second = 500.0\nminimum_position = 1000\nmaximum_position = 3000\ninitial_position = 2000\nmove_speed = 400\nacceleration = 30\nenabled = true\n"
     );
@@ -431,22 +402,9 @@ fn validates_and_drives_serial_servo_from_host_profile() {
     assert!(profile.requires_serial_svmd());
     assert!(profile.requires_can_bus_2());
     let mut machine = MachineController::new(profile);
-    let mut input = neutral_input();
-    input.axes[4] = 1.0;
-
-    // 目標と有効化はcctlのFDCAN2経由で送る。
-    let lines = machine.update(&input, 0.1, None);
-    let servo: Vec<_> = lines
-        .iter()
-        .filter(|line| line.starts_with("CAN 2 800 "))
-        .collect();
-    // 目標・有効化に続けて、実測位置の読み出しを1IDぶん巡回する。
-    assert_eq!(
-        servo,
-        [
-            "CAN 2 800 01040C1E08020190",
-            "CAN 2 800 01060C0100000000",
-            "CAN 2 800 01070C0000000000"
-        ]
-    );
+    let t = telemetry_with(0, [0.0; 3]);
+    machine.observe(&t);
+    let lines = machine.jog_lines(&neutral_input(), &t, false);
+    assert_eq!(lines.len(), 3);
+    assert!(lines.iter().all(|line| line.starts_with("JOG ")));
 }
