@@ -145,6 +145,7 @@ Command parseCommand(const char* line, std::size_t length) {
         else if (equalsIgnoreCase(tokens[0], "RUN")) command.kind = CommandKind::Run;
         else if (equalsIgnoreCase(tokens[0], "SAFE")) command.kind = CommandKind::Safe;
         else if (equalsIgnoreCase(tokens[0], "HEARTBEAT")) command.kind = CommandKind::Heartbeat;
+        else if (equalsIgnoreCase(tokens[0], "CANSTAT")) command.kind = CommandKind::CanStat;
         return command;
     }
 

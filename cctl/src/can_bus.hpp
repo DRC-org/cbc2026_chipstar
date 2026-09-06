@@ -14,6 +14,10 @@ class CanBus {
   // グローバルフィルタを FIFO0 受理に設定し、バスを開始する。
   bool begin();
 
+  // プロトコル状態とエラーカウンタ。実機でのCAN診断に使う。
+  uint32_t protocolStatus() const { return hcan_->Instance->PSR; }
+  uint32_t errorCounters() const { return hcan_->Instance->ECR; }
+
   // バスオフか。ACKの返らない送信が続くと入り、放置すると送受信とも止まったままになる。
   bool busOff() const { return (hcan_->Instance->PSR & FDCAN_PSR_BO) != 0; }
 

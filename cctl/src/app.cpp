@@ -105,6 +105,23 @@ void sendParameter(uint8_t id) {
     sendText(text);
 }
 
+// CANの診断。バスオフか、送受信のエラーカウンタがどう動いているかを返す。
+// tec が増え rec が 0 のままなら、送っているが誰も応答していない。
+void sendCanStat(uint8_t bus, const CanBus& can, bool started) {
+    const uint32_t psr = can.protocolStatus();
+    const uint32_t ecr = can.errorCounters();
+    char text[112];
+    std::snprintf(text, sizeof(text),
+                  "CANSTAT bus=%u started=%u busoff=%u lec=%lu tec=%lu rec=%lu cel=%lu",
+                  static_cast<unsigned>(bus), static_cast<unsigned>(started ? 1 : 0),
+                  static_cast<unsigned>((psr & FDCAN_PSR_BO) ? 1 : 0),
+                  static_cast<unsigned long>(psr & 0x7),
+                  static_cast<unsigned long>(ecr & 0xFF),
+                  static_cast<unsigned long>((ecr >> 8) & 0x7F),
+                  static_cast<unsigned long>((ecr >> 16) & 0xFF));
+    sendText(text);
+}
+
 void applyCommand(const domain::Command& command) {
     switch (command.kind) {
         case domain::CommandKind::Hello:
@@ -179,6 +196,10 @@ void applyCommand(const domain::Command& command) {
             else if (!controller.writeDmRegister(command.param_id, command.raw_value)) {
                 sendText("ERR code=CAN_TX");
             }
+            break;
+        case domain::CommandKind::CanStat:
+            sendCanStat(1, motor_bus, motor_bus_ready);
+            sendCanStat(2, peripheral_bus, peripheral_bus_ready);
             break;
         case domain::CommandKind::None:
             break;

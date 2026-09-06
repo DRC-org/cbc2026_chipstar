@@ -133,3 +133,9 @@ TEST_CASE("DMレジスタの不正な指定を拒否する") {
     CHECK(parse("DMREG 10 0000000G").kind == CommandKind::None);
     CHECK(parse("DMREG 10 00000002 x").kind == CommandKind::None);
 }
+
+TEST_CASE("CANの診断指令を解釈する") {
+    CHECK(parse("CANSTAT").kind == CommandKind::CanStat);
+    CHECK(parse("canstat").kind == CommandKind::CanStat);
+    CHECK(parse("CANSTAT 1").kind == CommandKind::None);
+}

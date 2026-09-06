@@ -22,6 +22,7 @@ enum class CommandKind : uint8_t {
     ParamGet,
     DmRegRead,
     DmRegWrite,
+    CanStat,
 };
 
 struct Command {
