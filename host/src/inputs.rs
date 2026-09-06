@@ -16,7 +16,7 @@ fn capability(board: Board) -> Option<(u8, u8)> {
     match board {
         Board::SerialSvmd => Some((63, 15)),
         Board::Dcmd => Some((7, 3)),
-        Board::Cctl | Board::Svmd => None,
+        Board::Cctl | Board::Svmd | Board::Network => None,
     }
 }
 

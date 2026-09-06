@@ -37,8 +37,12 @@ struct Args {
     seconds: u64,
 }
 
-fn output_ids(session: &fw_test::Session) -> Vec<u8> {
-    session.output_expiries().into_iter().map(|(id, _)| id).collect()
+fn output_ids(session: &fw_test::Session) -> Vec<String> {
+    session
+        .output_expiries()
+        .into_iter()
+        .map(|(name, _)| name)
+        .collect()
 }
 
 fn main() -> Result<()> {
@@ -53,7 +57,15 @@ fn main() -> Result<()> {
     let mut link = serial::SerialLink::new(args.serial_device, baud);
     connect(&mut link, args.board)?;
     let mut session = Session::new(args.board, Duration::from_secs(args.seconds));
-    fw_test_transport::prepare(&mut link, args.board, &mut session)?;
+    let reachable = fw_test_transport::prepare(&mut link, args.board, &mut session)?;
+    session.retain_boards(&reachable);
+    for board in args.board.members() {
+        if matches!(board, fw_test::Board::Svmd | fw_test::Board::Dcmd)
+            && !reachable.contains(&board)
+        {
+            println!("応答なし: {}（対象から外しました）", board.key());
+        }
+    }
     println!("{}", session.help());
     println!(
         "出力は最大{}秒。機構を安全に固定し、通常hostを終了して使用してください。",

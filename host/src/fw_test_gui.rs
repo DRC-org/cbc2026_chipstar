@@ -26,7 +26,9 @@ pub struct Snapshot {
     pub inputs: Option<crate::inputs::InputState>,
     pub input_rx: Option<Instant>,
     /// 出力中の番号と自動OFFの期限。
-    pub outputs: Vec<(u8, Instant)>,
+    pub outputs: Vec<(String, Instant)>,
+    /// ネットワーク確認で応答しなかった基板。
+    pub missing: Vec<String>,
     pub ready: bool,
     pub switches: Vec<String>,
     pub watchdog: bool,
@@ -105,8 +107,21 @@ pub fn run(shared: &Shared, config: Config) {
     let mut session = Session::new(config.board, Duration::from_secs(config.seconds));
     let result = (|| -> anyhow::Result<()> {
         fw_test_transport::connect(&mut link, config.board)?;
-        fw_test_transport::prepare(&mut link, config.board, &mut session)?;
-        shared.tests.update(|s| s.ready = true);
+        let reachable = fw_test_transport::prepare(&mut link, config.board, &mut session)?;
+        session.retain_boards(&reachable);
+        let missing: Vec<String> = config
+            .board
+            .members()
+            .into_iter()
+            .filter(|board| {
+                matches!(board, Board::Svmd | Board::Dcmd) && !reachable.contains(board)
+            })
+            .map(|board| board.key().to_owned())
+            .collect();
+        shared.tests.update(|s| {
+            s.ready = true;
+            s.missing = missing;
+        });
         while shared.is_running() && shared.tests.config().is_some() {
             let now = Instant::now();
             if let Some(command) = shared.tests.take() {
@@ -169,7 +184,7 @@ pub fn run(shared: &Shared, config: Config) {
 
 pub struct Panel {
     config: Config,
-    motors: Vec<(u8, f32)>,
+    motors: Vec<(Board, u8, f32)>,
     new_id: u8,
 }
 
@@ -182,7 +197,7 @@ impl Panel {
                 baud,
                 seconds: 5,
             },
-            motors: vec![(0, 0.0), (1, 0.0), (2, 0.0)],
+            motors: default_motors(Board::Cctl),
             new_id: 1,
         }
     }
@@ -228,7 +243,13 @@ impl Panel {
         let previous = self.config.board;
         ui.horizontal(|ui| {
             ui.label("対象");
-            for board in [Board::Cctl, Board::Svmd, Board::SerialSvmd, Board::Dcmd] {
+            for board in [
+                Board::Network,
+                Board::Cctl,
+                Board::Svmd,
+                Board::SerialSvmd,
+                Board::Dcmd,
+            ] {
                 ui.selectable_value(&mut self.config.board, board, board_name(board));
             }
         });
@@ -265,12 +286,7 @@ impl Panel {
             cfg.serial_device
         };
         self.config.baud = if serial_svmd { 38400 } else { cfg.baud_rate };
-        self.motors = match self.config.board {
-            Board::Cctl => vec![(0, 0.0), (1, 0.0), (2, 0.0)],
-            Board::Svmd => (0..4).map(|channel| (channel, 1500.0)).collect(),
-            Board::SerialSvmd => vec![(1, 2048.0)],
-            Board::Dcmd => vec![(0, 0.0)],
-        };
+        self.motors = default_motors(self.config.board);
     }
 
     /// 2. 出力。1行が1デバイスで、チェックで出力、値の変更は「送り直す」で反映する。
@@ -280,16 +296,24 @@ impl Panel {
         if !live {
             ui.label("接続確認が済むまで出力できません。");
         }
+        let network = self.config.board == Board::Network;
         ui.add_enabled_ui(live, |ui| {
-            let board = self.config.board;
-            for (id, value) in &mut self.motors {
-                let name = format!("motor{id}");
+            let mut shown = None;
+            for (board, id, value) in &mut self.motors {
+                if network && shown != Some(*board) {
+                    shown = Some(*board);
+                    ui.add_space(4.0);
+                    ui.label(egui::RichText::new(board_name(*board)).strong());
+                }
+                let name = feature(network, *board, &format!("motor{id}"));
                 let on = snapshot.switches.contains(&name);
                 ui.horizontal(|ui| {
-                    ui.label(egui::RichText::new(format!("{:<22}", output_label(board, *id))).monospace());
-                    let (min, max, unit) = output_range(board, *id);
+                    ui.label(
+                        egui::RichText::new(format!("{:<22}", output_label(*board, *id))).monospace(),
+                    );
+                    let (min, max, unit) = output_range(*board, *id);
                     let mut drag = egui::DragValue::new(value).range(min..=max);
-                    drag = if board == Board::Cctl {
+                    drag = if *board == Board::Cctl {
                         drag.speed(0.1)
                     } else {
                         drag.speed(1.0).max_decimals(0)
@@ -312,21 +336,21 @@ impl Panel {
                     {
                         shared.tests.command(format!("on {name} {value}"));
                     }
-                    if let Some(remaining) = remaining_seconds(snapshot, *id) {
+                    if let Some(remaining) = remaining_seconds(snapshot, &name) {
                         ui.label(format!("自動OFFまで {remaining:.0} 秒"));
                     }
                 });
             }
-            if board == Board::SerialSvmd {
+            if self.config.board == Board::SerialSvmd {
                 ui.horizontal(|ui| {
                     ui.label("IDを追加");
                     ui.add(egui::DragValue::new(&mut self.new_id).range(1..=253));
                     if ui
                         .add_enabled(self.motors.len() < 16, egui::Button::new("追加"))
                         .clicked()
-                        && !self.motors.iter().any(|(id, _)| *id == self.new_id)
+                        && !self.motors.iter().any(|(_, id, _)| *id == self.new_id)
                     {
-                        self.motors.push((self.new_id, 2048.0));
+                        self.motors.push((Board::SerialSvmd, self.new_id, 2048.0));
                     }
                 });
             }
@@ -338,35 +362,55 @@ impl Panel {
     fn monitor_ui(&mut self, ui: &mut egui::Ui, shared: &Shared, snapshot: &Snapshot) {
         section(ui, "3. 読取り");
         let live = snapshot.ready && !snapshot.watchdog;
-        let board = self.config.board;
+        let target = self.config.board;
+        let network = target == Board::Network;
         ui.add_enabled_ui(live, |ui| {
-            ui.horizontal(|ui| {
-                if board != Board::SerialSvmd {
-                    toggle(ui, shared, snapshot, "status", "状態");
-                }
-                if board == Board::Dcmd {
-                    toggle(ui, shared, snapshot, "encoder", "ENC1");
-                }
-                if crate::inputs::supported(board) {
-                    toggle(ui, shared, snapshot, "inputs", "接点・DIP");
-                }
-                toggle(ui, shared, snapshot, "communication", "受信をすべて表示");
-            });
-            if board == Board::SerialSvmd {
+            for board in target.members() {
+                ui.horizontal(|ui| {
+                    if network {
+                        ui.label(egui::RichText::new(format!("{:<8}", board_name(board))).monospace());
+                    }
+                    if board != Board::SerialSvmd {
+                        let name = feature(network, board, "status");
+                        toggle(ui, shared, snapshot, &name, "状態");
+                    }
+                    if board == Board::Dcmd {
+                        let name = feature(network, board, "encoder");
+                        toggle(ui, shared, snapshot, &name, "ENC1");
+                        let name = feature(network, board, "inputs");
+                        toggle(ui, shared, snapshot, &name, "接点・DIP");
+                    }
+                    if board == Board::SerialSvmd && crate::inputs::supported(board) {
+                        let name = feature(network, board, "inputs");
+                        toggle(ui, shared, snapshot, &name, "接点・DIP");
+                    }
+                });
+            }
+            toggle(ui, shared, snapshot, "communication", "受信をすべて表示");
+            if target == Board::SerialSvmd {
                 ui.horizontal(|ui| {
                     ui.label("位置読取り");
-                    for (id, _) in &self.motors {
+                    for (_, id, _) in &self.motors {
                         toggle(ui, shared, snapshot, &format!("read{id}"), &format!("ID {id}"));
                     }
                 });
             }
-            if board == Board::Cctl {
-                ui.label("接点とDIPは「状態」のSTATE行に sw= として出ます。");
+            if target.members().contains(&Board::Cctl) {
+                ui.label("cctlの接点とDIPは「状態」のSTATE行に sw= として出ます。");
             }
             if let Some(state) = &snapshot.inputs {
-                contacts_ui(ui, board, state, snapshot.input_rx);
+                contacts_ui(ui, Board::Dcmd, state, snapshot.input_rx);
             }
         });
+    }
+}
+
+/// 機能名。ネットワーク確認では基板を前置きする。
+fn feature(network: bool, board: Board, name: &str) -> String {
+    if network {
+        format!("{}.{name}", board.key())
+    } else {
+        name.to_owned()
     }
 }
 
@@ -400,6 +444,15 @@ fn state_banner(ui: &mut egui::Ui, enabled: bool, snapshot: &Snapshot) {
         Some(at) => format!("最終受信: {:.1} 秒前", at.elapsed().as_secs_f32()),
         None => "受信データなし".into(),
     });
+    if !snapshot.missing.is_empty() {
+        ui.colored_label(
+            egui::Color32::from_rgb(200, 140, 0),
+            format!(
+                "CAN先の応答なし: {}。電源・CAN配線・終端抵抗を確認してください。",
+                snapshot.missing.join(", ")
+            ),
+        );
+    }
 }
 
 /// 4. 停止と終了。危険側の操作をまとめて置く。
@@ -492,11 +545,29 @@ fn board_name(board: Board) -> &'static str {
         Board::Svmd => "svmd",
         Board::SerialSvmd => "serial_svmd",
         Board::Dcmd => "DCMD",
+        Board::Network => "ネットワーク一括",
     }
+}
+
+/// 対象を選んだときの初期行。ネットワークでは全基板ぶんを並べる。
+fn default_motors(board: Board) -> Vec<(Board, u8, f32)> {
+    board
+        .members()
+        .into_iter()
+        .flat_map(|board| match board {
+            Board::Cctl => vec![(board, 0, 0.0), (board, 1, 0.0), (board, 2, 0.0)],
+            Board::Svmd => (0..4).map(|channel| (board, channel, 1500.0)).collect(),
+            Board::SerialSvmd => vec![(board, 1, 2048.0)],
+            Board::Dcmd | Board::Network => vec![(board, 0, 0.0)],
+        })
+        .collect()
 }
 
 fn connection_hint(board: Board) -> &'static str {
     match board {
+        Board::Network => {
+            "cctlのUSB 1本で、cctl・svmd・DCMDを繋ぎ替えずにまとめて確認します。"
+        }
         Board::Cctl => "USB CDCへ直接繋ぎます。",
         Board::Svmd => "cctlのFDCAN2経由。接続先はcctlのUSB CDCです。",
         Board::SerialSvmd => "USART2のUSBシリアル変換器へ直接繋ぎます（既定38400 baud）。",
@@ -514,7 +585,7 @@ fn output_label(board: Board, id: u8) -> String {
         },
         Board::Svmd => format!("ch {id} — PWMサーボ"),
         Board::SerialSvmd => format!("ID {id} — STS3215"),
-        Board::Dcmd => "PWM0 — DCモータ".into(),
+        Board::Dcmd | Board::Network => "PWM0 — DCモータ".into(),
     }
 }
 
@@ -524,12 +595,12 @@ fn output_range(board: Board, id: u8) -> (f32, f32, &'static str) {
         Board::Cctl => (-12.5, 12.5, "rad"),
         Board::Svmd => (500.0, 2500.0, "us"),
         Board::SerialSvmd => (0.0, 4095.0, "position"),
-        Board::Dcmd => (-100.0, 100.0, "permille（上限10%）"),
+        Board::Dcmd | Board::Network => (-100.0, 100.0, "permille（上限10%）"),
     }
 }
 
-fn remaining_seconds(snapshot: &Snapshot, id: u8) -> Option<f32> {
-    let (_, at) = snapshot.outputs.iter().find(|(output, _)| *output == id)?;
+fn remaining_seconds(snapshot: &Snapshot, name: &str) -> Option<f32> {
+    let (_, at) = snapshot.outputs.iter().find(|(output, _)| output == name)?;
     Some(at.saturating_duration_since(Instant::now()).as_secs_f32())
 }
 

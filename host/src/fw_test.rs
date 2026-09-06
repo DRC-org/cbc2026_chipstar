@@ -1,4 +1,4 @@
-use anyhow::{Result, bail, ensure};
+use anyhow::{Result, anyhow, bail, ensure};
 use clap::ValueEnum;
 use std::{
     collections::{BTreeMap, BTreeSet},
@@ -11,83 +11,57 @@ pub enum Board {
     Svmd,
     SerialSvmd,
     Dcmd,
+    /// cctlのUSB1本で、cctl・svmd・DCMDを繋ぎ替えずにまとめて扱う。
+    Network,
 }
 
-pub struct Session {
+impl Board {
+    pub fn key(self) -> &'static str {
+        match self {
+            Board::Cctl => "cctl",
+            Board::Svmd => "svmd",
+            Board::SerialSvmd => "serial_svmd",
+            Board::Dcmd => "dcmd",
+            Board::Network => "network",
+        }
+    }
+
+    /// この対象が実際に触る基板。
+    pub fn members(self) -> Vec<Board> {
+        match self {
+            Board::Network => vec![Board::Cctl, Board::Svmd, Board::Dcmd],
+            other => vec![other],
+        }
+    }
+
+    /// cctlのUSB CDCへ繋ぐ対象か。
+    pub fn via_cctl(self) -> bool {
+        !matches!(self, Board::SerialSvmd)
+    }
+}
+
+/// 対象ごとの状態。`Network` では扱う基板ぶんだけ持つ。
+struct Part {
     board: Board,
-    duration: Duration,
     outputs: BTreeMap<u8, Instant>,
     reads: BTreeSet<u8>,
     status: bool,
     encoder: bool,
-    communication: bool,
     inputs: bool,
     last_read: u8,
-    silent_until: Option<Instant>,
 }
 
-fn can(id: u16, op: u8, channel: u8, flag: u8, value: i16) -> String {
-    let [hi, lo] = value.to_be_bytes();
-    format!("CAN 2 {id} 01{op:02X}{channel:02X}{flag:02X}{hi:02X}{lo:02X}0000")
-}
-
-impl Session {
-    pub fn switches(&self) -> Vec<String> {
-        let mut switches: Vec<_> = self.outputs.keys().map(|id| format!("motor{id}")).collect();
-        switches.extend(self.reads.iter().map(|id| format!("read{id}")));
-        for (name, enabled) in [
-            ("status", self.status),
-            ("encoder", self.encoder),
-            ("communication", self.communication),
-            ("inputs", self.inputs),
-        ] {
-            if enabled {
-                switches.push(name.into());
-            }
-        }
-        switches
-    }
-
-    pub fn watchdog_running(&self) -> bool {
-        self.silent_until.is_some()
-    }
-    /// 出力中の番号と自動OFFの期限。
-    pub fn output_expiries(&self) -> Vec<(u8, Instant)> {
-        self.outputs.iter().map(|(id, at)| (*id, *at)).collect()
-    }
-
-    pub fn new(board: Board, duration: Duration) -> Self {
+impl Part {
+    fn new(board: Board) -> Self {
         Self {
             board,
-            duration,
             outputs: BTreeMap::new(),
             reads: BTreeSet::new(),
             status: false,
             encoder: false,
-            communication: false,
             inputs: false,
             last_read: 0,
-            silent_until: None,
         }
-    }
-
-    pub fn help(&self) -> String {
-        let features = match self.board {
-            Board::Cctl => "motor0..2 <位置>（0/2: rad、1: motor deg）; status",
-            Board::Svmd => "motor0..3 <パルス幅500..2500 us>; status",
-            Board::SerialSvmd => "motor1..253 <位置0..4095>; read1..253（同時最大16 ID）",
-            Board::Dcmd => "motor0 <duty -100..100 permille>; encoder; status",
-        };
-        let inputs = if crate::inputs::supported(self.board) {
-            "; inputs (SW/DIP読取り)"
-        } else if self.board == Board::Cctl {
-            "。接点はstatusのSTATE行にsw=として出る"
-        } else {
-            ""
-        };
-        format!(
-            "on <機能> [値] / off <機能> / stop / watchdog / help / quit\n機能: {features}; communication{inputs}\nwatchdog: 全送信を500ms止め、出力をOFF状態に戻す。自動再開なし。"
-        )
     }
 
     fn check_id(&self, id: u8) -> Result<()> {
@@ -97,6 +71,7 @@ impl Session {
                 Board::Svmd => id < 4,
                 Board::SerialSvmd => (1..=253).contains(&id),
                 Board::Dcmd => id == 0,
+                Board::Network => false,
             },
             "未対応のチャネル/IDです"
         );
@@ -109,21 +84,240 @@ impl Session {
             Board::Cctl => vec![format!("ENABLE {} 0", 1u8 << id)],
             Board::Svmd => vec![can(768, 2, id, 0, 0)],
             Board::SerialSvmd => vec![format!("SERVO ENABLE {id} 0")],
-            Board::Dcmd => vec![can(784, 3, 0, 0, 0)],
+            Board::Dcmd | Board::Network => vec![can(784, 3, 0, 0, 0)],
         }
     }
 
-    pub fn stop(&mut self) -> Vec<String> {
+    fn stop(&mut self) -> Vec<String> {
         self.outputs.clear();
         self.reads.clear();
-        self.communication = false;
-        self.silent_until = None;
         match self.board {
             Board::Cctl => vec!["STOP".into(), "ENABLE 7 0".into()],
             Board::SerialSvmd => vec!["STOP".into()],
             Board::Svmd => vec![can(768, 0, 0, 0, 0)],
-            Board::Dcmd => vec![can(784, 3, 0, 0, 0)],
+            Board::Dcmd | Board::Network => vec![can(784, 3, 0, 0, 0)],
         }
+    }
+
+    fn drive(&mut self, id: u8, value: f32) -> Result<Vec<String>> {
+        Ok(match self.board {
+            Board::Cctl => {
+                let limit = if id == 1 { 26000.0 } else { 12.5 };
+                ensure!(value.abs() <= limit, "FWの位置上限を超えています");
+                vec![
+                    "HELLO 1".into(),
+                    format!("TARGET {id} {value}"),
+                    format!("ENABLE {} 1", 1u8 << id),
+                    "RUN".into(),
+                ]
+            }
+            Board::Svmd => {
+                ensure!(
+                    value.fract() == 0.0 && (500.0..=2500.0).contains(&value),
+                    "500..2500の整数を指定してください"
+                );
+                vec![can(768, 1, id, 0, value as i16), can(768, 2, id, 1, 0)]
+            }
+            Board::SerialSvmd => {
+                ensure!(
+                    value.fract() == 0.0 && (0.0..=4095.0).contains(&value),
+                    "0..4095の整数を指定してください"
+                );
+                ensure!(
+                    self.outputs.contains_key(&id) || self.outputs.len() < 16,
+                    "同時に最大16出力です"
+                );
+                vec![
+                    "HELLO 1".into(),
+                    format!("SERVO TARGET {id} {} 100 10", value as u16),
+                    format!("SERVO ENABLE {id} 1"),
+                    "RUN".into(),
+                ]
+            }
+            Board::Dcmd | Board::Network => {
+                ensure!(
+                    value.fract() == 0.0 && value.abs() <= 100.0,
+                    "テスト出力は-100..100の整数です（最大10%）"
+                );
+                vec![
+                    can(784, 0, 0, 0, 0),
+                    can(784, 4, 0, 0, value as i16),
+                    can(784, 2, 1, 0, 0),
+                ]
+            }
+        })
+    }
+
+    /// 出力を保つための定期送信。
+    fn keepalive(&self, communication: bool) -> Option<String> {
+        if self.outputs.is_empty()
+            && !communication
+            && !(self.board == Board::Svmd && self.status)
+        {
+            return None;
+        }
+        Some(match self.board {
+            Board::Cctl | Board::SerialSvmd => if communication { "HELLO 1" } else { "HEARTBEAT" }.into(),
+            Board::Svmd => can(768, 3, 0, 0, 0),
+            Board::Dcmd | Board::Network => {
+                can(784, if self.outputs.is_empty() { 0 } else { 5 }, 0, 0, 0)
+            }
+        })
+    }
+
+    fn visible(&self, line: &str) -> bool {
+        if self.inputs && crate::inputs::parse(line, self.board).is_some() {
+            return true;
+        }
+        match self.board {
+            Board::Cctl => self.status && line.starts_with("STATE "),
+            Board::Svmd => self.status && line.starts_with("CAN_RX bus=2 id=769 "),
+            Board::Dcmd | Board::Network => {
+                (self.status && line.starts_with("CAN_RX bus=2 id=785 "))
+                    || (self.encoder && line.starts_with("CAN_RX bus=2 id=786 "))
+            }
+            Board::SerialSvmd => line
+                .split_whitespace()
+                .nth(1)
+                .and_then(|v| v.strip_prefix("id="))
+                .and_then(|id| id.parse::<u8>().ok())
+                .is_some_and(|id| line.starts_with("SERVO_STATE ") && self.reads.contains(&id)),
+        }
+    }
+}
+
+pub struct Session {
+    board: Board,
+    duration: Duration,
+    parts: Vec<Part>,
+    communication: bool,
+    silent_until: Option<Instant>,
+}
+
+fn can(id: u16, op: u8, channel: u8, flag: u8, value: i16) -> String {
+    let [hi, lo] = value.to_be_bytes();
+    format!("CAN 2 {id} 01{op:02X}{channel:02X}{flag:02X}{hi:02X}{lo:02X}0000")
+}
+
+impl Session {
+    pub fn new(board: Board, duration: Duration) -> Self {
+        Self {
+            board,
+            duration,
+            parts: board.members().into_iter().map(Part::new).collect(),
+            communication: false,
+            silent_until: None,
+        }
+    }
+
+    /// CAN先が応答しなかった基板を対象から外す。ネットワーク確認でのみ使う。
+    pub fn retain_boards(&mut self, reachable: &[Board]) {
+        self.parts
+            .retain(|part| part.board == Board::Cctl || reachable.contains(&part.board));
+    }
+
+    /// 機能名に基板を付ける。単独対象では付けない。
+    fn qualify(&self, part: &Part, name: &str) -> String {
+        if self.board == Board::Network {
+            format!("{}.{name}", part.board.key())
+        } else {
+            name.to_owned()
+        }
+    }
+
+    fn resolve<'a>(&self, name: &'a str) -> Result<(usize, &'a str)> {
+        if self.board != Board::Network {
+            return Ok((0, name));
+        }
+        let (key, rest) = name
+            .split_once('.')
+            .ok_or_else(|| anyhow!("cctl.motor0 のように基板を指定してください"))?;
+        let index = self
+            .parts
+            .iter()
+            .position(|part| part.board.key() == key)
+            .ok_or_else(|| anyhow!("この対象に {key} はありません"))?;
+        Ok((index, rest))
+    }
+
+    pub fn switches(&self) -> Vec<String> {
+        let mut switches = Vec::new();
+        for part in &self.parts {
+            switches.extend(
+                part.outputs
+                    .keys()
+                    .map(|id| self.qualify(part, &format!("motor{id}"))),
+            );
+            switches.extend(
+                part.reads
+                    .iter()
+                    .map(|id| self.qualify(part, &format!("read{id}"))),
+            );
+            for (name, enabled) in [
+                ("status", part.status),
+                ("encoder", part.encoder),
+                ("inputs", part.inputs),
+            ] {
+                if enabled {
+                    switches.push(self.qualify(part, name));
+                }
+            }
+        }
+        if self.communication {
+            switches.push("communication".into());
+        }
+        switches
+    }
+
+    pub fn watchdog_running(&self) -> bool {
+        self.silent_until.is_some()
+    }
+
+    /// 出力中の機能名と自動OFFの期限。
+    pub fn output_expiries(&self) -> Vec<(String, Instant)> {
+        self.parts
+            .iter()
+            .flat_map(|part| {
+                part.outputs
+                    .iter()
+                    .map(move |(id, at)| (self.qualify(part, &format!("motor{id}")), *at))
+            })
+            .collect()
+    }
+
+    pub fn help(&self) -> String {
+        let features = match self.board {
+            Board::Cctl => "motor0..2 <位置>（0/2: rad、1: motor deg）; status".to_owned(),
+            Board::Svmd => "motor0..3 <パルス幅500..2500 us>; status".to_owned(),
+            Board::SerialSvmd => "motor1..253 <位置0..4095>; read1..253（同時最大16 ID）".to_owned(),
+            Board::Dcmd => "motor0 <duty -100..100 permille>; encoder; status".to_owned(),
+            Board::Network => format!(
+                "基板名を前置きする。応答のあった基板: {}\n  cctl.motor0..2 <位置>; cctl.status\n  svmd.motor0..3 <500..2500 us>; svmd.status\n  dcmd.motor0 <-100..100 permille>; dcmd.encoder; dcmd.status; dcmd.inputs",
+                self.parts
+                    .iter()
+                    .map(|part| part.board.key())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            ),
+        };
+        let inputs = if self.board == Board::Network {
+            ""
+        } else if crate::inputs::supported(self.board) {
+            "; inputs (SW/DIP読取り)"
+        } else if self.board == Board::Cctl {
+            "。接点はstatusのSTATE行にsw=として出る"
+        } else {
+            ""
+        };
+        format!(
+            "on <機能> [値] / off <機能> / stop / watchdog / help / quit\n機能: {features}; communication{inputs}\nwatchdog: 全送信を500ms止め、出力をOFF状態に戻す。自動再開なし。"
+        )
+    }
+
+    pub fn stop(&mut self) -> Vec<String> {
+        self.communication = false;
+        self.silent_until = None;
+        self.parts.iter_mut().flat_map(Part::stop).collect()
     }
 
     pub fn command(&mut self, line: &str, now: Instant) -> Result<Vec<String>> {
@@ -137,7 +331,7 @@ impl Session {
         );
         if tokens == ["watchdog"] {
             ensure!(
-                !self.outputs.is_empty(),
+                self.parts.iter().any(|part| !part.outputs.is_empty()),
                 "出力テストをONにしてから実行してください"
             );
             self.silent_until = Some(now + Duration::from_millis(500));
@@ -152,102 +346,64 @@ impl Session {
             "off" => false,
             _ => bail!("on/offを指定してください"),
         };
-        let name = tokens[1];
+        if tokens[1] == "communication" {
+            ensure!(tokens.len() == 2, "この機能に値は不要です");
+            self.communication = enabled;
+            return Ok(vec![]);
+        }
+        let (index, name) = self.resolve(tokens[1])?;
+        let duration = self.duration;
+
         if let Some(id) = name.strip_prefix("motor") {
             let id: u8 = id.parse()?;
-            self.check_id(id)?;
+            let part = &mut self.parts[index];
+            part.check_id(id)?;
             if !enabled {
                 ensure!(tokens.len() == 2, "offに値は不要です");
-                return Ok(self.off(id));
+                return Ok(part.off(id));
             }
             ensure!(tokens.len() == 3, "出力目標を明示してください");
             let value: f32 = tokens[2].parse()?;
             ensure!(value.is_finite(), "有限値を指定してください");
-            let commands = match self.board {
-                Board::Cctl => {
-                    let limit = if id == 1 { 26000.0 } else { 12.5 };
-                    ensure!(value.abs() <= limit, "FWの位置上限を超えています");
-                    vec![
-                        "HELLO 1".into(),
-                        format!("TARGET {id} {value}"),
-                        format!("ENABLE {} 1", 1u8 << id),
-                        "RUN".into(),
-                    ]
-                }
-                Board::Svmd => {
-                    ensure!(
-                        value.fract() == 0.0 && (500.0..=2500.0).contains(&value),
-                        "500..2500の整数を指定してください"
-                    );
-                    vec![can(768, 1, id, 0, value as i16), can(768, 2, id, 1, 0)]
-                }
-                Board::SerialSvmd => {
-                    ensure!(
-                        value.fract() == 0.0 && (0.0..=4095.0).contains(&value),
-                        "0..4095の整数を指定してください"
-                    );
-                    ensure!(
-                        self.outputs.contains_key(&id) || self.outputs.len() < 16,
-                        "同時に最大16出力です"
-                    );
-                    vec![
-                        "HELLO 1".into(),
-                        format!("SERVO TARGET {id} {} 100 10", value as u16),
-                        format!("SERVO ENABLE {id} 1"),
-                        "RUN".into(),
-                    ]
-                }
-                Board::Dcmd => {
-                    ensure!(
-                        value.fract() == 0.0 && value.abs() <= 100.0,
-                        "テスト出力は-100..100の整数です（最大10%）"
-                    );
-                    vec![
-                        can(784, 0, 0, 0, 0),
-                        can(784, 4, 0, 0, value as i16),
-                        can(784, 2, 1, 0, 0),
-                    ]
-                }
-            };
-            self.outputs.insert(id, now + self.duration);
+            let commands = part.drive(id, value)?;
+            part.outputs.insert(id, now + duration);
             return Ok(commands);
         }
+
         ensure!(tokens.len() == 2, "この機能に値は不要です");
+        let board = self.parts[index].board;
+        let part = &mut self.parts[index];
         match name {
             "inputs" => {
                 ensure!(
-                    crate::inputs::supported(self.board),
+                    crate::inputs::supported(board),
                     "この基板に要求応答型の接点報告はありません"
                 );
-                self.inputs = enabled;
+                part.inputs = enabled;
             }
             "status" => {
-                ensure!(
-                    self.board != Board::SerialSvmd,
-                    "read<ID>を使用してください"
-                );
-                self.status = enabled;
+                ensure!(board != Board::SerialSvmd, "read<ID>を使用してください");
+                part.status = enabled;
             }
             "encoder" => {
-                ensure!(self.board == Board::Dcmd, "encoderはDCMD専用です");
-                self.encoder = enabled;
+                ensure!(board == Board::Dcmd, "encoderはDCMD専用です");
+                part.encoder = enabled;
             }
-            "communication" => self.communication = enabled,
             _ => {
-                ensure!(self.board == Board::SerialSvmd, "未対応の機能です");
+                ensure!(board == Board::SerialSvmd, "未対応の機能です");
                 let id: u8 = name
                     .strip_prefix("read")
-                    .ok_or_else(|| anyhow::anyhow!("未対応の機能です"))?
+                    .ok_or_else(|| anyhow!("未対応の機能です"))?
                     .parse()?;
-                self.check_id(id)?;
+                part.check_id(id)?;
                 if enabled {
                     ensure!(
-                        self.reads.contains(&id) || self.reads.len() < 16,
+                        part.reads.contains(&id) || part.reads.len() < 16,
                         "同時に最大16読取りです"
                     );
-                    self.reads.insert(id);
+                    part.reads.insert(id);
                 } else {
-                    self.reads.remove(&id);
+                    part.reads.remove(&id);
                 }
             }
         }
@@ -258,72 +414,42 @@ impl Session {
         if let Some(until) = self.silent_until {
             return if now >= until { self.stop() } else { vec![] };
         }
-        let expired: Vec<_> = self
-            .outputs
-            .iter()
-            .filter(|(_, until)| now >= **until)
-            .map(|(&id, _)| id)
-            .collect();
-        let mut lines = vec![];
-        for id in expired {
-            lines.extend(self.off(id));
-        }
-        if !self.outputs.is_empty()
-            || self.communication
-            || (self.board == Board::Svmd && self.status)
-        {
-            lines.push(match self.board {
-                Board::Cctl | Board::SerialSvmd => if self.communication {
-                    "HELLO 1"
-                } else {
-                    "HEARTBEAT"
-                }
-                .into(),
-                Board::Svmd => can(768, 3, 0, 0, 0),
-                Board::Dcmd => can(784, if self.outputs.is_empty() { 0 } else { 5 }, 0, 0, 0),
-            });
-        }
-        // 1周期1IDに制限し、出力のWatchdog更新を遅らせない。
-        if self.inputs {
-            lines.push(match self.board {
-                Board::Dcmd => can(784, 6, 0, 0, 0),
-                _ => "INPUT READ".into(),
-            });
-        }
-        if let Some(id) = self
-            .reads
-            .iter()
-            .copied()
-            .find(|&id| id > self.last_read)
-            .or_else(|| self.reads.first().copied())
-        {
-            lines.push(format!("SERVO READ {id}"));
-            self.last_read = id;
+        let communication = self.communication;
+        let mut lines = Vec::new();
+        for part in &mut self.parts {
+            let expired: Vec<_> = part
+                .outputs
+                .iter()
+                .filter(|(_, until)| now >= **until)
+                .map(|(&id, _)| id)
+                .collect();
+            for id in expired {
+                lines.extend(part.off(id));
+            }
+            lines.extend(part.keepalive(communication));
+            // 1周期1IDに制限し、出力のWatchdog更新を遅らせない。
+            if part.inputs {
+                lines.push(match part.board {
+                    Board::Dcmd => can(784, 6, 0, 0, 0),
+                    _ => "INPUT READ".into(),
+                });
+            }
+            if let Some(id) = part
+                .reads
+                .iter()
+                .copied()
+                .find(|&id| id > part.last_read)
+                .or_else(|| part.reads.first().copied())
+            {
+                lines.push(format!("SERVO READ {id}"));
+                part.last_read = id;
+            }
         }
         lines
     }
 
     pub fn visible(&self, line: &str) -> bool {
-        if self.inputs && crate::inputs::parse(line, self.board).is_some() {
-            return true;
-        }
-        if self.communication {
-            return true;
-        }
-        match self.board {
-            Board::Cctl => self.status && line.starts_with("STATE "),
-            Board::Svmd => self.status && line.starts_with("CAN_RX bus=2 id=769 "),
-            Board::Dcmd => {
-                (self.status && line.starts_with("CAN_RX bus=2 id=785 "))
-                    || (self.encoder && line.starts_with("CAN_RX bus=2 id=786 "))
-            }
-            Board::SerialSvmd => line
-                .split_whitespace()
-                .nth(1)
-                .and_then(|v| v.strip_prefix("id="))
-                .and_then(|id| id.parse::<u8>().ok())
-                .is_some_and(|id| line.starts_with("SERVO_STATE ") && self.reads.contains(&id)),
-        }
+        self.communication || self.parts.iter().any(|part| part.visible(line))
     }
 }
 
@@ -394,6 +520,62 @@ mod tests {
         assert!(s.tick(now).is_empty());
     }
     #[test]
+    fn network_drives_every_board_over_one_link() {
+        let now = Instant::now();
+        let mut s = Session::new(Board::Network, Duration::from_secs(5));
+
+        // 基板を前置きしないと、どこへの指令か決まらない。
+        assert!(s.command("on motor0 0.1", now).is_err());
+
+        let cctl = s.command("on cctl.motor0 0.1", now).unwrap();
+        assert!(cctl.iter().any(|line| line == "TARGET 0 0.1"));
+        let svmd = s.command("on svmd.motor2 1500", now).unwrap();
+        assert!(svmd.iter().any(|line| line.starts_with("CAN 2 768 ")));
+        let dcmd = s.command("on dcmd.motor0 50", now).unwrap();
+        assert!(dcmd.iter().any(|line| line.starts_with("CAN 2 784 ")));
+
+        let switches = s.switches();
+        for name in ["cctl.motor0", "svmd.motor2", "dcmd.motor0"] {
+            assert!(switches.contains(&name.to_owned()), "{name} がない");
+        }
+
+        // 定期送信は3基板ぶんまとめて出る。
+        let tick = s.tick(now);
+        assert!(tick.iter().any(|line| line == "HEARTBEAT"));
+        assert!(tick.iter().any(|line| line.starts_with("CAN 2 768 ")));
+        assert!(tick.iter().any(|line| line.starts_with("CAN 2 784 ")));
+
+        // stopは全基板へ届く。
+        let stop = s.stop();
+        assert!(stop.iter().any(|line| line == "STOP"));
+        assert!(stop.iter().any(|line| line.starts_with("CAN 2 768 ")));
+        assert!(stop.iter().any(|line| line.starts_with("CAN 2 784 ")));
+        assert!(s.output_expiries().is_empty());
+    }
+
+    #[test]
+    fn network_drops_boards_that_did_not_answer() {
+        let now = Instant::now();
+        let mut s = Session::new(Board::Network, Duration::from_secs(5));
+        s.retain_boards(&[Board::Svmd]);
+
+        assert!(s.command("on svmd.motor0 1500", now).is_ok());
+        // 応答がなかったDCMDへは指令を作らない。
+        assert!(s.command("on dcmd.motor0 50", now).is_err());
+        // cctlは接続先そのものなので常に残る。
+        assert!(s.command("on cctl.motor0 0.1", now).is_ok());
+    }
+
+    #[test]
+    fn single_board_keeps_unprefixed_names() {
+        let now = Instant::now();
+        let mut s = Session::new(Board::Cctl, Duration::from_secs(5));
+        assert!(s.command("on motor0 0.1", now).is_ok());
+        assert!(s.switches().contains(&"motor0".to_owned()));
+        assert!(s.command("on cctl.motor0 0.1", now).is_err());
+    }
+
+    #[test]
     fn independent_outputs_and_expiry() {
         let now = Instant::now();
         for board in [Board::Cctl, Board::Svmd, Board::SerialSvmd] {
@@ -406,10 +588,10 @@ mod tests {
                         .unwrap()
                 });
             s.tick(now + Duration::from_secs(5));
-            assert!(!s.outputs.contains_key(&1));
-            assert!(s.outputs.contains_key(&2));
+            assert!(!s.switches().contains(&"motor1".to_owned()));
+            assert!(s.switches().contains(&"motor2".to_owned()));
             s.command("off motor2", now).unwrap();
-            assert!(s.outputs.is_empty());
+            assert!(s.output_expiries().is_empty());
         }
     }
     #[test]
@@ -444,7 +626,7 @@ mod tests {
             for command in commands {
                 assert!(s.command(command, Instant::now()).is_err());
             }
-            assert!(s.outputs.is_empty());
+            assert!(s.output_expiries().is_empty());
         }
     }
     #[test]
@@ -479,7 +661,7 @@ mod tests {
         assert_eq!(s.tick(now), ["SERVO READ 12"]);
         s.command("off read1", now).unwrap();
         assert_eq!(s.tick(now), ["SERVO READ 12"]);
-        assert!(s.outputs.is_empty());
+        assert!(s.output_expiries().is_empty());
     }
     #[test]
     fn decodes_physical_feedback() {
