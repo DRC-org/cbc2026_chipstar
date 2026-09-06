@@ -29,7 +29,7 @@ struct Args {
     /// cctl/svmd/dcmd: cctlのUSB、serial-svmd: USART2のUSBシリアル
     #[arg(long)]
     serial_device: String,
-    /// 省略時: serial-svmd=38400、それ以外=115200
+    /// 省略時は全基板とも115200。
     #[arg(long)]
     baud_rate: Option<u32>,
     /// 各出力の自動OFF時間（1〜30秒）
@@ -47,13 +47,7 @@ fn output_ids(session: &fw_test::Session) -> Vec<String> {
 
 fn main() -> Result<()> {
     let args = Args::parse();
-    let baud = args
-        .baud_rate
-        .unwrap_or(if args.board == Board::SerialSvmd {
-            38400
-        } else {
-            115200
-        });
+    let baud = args.baud_rate.unwrap_or(115200);
     let mut link = serial::SerialLink::new(args.serial_device, baud);
     connect(&mut link, args.board)?;
     let mut session = Session::new(args.board, Duration::from_secs(args.seconds));

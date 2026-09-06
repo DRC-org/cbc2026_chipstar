@@ -283,7 +283,7 @@ impl Panel {
         } else {
             cfg.serial_device
         };
-        self.config.baud = if serial_svmd { 38400 } else { cfg.baud_rate };
+        self.config.baud = cfg.baud_rate;
         self.motors = default_motors(self.config.board);
     }
 
@@ -568,7 +568,7 @@ fn connection_hint(board: Board) -> &'static str {
         }
         Board::Cctl => "USB CDCへ直接繋ぎます。",
         Board::Svmd => "cctlのFDCAN2経由。接続先はcctlのUSB CDCです。",
-        Board::SerialSvmd => "USART2のUSBシリアル変換器へ直接繋ぎます（既定38400 baud）。",
+        Board::SerialSvmd => "USART2のUSBシリアル変換器へ直接繋ぎます。",
         Board::Dcmd => "cctlのFDCAN2経由。接続先はcctlのUSB CDCです。",
     }
 }
