@@ -92,8 +92,20 @@ float ActuatorController::measured(uint8_t slot) const {
   }
 }
 
-uint8_t ActuatorController::errorBits() const {
-  return static_cast<uint8_t>(slot0_.faultBits() | slot2_.errorState());
+uint8_t ActuatorController::errorBits(uint8_t slot) const {
+  const uint8_t stale = (stale_slots_ & (1U << slot)) ? domain::error_bit::FEEDBACK_LOST : 0;
+  switch (slot) {
+    case 0:
+      return static_cast<uint8_t>(slot0_.faultBits() | stale);
+    case 1: {
+      // C620は異常フラグを返さないため、温度だけを異常として扱う。
+      const bool hot = slot1_.temperature() >=
+                       parameters_.get(domain::ParamId::M3508MaxTemperatureC);
+      return static_cast<uint8_t>((hot ? domain::error_bit::OVER_TEMPERATURE : 0) | stale);
+    }
+    default:
+      return static_cast<uint8_t>(slot2_.errorState() | stale);
+  }
 }
 
 void ActuatorController::dispatchRx(const domain::CanFrame& frame) {

@@ -145,3 +145,10 @@ TEST_CASE("FWが壊れるパラメータと未定義idを拒否する") {
     const uint8_t bad_op[8] = {1, 10, 0, 0, 0, 0, 0, 0};
     CHECK_FALSE(parse(bad_op, sizeof(bad_op), command));
 }
+
+TEST_CASE("基板アドレスでCAN IDをずらす") {
+    CHECK(canId(COMMAND_ID, 0) == 0x320);
+    CHECK(canId(COMMAND_ID, 1) == 0x420);
+    CHECK(canId(INPUT_ID, 3) == 0x623);
+    CHECK(canId(INPUT_ID, MAX_ADDRESS) <= 0x7FF);
+}

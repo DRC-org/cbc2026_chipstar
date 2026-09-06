@@ -4,6 +4,14 @@
 
 namespace domain {
 
+// slotごとの異常bitのうち、cctlが自分で立てるもの。
+// 下位bitは各モータのドライバが返す値をそのまま載せる。
+namespace error_bit {
+constexpr uint8_t OVER_TEMPERATURE = 0x40;
+constexpr uint8_t FEEDBACK_LOST = 0x80;
+}  // namespace error_bit
+
+
 // 機体の運転状態。立ち上げ時は指令を出さない Safe から始める。
 enum class RunMode : uint8_t {
     Safe = 0,  // 初期化のみ。目標値の送信もトルクも入れない

@@ -47,6 +47,7 @@ constexpr Range RANGES[PARAM_COUNT] = {
     {1.0f, 10000.0f},  // TelemetryPeriodMs
     {1.0f, 60000.0f},  // WatchdogMs
     {10.0f, 60000.0f}, // FeedbackTimeoutMs
+    {0.0f, 200.0f},    // M3508MaxTemperatureC
 };
 
 constexpr float DEFAULTS[PARAM_COUNT] = {
@@ -82,6 +83,7 @@ constexpr float DEFAULTS[PARAM_COUNT] = {
     static_cast<float>(config::period::TELEMETRY_MS),
     static_cast<float>(config::period::WATCHDOG_MS),
     200.0f,
+    80.0f,
 };
 
 }  // namespace

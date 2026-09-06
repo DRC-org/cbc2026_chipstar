@@ -172,7 +172,9 @@ void sendTelemetry() {
     }
     telemetry.enabled_slots = controller.enabledSlots();
     telemetry.mode = controller.mode();
-    telemetry.error_bits = controller.errorBits();
+    for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
+        telemetry.error_bits[slot] = controller.errorBits(slot);
+    }
     telemetry.contacts = inputs.stable();
     telemetry.stale_slots = controller.staleSlots();
 
@@ -214,8 +216,10 @@ extern "C" void loop(void) {
     static uint32_t last_lcd_ms = 0;
     if (now - last_lcd_ms >= config::period::LCD_MS) {
         last_lcd_ms = now;
+        // LCDは1行に収めるため、slotの異常をORして「どこかで異常」として出す。
         ui.showStatus(controller.target(0), controller.target(1), controller.target(2),
-                      controller.errorBits());
+                      static_cast<uint8_t>(controller.errorBits(0) | controller.errorBits(1) |
+                                           controller.errorBits(2)));
     }
 
     static uint32_t last_telemetry_ms = 0;

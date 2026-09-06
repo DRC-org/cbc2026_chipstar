@@ -13,7 +13,8 @@ struct Telemetry {
     float measured[SLOT_COUNT] = {};
     uint8_t enabled_slots = 0;
     RunMode mode = RunMode::Safe;
-    uint8_t error_bits = 0;
+    // slotごとの異常。混ぜるとどのモータの異常か分からなくなる。
+    uint8_t error_bits[SLOT_COUNT] = {};
     uint8_t contacts = 0;  // SW1..SW3の10ms安定値。閉で1。
     uint8_t stale_slots = 0;  // フィードバックが途絶えたslotのbit mask。
 };

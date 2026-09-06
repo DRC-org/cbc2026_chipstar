@@ -34,7 +34,8 @@ class ActuatorController {
   const domain::Parameters& parameters() const { return parameters_; }
   float target(uint8_t slot) const;
   float measured(uint8_t slot) const;
-  uint8_t errorBits() const;
+  // slot単位の異常。bit7はフィードバック途絶を表す。
+  uint8_t errorBits(uint8_t slot) const;
   // フィードバックが途絶えたslotのbit mask。
   uint8_t staleSlots() const { return stale_slots_; }
 

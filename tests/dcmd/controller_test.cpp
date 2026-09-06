@@ -139,3 +139,13 @@ TEST_CASE("FWが壊れるパラメータを拒否する") {
   uint8_t reserved[8] = {1, 7, 0, 1, 0x44, 0x7A, 0x00, 0x00};
   CHECK_FALSE(parse(reserved, 8, command));
 }
+
+TEST_CASE("基板アドレスでCAN IDをずらす") {
+  // address 0 は従来と同じID。DIPで選んだぶんだけ 0x100 刻みでずれる。
+  CHECK(canId(COMMAND_ID, 0) == 0x310);
+  CHECK(canId(STATUS_ID, 0) == 0x311);
+  CHECK(canId(COMMAND_ID, 1) == 0x410);
+  CHECK(canId(INPUT_ID, 3) == 0x613);
+  // 標準IDの範囲に収まる。
+  CHECK(canId(INPUT_ID, MAX_ADDRESS) <= 0x7FF);
+}

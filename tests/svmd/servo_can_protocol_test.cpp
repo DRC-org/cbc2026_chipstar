@@ -84,3 +84,10 @@ TEST_CASE("FWが壊れるパラメータと未定義idを拒否する") {
     const uint8_t reserved[8] = {1, 4, 0, 1, 0x43, 0x48, 0x00, 0x00};
     CHECK_FALSE(domain::servo_can::parse(reserved, sizeof(reserved), command, DEFAULTS));
 }
+
+TEST_CASE("基板アドレスでCAN IDをずらす") {
+    using namespace domain::servo_can;
+    CHECK(canId(COMMAND_ID, 0) == 0x300);
+    CHECK(canId(STATUS_ID, 1) == 0x401);
+    CHECK(canId(COMMAND_ID, MAX_ADDRESS) <= 0x7FF);
+}

@@ -50,6 +50,8 @@ enum class ParamId : uint8_t {
     WatchdogMs,
     // モータのフィードバックが途絶えたと判断するまでの時間 [ms]
     FeedbackTimeoutMs,
+    // M3508の過熱と判断する温度 [degC]
+    M3508MaxTemperatureC,
     Count,
 };
 
