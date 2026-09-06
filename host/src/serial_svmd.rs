@@ -14,7 +14,9 @@ const PROTOCOL_VERSION: u8 = 1;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Hello,
+    #[allow(dead_code)]
     Safe,
+    #[allow(dead_code)]
     Run,
     Stop,
     Enable {
@@ -139,10 +141,7 @@ mod tests {
             .to_cctl_line(),
             "CAN 2 800 01060C0100000000"
         );
-        assert_eq!(
-            Command::Safe.to_cctl_line(),
-            "CAN 2 800 0101000000000000"
-        );
+        assert_eq!(Command::Safe.to_cctl_line(), "CAN 2 800 0101000000000000");
         assert_eq!(Command::Run.to_cctl_line(), "CAN 2 800 0102000000000000");
         assert_eq!(
             Command::Read { id: 9 }.to_cctl_line(),

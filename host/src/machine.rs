@@ -7,11 +7,11 @@ use std::fs;
 use std::path::Path;
 
 use anyhow::{Context, Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
 use crate::controller::ControllerState;
-use crate::telemetry::Telemetry;
 use crate::svmd;
+use crate::telemetry::Telemetry;
 
 const EMBEDDED_PROFILE: &str = include_str!("../config/rtheta.toml");
 const MAX_SLOTS: usize = 3;
@@ -24,7 +24,7 @@ const SERIAL_SERVO_MAX_COUNT: usize = 16;
 const CONTACT_COUNT: usize = 3;
 
 /// 軸の端にあるリミットスイッチ。接点はcctlのSW1..SW3に対応する。
-#[derive(Clone, Copy, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq)]
 pub struct AxisLimit {
     /// 接点のbit位置。SW1=0, SW2=1, SW3=2。
     pub input: u8,
@@ -43,7 +43,7 @@ impl AxisLimit {
     }
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct AxisProfile {
     pub name: String,
     pub unit: String,
@@ -64,7 +64,7 @@ pub struct AxisProfile {
     pub limit: Option<AxisLimit>,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct PwmServoProfile {
     pub name: String,
     pub channel: u8,
@@ -79,7 +79,7 @@ pub struct PwmServoProfile {
     pub enabled: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct SerialServoProfile {
     pub name: String,
     pub id: u8,
@@ -97,7 +97,7 @@ pub struct SerialServoProfile {
 }
 
 /// serial_svmdはcctlのFDCAN2経由で繋ぐ。接続先はcctlのリンクなので持たない。
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct SerialSvmdProfile {
     #[serde(default)]
     pub servos: Vec<SerialServoProfile>,
@@ -152,7 +152,7 @@ pub const PARAMETER_NAMES: [&str; 33] = [
     "m3508_max_temperature_c",
 ];
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct MachineProfile {
     #[serde(default)]
     pub dc_motors: Vec<crate::dcmd::MotorProfile>,
@@ -190,7 +190,7 @@ impl MachineProfile {
         Ok(profile)
     }
 
-    fn validate(&self) -> Result<()> {
+    pub fn validate(&self) -> Result<()> {
         crate::dcmd::validate(&self.dc_motors)?;
         if self.protocol_version != 1 {
             bail!(
@@ -230,6 +230,38 @@ impl MachineProfile {
                     bail!("パラメータに有限でない値があります: {name}");
                 }
             }
+        }
+
+        for (minimum, maximum) in [
+            ("slot0_min", "slot0_max"),
+            ("slot1_min", "slot1_max"),
+            ("slot2_min", "slot2_max"),
+        ] {
+            if let (Some(low), Some(high)) =
+                (self.parameters.get(minimum), self.parameters.get(maximum))
+                && low >= high
+            {
+                bail!("基板の可動域が逆転しています: {minimum}/{maximum}");
+            }
+        }
+        for (name, value) in &self.parameters {
+            if (name.ends_with("_id") || name.ends_with("_ms")) && value.fract() != 0.0 {
+                bail!("整数を指定してください: {name}");
+            }
+        }
+        if self
+            .parameters
+            .get("telemetry_period_ms")
+            .is_some_and(|v| *v > 100.0 || *v < 10.0)
+        {
+            bail!("telemetry_period_msは10..100で指定してください");
+        }
+        if self
+            .parameters
+            .get("watchdog_ms")
+            .is_some_and(|v| *v < 150.0 || *v > 1000.0)
+        {
+            bail!("watchdog_msは150..1000で指定してください");
         }
 
         let mut slots = HashSet::new();
@@ -275,7 +307,10 @@ impl MachineProfile {
                     );
                 }
                 if limit.direction.abs() != 1.0 {
-                    bail!("limit.directionは1.0か-1.0で指定してください: {}", axis.name);
+                    bail!(
+                        "limit.directionは1.0か-1.0で指定してください: {}",
+                        axis.name
+                    );
                 }
             }
         }
@@ -394,7 +429,7 @@ impl MachineProfile {
 }
 
 /// 軸ごとの原点の状態。GUI 表示用。
-#[derive(Clone, Debug, PartialEq)]
+#[derive(Clone, Debug, Serialize, PartialEq)]
 pub struct OriginState {
     pub name: String,
     pub unit: String,
@@ -405,6 +440,7 @@ pub struct OriginState {
     /// リミットスイッチに到達しているか。スイッチを持たない軸は None。
     pub at_limit: Option<bool>,
     pub position: f32,
+    pub target: f32,
 }
 
 pub struct MachineController {
@@ -471,7 +507,13 @@ impl MachineController {
                 at_limit: axis
                     .limit
                     .and_then(|limit| contacts.map(|contacts| limit.reached(contacts))),
-                position: *target,
+                position: telemetry
+                    .map(|t| {
+                        (t.slots[axis.slot as usize].measured - self.origins_native[index])
+                            / axis.native_per_unit
+                    })
+                    .unwrap_or(*target),
+                target: *target,
             })
             .collect()
     }
@@ -504,6 +546,8 @@ impl MachineController {
             if (jumped || stale) && self.origin_captured[index] {
                 self.origin_captured[index] = false;
                 self.origin_lost[index] = true;
+                self.origins_native[index] = measured;
+                self.targets[index] = 0.0;
             }
             self.last_measured[index] = Some(measured);
         }
@@ -535,11 +579,7 @@ impl MachineController {
             if !value.is_finite() {
                 continue;
             }
-            self.targets[index] = if self.origin_captured[index] && self.soft_limits {
-                value.clamp(axis.minimum, axis.maximum)
-            } else {
-                value
-            };
+            self.targets[index] = value;
         }
     }
 
@@ -556,20 +596,15 @@ impl MachineController {
         let Some(slot) = telemetry.slots.get(axis.slot as usize) else {
             return false;
         };
+        if !slot.measured.is_finite() || telemetry.stale_slots & (1 << axis.slot) != 0 {
+            return false;
+        }
+        self.last_measured[index] = Some(slot.measured);
         self.origins_native[index] = slot.measured - axis.origin_position * axis.native_per_unit;
         self.targets[index] = axis.origin_position;
         self.origin_captured[index] = true;
         self.origin_lost[index] = false;
         true
-    }
-
-    pub fn hello_line(&self) -> String {
-        format!("HELLO {}", self.profile.protocol_version)
-    }
-
-    /// serial_svmdへの能力照会。cctlのFDCAN2を通す。
-    pub fn serial_svmd_hello_line(&self) -> String {
-        crate::serial_svmd::Command::Hello.to_cctl_line()
     }
 
     pub fn update(
@@ -648,6 +683,74 @@ impl MachineController {
         lines.extend(crate::dcmd::targets(&self.profile.dc_motors, &input.axes));
         lines.extend(self.serial_svmd_lines(input, dt));
         lines
+    }
+
+    /// 原点・接点の観測は停止中にも行う。位置目標は積算しない。
+    pub fn observe(&mut self, telemetry: &Telemetry) {
+        let neutral = ControllerState {
+            axes: [0.0; 6],
+            buttons: [0; 17],
+        };
+        self.hold_at_measured(Some(telemetry));
+        // 既存の接点エッジ処理を共有し、生成された出力は送信しない。
+        self.update(&neutral, 0.0, Some(telemetry));
+        self.hold_at_measured(Some(telemetry));
+    }
+
+    pub fn invalidate_origins(&mut self) {
+        for i in 0..self.profile.axes.len() {
+            self.origin_lost[i] |= self.origin_captured[i];
+            self.origin_captured[i] = false;
+            self.last_measured[i] = None;
+        }
+        self.last_contacts = None;
+    }
+
+    pub fn jog_lines(
+        &self,
+        input: &ControllerState,
+        telemetry: &Telemetry,
+        slow: bool,
+    ) -> Vec<String> {
+        self.profile
+            .axes
+            .iter()
+            .enumerate()
+            .map(|(i, axis)| {
+                let raw = axis.input_axis.map(|n| input.axes[n]).unwrap_or(0.0);
+                let raw = if raw.is_finite() && raw.abs() >= STICK_DEADZONE {
+                    raw.clamp(-1.0, 1.0)
+                } else {
+                    0.0
+                };
+                let mut velocity =
+                    raw * axis.input_sign * axis.speed_per_second * if slow { 0.2 } else { 1.0 };
+                if let Some(limit) = axis.limit
+                    && (telemetry.contacts.is_none()
+                        || telemetry
+                            .contacts
+                            .is_some_and(|c| limit.reached(c) && velocity * limit.direction > 0.0))
+                {
+                    velocity = 0.0;
+                }
+                let measured = (telemetry.slots[axis.slot as usize].measured
+                    - self.origins_native[i])
+                    / axis.native_per_unit;
+                if self.soft_limits {
+                    if !self.origin_captured[i] {
+                        velocity = 0.0;
+                    }
+                    // FWの先行距離100msと通信周期を含め、境界付近では減速する。
+                    if velocity > 0.0 {
+                        velocity = velocity.min(((axis.maximum - measured) / 0.2).max(0.0));
+                    }
+                    if velocity < 0.0 {
+                        velocity = velocity.max(((axis.minimum - measured) / 0.2).min(0.0));
+                    }
+                }
+                format!("JOG {} {:.5}", axis.slot, velocity * axis.native_per_unit)
+            })
+            .collect()
     }
 
     fn serial_svmd_lines(&mut self, input: &ControllerState, dt: f32) -> Vec<String> {
@@ -804,8 +907,8 @@ initial = 0.0
 
         let lines = machine.update(&input, 0.1, None);
 
-        assert!((machine.target("r").unwrap() - 5.0).abs() < 1e-5);
-        assert_eq!(lines[0], "TARGET 0 0.50025");
+        assert!((machine.target("r").unwrap() - 0.5).abs() < 1e-5);
+        assert_eq!(lines[0], "TARGET 0 0.02000");
         assert_eq!(lines[2], "TARGET 2 0.00000");
     }
 
@@ -820,7 +923,7 @@ initial = 0.0
 
         input.axes[0] = 1.0;
         machine.update(&input, 1.0, None);
-        assert_eq!(machine.target("theta"), Some(9.0));
+        assert_eq!(machine.target("theta"), Some(1.0));
     }
 
     /// SW1が閉じた状態（B接点の平常時）のテレメトリ。
@@ -829,9 +932,18 @@ initial = 0.0
         Telemetry {
             uptime_ms: 0,
             slots: [
-                SlotState { target: 0.0, measured: measured[0] },
-                SlotState { target: 0.0, measured: measured[1] },
-                SlotState { target: 0.0, measured: measured[2] },
+                SlotState {
+                    target: 0.0,
+                    measured: measured[0],
+                },
+                SlotState {
+                    target: 0.0,
+                    measured: measured[1],
+                },
+                SlotState {
+                    target: 0.0,
+                    measured: measured[2],
+                },
             ],
             enabled_slots: 7,
             mode: RunMode::Run,
@@ -923,7 +1035,10 @@ direction = -1.0
         machine.update(&neutral_input(), 0.1, Some(&steady));
         assert!(machine.capture_origin(0, Some(&steady)));
 
-        let lost = Telemetry { stale_slots: 0b001, ..telemetry_with(0, [5.0, 0.0, 0.0]) };
+        let lost = Telemetry {
+            stale_slots: 0b001,
+            ..telemetry_with(0, [5.0, 0.0, 0.0])
+        };
         machine.update(&neutral_input(), 0.1, Some(&lost));
         assert!(!machine.origin_states(None)[0].captured);
         assert!(machine.origin_states(None)[0].lost);
@@ -938,9 +1053,12 @@ direction = -1.0
 
         // ジョグ相当の連続した移動では原点を捨てない。
         for step in 1..20 {
-            let moving = telemetry_with(0, [step as f32 * 0.4, 0.0, 0.0]);
+            let moving = telemetry_with(0, [step as f32 * 0.02, 0.0, 0.0]);
             machine.update(&neutral_input(), 0.05, Some(&moving));
-            assert!(machine.origin_states(None)[0].captured, "step {step} で捨てた");
+            assert!(
+                machine.origin_states(None)[0].captured,
+                "step {step} で捨てた"
+            );
         }
     }
 
@@ -954,16 +1072,16 @@ direction = -1.0
         for _ in 0..5 {
             machine.update(&input, 0.1, None);
         }
-        assert!(machine.target("r").unwrap() > 40.0);
+        assert!(machine.target("r").unwrap() > 4.0);
 
         // 実測は手で戻された位置。RUN前に取り込めば、その場を保持する。
-        let moved = telemetry_with(0, [1.0005072, 0.0, 0.0]);
+        let moved = telemetry_with(0, [0.4, 0.0, 0.0]);
         machine.hold_at_measured(Some(&moved));
         assert!((machine.target("r").unwrap() - 10.0).abs() < 1e-3);
 
         // 直後の指令は実測と一致し、機体は動かない。
         let lines = machine.update(&neutral_input(), 0.1, Some(&moved));
-        assert_eq!(lines[0], "TARGET 0 1.00051");
+        assert_eq!(lines[0], "TARGET 0 0.40000");
     }
 
     #[test]
@@ -1002,7 +1120,11 @@ direction = -1.0
     fn limit_blocks_only_the_direction_that_reaches_it() {
         let mut machine = MachineController::new(profile_with_limits());
         let reached = telemetry_with(0b010, [8.0, 0.0, 0.0]);
-        machine.update(&neutral_input(), 0.1, Some(&telemetry_with(0b011, [8.0, 0.0, 0.0])));
+        machine.update(
+            &neutral_input(),
+            0.1,
+            Some(&telemetry_with(0b011, [8.0, 0.0, 0.0])),
+        );
         machine.update(&neutral_input(), 0.1, Some(&reached));
 
         // 前進側は捨てる。
@@ -1043,8 +1165,8 @@ direction = -1.0
     fn clamps_switchless_axes_from_the_start() {
         let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
         let mut input = neutral_input();
-        input.axes[0] = 1.0;  // theta（スイッチなし）
-        for _ in 0..40 {
+        input.axes[0] = 1.0; // theta（スイッチなし）
+        for _ in 0..200 {
             machine.update(&input, 0.1, None);
         }
         // 原点未採用でも可動域で頭打ちになる。ケーブルを巻き込ませない。
@@ -1057,7 +1179,10 @@ direction = -1.0
         let mut input = neutral_input();
         input.axes[1] = 1.0;
         // sw= を持たないFWでは、接点を「全て到達」と誤解して止めてはいけない。
-        let unknown = Telemetry { contacts: None, ..telemetry_with(0, [0.0; 3]) };
+        let unknown = Telemetry {
+            contacts: None,
+            ..telemetry_with(0, [0.0; 3])
+        };
         machine.update(&input, 0.1, Some(&unknown));
         assert!(machine.target("r").unwrap() > 0.0);
         assert!(!machine.origin_states(Some(&unknown))[0].captured);
@@ -1070,7 +1195,10 @@ direction = -1.0
         let telemetry = telemetry_with(0b011, [0.0, 3000.0, 0.0]);
         machine.update(&neutral_input(), 0.1, Some(&telemetry));
         let theta = 1;
-        assert_eq!(machine.origin_states(Some(&telemetry))[theta].at_limit, None);
+        assert_eq!(
+            machine.origin_states(Some(&telemetry))[theta].at_limit,
+            None
+        );
         assert!(!machine.origin_states(Some(&telemetry))[theta].captured);
 
         assert!(machine.capture_origin(theta, Some(&telemetry)));
@@ -1133,5 +1261,70 @@ direction = -1.0
                 "CAN 2 800 01070C0000000000"
             ]
         );
+    }
+}
+
+#[cfg(test)]
+mod manual_tests {
+    use super::*;
+    use crate::telemetry::{RunMode, SlotState};
+    fn telemetry(native: f32) -> Telemetry {
+        Telemetry {
+            uptime_ms: 0,
+            slots: [SlotState {
+                measured: native,
+                target: native,
+            }; 3],
+            enabled_slots: 7,
+            mode: RunMode::Run,
+            error_bits: [0; 3],
+            contacts: Some(7),
+            stale_slots: 0,
+            buses: 3,
+        }
+    }
+    #[test]
+    fn frozen_feedback_does_not_accumulate_a_manual_position_target() {
+        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let t = telemetry(5.0);
+        machine.observe(&t);
+        assert!(machine.capture_origin(0, Some(&t)));
+        let mut input = ControllerState::default();
+        input.axes[1] = 0.5;
+        for _ in 0..1000 {
+            machine.observe(&t);
+            assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 0.20000");
+        }
+        assert_eq!(machine.origin_states(Some(&t))[0].position, 0.0);
+        assert_eq!(machine.jog_lines(&input, &t, true)[0], "JOG 0 0.04000");
+        input.axes[1] = 0.0;
+        assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 0.00000");
+    }
+    #[test]
+    fn displayed_position_uses_the_captured_offset() {
+        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let start = telemetry(5.0);
+        machine.observe(&start);
+        machine.capture_origin(0, Some(&start));
+        let moved = telemetry(5.04);
+        machine.observe(&moved);
+        assert!((machine.origin_states(Some(&moved))[0].position - 1.0).abs() < 0.001);
+        let mut input = ControllerState::default();
+        input.axes[1] = 1.0;
+        let restarted = telemetry(0.0);
+        machine.observe(&restarted);
+        assert!(machine.origin_states(Some(&restarted))[0].lost);
+        assert_eq!(
+            machine.jog_lines(&input, &restarted, false)[0],
+            "JOG 0 0.00000"
+        );
+    }
+    #[test]
+    fn holding_outside_a_soft_limit_does_not_command_a_return() {
+        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let start = telemetry(0.0);
+        machine.capture_origin(0, Some(&start));
+        machine.hold_at_measured(Some(&telemetry(8.0)));
+        assert_eq!(machine.targets[0], 200.0);
     }
 }

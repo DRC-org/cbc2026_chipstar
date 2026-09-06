@@ -3,8 +3,37 @@ protocol_version = 1
 
 # 立ち上げ用の安全側の上限。能力確認の直後にcctlへ送られる。
 # ゲインは机上値のままなので、実機で挙動を確かめながら緩めていく。
-# FWはRAM保持なので、ここを直してhostを起動し直せば反映される。
+# PCの設定を接続時に適用し、基板の応答で一致を確認する。
+# 可動域は未校正の暫定値。実機で原点と干渉を確認して調整する。
 [parameters]
+m3508_pos_kp = 8.0
+m3508_pos_ki = 0.0
+m3508_pos_kd = 0.0
+m3508_vel_kp = 0.7
+m3508_vel_ki = 0.0005
+m3508_vel_kd = 50.0
+el05_loc_kp = 30.0
+dm_p_max = 12.5
+dm_v_max = 45.0
+dm_t_max = 18.0
+slot0_min = -12.5
+slot0_max = 12.5
+slot1_min = -26000.0
+slot1_max = 26000.0
+slot2_min = -12.5
+slot2_max = 12.5
+c620_esc_id = 1.0
+dm_can_id = 9.0
+dm_mst_id = 10.0
+el05_motor_id = 127.0
+el05_host_id = 253.0
+m3508_period_ms = 1.0
+dm_period_ms = 10.0
+el05_period_ms = 20.0
+telemetry_period_ms = 50.0
+watchdog_ms = 250.0
+feedback_timeout_ms = 200.0
+m3508_max_temperature_c = 80.0
 # M3508: 位置ループが出す速度指令と、C620へ出す電流を絞る。
 m3508_max_rpm = 500.0
 m3508_max_current_ma = 1000.0
@@ -20,8 +49,8 @@ unit = "mm"
 slot = 0
 input_axis = 1
 input_sign = 1.0
-speed_per_second = 100.0
-native_per_unit = 0.10005072
+speed_per_second = 10.0
+native_per_unit = 0.04
 minimum = 0.0
 maximum = 120.0
 initial = 0.0
@@ -41,8 +70,8 @@ unit = "deg"
 slot = 1
 input_axis = 0
 input_sign = 1.0
-speed_per_second = 90.0
-native_per_unit = 140.82353
+speed_per_second = 10.0
+native_per_unit = 132.02206
 minimum = -180.0
 maximum = 180.0
 initial = 0.0
@@ -57,8 +86,8 @@ slot = 2
 input_axis = 3
 input_sign = 1.0
 # 重力負荷があるので低速から始める。実機で詰める。
-speed_per_second = 30.0
-native_per_unit = 0.15707964
+speed_per_second = 5.0
+native_per_unit = 0.08726646
 minimum = 0.0
 maximum = 75.0
 initial = 0.0

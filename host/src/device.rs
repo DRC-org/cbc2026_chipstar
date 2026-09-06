@@ -9,6 +9,7 @@ pub struct DeviceInfo {
     pub watchdog_ms: u32,
     /// 基板が保存済みの調整値で動いているか。旧FWは通知しないので `false`。
     pub parameters_stored: bool,
+    pub jog: bool,
 }
 
 pub fn parse_device_info(line: &str) -> Option<DeviceInfo> {
@@ -22,6 +23,7 @@ pub fn parse_device_info(line: &str) -> Option<DeviceInfo> {
     let mut watchdog_ms = None;
     let mut can_buses = Vec::new();
     let mut parameters_stored = false;
+    let mut jog = false;
     for token in tokens {
         let (key, value) = token.split_once('=')?;
         match key {
@@ -36,6 +38,7 @@ pub fn parse_device_info(line: &str) -> Option<DeviceInfo> {
                     .ok()?;
             }
             "watchdog_ms" => watchdog_ms = Some(value.parse().ok()?),
+            "jog" => jog = value == "1",
             "params" => parameters_stored = value == "stored",
             _ => {}
         }
@@ -47,6 +50,7 @@ pub fn parse_device_info(line: &str) -> Option<DeviceInfo> {
         can_buses,
         watchdog_ms: watchdog_ms?,
         parameters_stored,
+        jog,
     })
 }
 

@@ -1,8 +1,8 @@
 //! DCMD v1: signed duty in permille through cctl FDCAN2.
 use anyhow::{Result, bail};
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 
-#[derive(Clone, Debug, Deserialize, PartialEq)]
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct MotorProfile {
     pub name: String,
     pub channel: u8,

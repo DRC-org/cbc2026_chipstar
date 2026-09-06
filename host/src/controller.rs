@@ -7,6 +7,7 @@
 use gilrs::{Axis, Button, Gamepad};
 
 /// 1 フレーム分のコントローラ状態。
+#[derive(Clone, Default)]
 pub struct ControllerState {
     /// LX, LY, RX, RY, L2, R2 の順（各 -1.0..=1.0）。
     pub axes: [f32; 6],

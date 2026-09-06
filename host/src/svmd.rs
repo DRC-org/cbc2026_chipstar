@@ -11,8 +11,15 @@ const PROTOCOL_VERSION: u8 = 1;
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Stop,
-    Set { channel: u8, pulse_us: u16 },
-    Enable { channel: u8, enabled: bool },
+    Set {
+        channel: u8,
+        pulse_us: u16,
+    },
+    #[allow(dead_code)]
+    Enable {
+        channel: u8,
+        enabled: bool,
+    },
 }
 
 impl Command {

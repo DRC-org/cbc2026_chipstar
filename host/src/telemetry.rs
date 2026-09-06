@@ -2,18 +2,6 @@
 
 /// `Telemetry::error_bits` のうち cctl 自身が立てるもの。
 /// 下位bitは各モータのドライバが返す値がそのまま入る。
-pub mod error_bit {
-    pub const OVER_TEMPERATURE: u8 = 0x40;
-    pub const FEEDBACK_LOST: u8 = 0x80;
-}
-
-pub mod slot_bit {
-    pub const SLOT0: u8 = 1 << 0;
-    pub const SLOT1: u8 = 1 << 1;
-    pub const SLOT2: u8 = 1 << 2;
-    pub const ALL: u8 = SLOT0 | SLOT1 | SLOT2;
-}
-
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum RunMode {
     Safe,
@@ -26,7 +14,7 @@ impl RunMode {
         match self {
             RunMode::Safe => "SAFE（待機）",
             RunMode::Run => "RUN（運転）",
-            RunMode::Stop => "STOP（非常停止）",
+            RunMode::Stop => "STOP（出力停止）",
         }
     }
 }
@@ -55,6 +43,7 @@ pub struct Telemetry {
 }
 
 impl Telemetry {
+    #[cfg(test)]
     pub fn slot_enabled(&self, slot: u8) -> bool {
         self.enabled_slots & (1 << slot) != 0
     }
@@ -62,10 +51,12 @@ impl Telemetry {
 
 fn parse_slot(text: &str) -> Option<SlotState> {
     let (target, measured) = text.split_once('/')?;
-    Some(SlotState {
-        target: target.parse().ok()?,
-        measured: measured.parse().ok()?,
-    })
+    let target: f32 = target.parse().ok()?;
+    let measured: f32 = measured.parse().ok()?;
+    if !target.is_finite() || !measured.is_finite() {
+        return None;
+    }
+    Some(SlotState { target, measured })
 }
 
 fn parse_mode(text: &str) -> Option<RunMode> {
@@ -134,8 +125,7 @@ pub fn parse_telemetry(line: &str) -> Option<Telemetry> {
 mod tests {
     use super::*;
 
-    const SAMPLE: &str =
-        "STATE t=12345 mode=RUN en=7 a0=1.200/1.100 a1=-45.000/-44.200 a2=0.500/0.400 err=0A,00,03 sw=5 stale=2 can=3";
+    const SAMPLE: &str = "STATE t=12345 mode=RUN en=7 a0=1.200/1.100 a1=-45.000/-44.200 a2=0.500/0.400 err=0A,00,03 sw=5 stale=2 can=3";
 
     #[test]
     fn parses_all_slots() {

@@ -1,375 +1,157 @@
-//! GUI（メインスレッド）とブリッジ処理（ワーカースレッド）が共有する状態。
-//!
-//! - 設定は `Mutex<BridgeConfig>`。変更時に `config_gen` を進め、ワーカーが再接続する。
-//! - 実行状況は `Mutex<Status>` にスナップショットとして書き込む。
+//! GUI・ローカルAPI・ワーカーが共有する操作受付とスナップショット。
+use crate::{
+    control_api::{Reply, Request},
+    machine::{MachineProfile, OriginState},
+};
+use serde::{Deserialize, Serialize};
+use std::{
+    collections::VecDeque,
+    path::PathBuf,
+    sync::{
+        Mutex,
+        atomic::{AtomicBool, Ordering},
+        mpsc,
+    },
+    time::Duration,
+};
 
-use std::collections::VecDeque;
-use std::sync::Mutex;
-use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+#[derive(Clone, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct Connection {
+    pub serial_device: String,
+    pub baud_rate: u32,
+}
 
-use crate::device::DeviceInfo;
-use crate::frame::Command;
-use crate::machine::MachineProfile;
-use crate::serial_svmd;
-use crate::svmd;
-use crate::telemetry::Telemetry;
-
-/// シリアルブリッジの設定。
 #[derive(Clone)]
 pub struct BridgeConfig {
     pub serial_device: String,
     pub baud_rate: u32,
     pub rate_hz: f64,
     pub machine: MachineProfile,
+    pub profile_path: PathBuf,
+    pub simulate: bool,
 }
 
-/// GUI 表示用の実行状況スナップショット。
-#[derive(Clone, Default)]
+#[derive(Clone, Default, Serialize)]
 pub struct Status {
-    pub dcmd: Option<crate::dcmd::Status>,
-    pub dcmd_encoder: Option<crate::dcmd::EncoderStatus>,
-    pub gamepad_connected: bool,
-    pub gamepad_name: Option<String>,
-    pub serial_connected: bool,
-    pub last_error: Option<String>,
-    pub tx_count: u64,
-    pub last_line: String,
+    pub simulated: bool,
+    pub connected: bool,
+    pub configured: bool,
+    pub ai_active: bool,
+    pub running: bool,
+    pub board_mode: String,
+    pub reason: String,
+    pub error: String,
+    pub slow: bool,
+    pub origin_adjustment: bool,
+    pub gamepad: String,
     pub axes: [f32; 6],
-    pub buttons: [u8; 17],
-    /// cctl から受け取った最新のテレメトリ。未受信なら None。
-    pub telemetry: Option<Telemetry>,
-    pub telemetry_count: u64,
-    pub device: Option<DeviceInfo>,
-    /// 軸ごとの原点と接点の状態。
-    pub origins: Vec<crate::machine::OriginState>,
-    /// cctlが返した実行時パラメータ。idごとの最新値。
-    pub parameters: std::collections::BTreeMap<u8, f32>,
-    /// STS3215の実測位置。IDごとの最新値。
-    pub serial_servos: std::collections::BTreeMap<u8, crate::serial_svmd::ServoState>,
+    pub origins: Vec<OriginState>,
+    pub telemetry_age_ms: u64,
+    pub tx_count: u64,
+    pub parameters_confirmed: usize,
+    pub parameters_expected: usize,
+    pub configuration: String,
+    pub peripherals: std::collections::BTreeMap<String, String>,
+    pub saved: bool,
+    pub logs: VecDeque<String>,
 }
 
-/// スレッド間共有ハンドル。`Arc<Shared>` で持ち回る。
+pub struct Pending {
+    pub request: Request,
+    pub manual: bool,
+    pub deadline: std::time::Instant,
+    pub reply: mpsc::Sender<Reply>,
+}
+
 pub struct Shared {
-    pub tests: crate::fw_test_gui::Control,
     config: Mutex<BridgeConfig>,
-    config_gen: AtomicU64,
-    sending_enabled: AtomicBool,
-    soft_limits: AtomicBool,
-    running: AtomicBool,
     status: Mutex<Status>,
-    /// GUI が積み、ワーカーが送る指令行。
-    commands: Mutex<VecDeque<String>>,
-    /// GUI が積み、ワーカーが処理する原点採用の要求（軸の番号）。
-    origin_requests: Mutex<Vec<usize>>,
+    pending: Mutex<VecDeque<Pending>>,
+    alive: AtomicBool,
 }
-
 impl Shared {
     pub fn new(config: BridgeConfig) -> Self {
         Self {
-            tests: crate::fw_test_gui::Control::default(),
+            status: Mutex::new(Status {
+                simulated: config.simulate,
+                saved: true,
+                reason: "接続待ち".into(),
+                ..Default::default()
+            }),
             config: Mutex::new(config),
-            config_gen: AtomicU64::new(0),
-            sending_enabled: AtomicBool::new(true),
-            soft_limits: AtomicBool::new(true),
-            running: AtomicBool::new(true),
-            status: Mutex::new(Status::default()),
-            commands: Mutex::new(VecDeque::new()),
-            origin_requests: Mutex::new(Vec::new()),
+            pending: Mutex::new(VecDeque::new()),
+            alive: AtomicBool::new(true),
         }
     }
-
     pub fn config(&self) -> BridgeConfig {
         self.config.lock().unwrap().clone()
     }
-
-    /// 設定を差し替え、世代番号を進める（ワーカーが再接続を検知する）。
     pub fn set_config(&self, config: BridgeConfig) {
         *self.config.lock().unwrap() = config;
-        self.config_gen.fetch_add(1, Ordering::Release);
     }
-
-    pub fn config_generation(&self) -> u64 {
-        self.config_gen.load(Ordering::Acquire)
-    }
-
-    /// 機体座標の可動域で目標を止めるか。原点を採り直す間は外す。
-    pub fn soft_limits(&self) -> bool {
-        self.soft_limits.load(Ordering::Relaxed)
-    }
-
-    pub fn set_soft_limits(&self, enabled: bool) {
-        self.soft_limits.store(enabled, Ordering::Relaxed);
-    }
-
-    pub fn sending_enabled(&self) -> bool {
-        self.sending_enabled.load(Ordering::Relaxed)
-    }
-
-    pub fn set_sending_enabled(&self, enabled: bool) {
-        self.sending_enabled
-            .store(enabled && !self.tests.enabled(), Ordering::Relaxed);
-    }
-
-    pub fn start_test(&self, config: crate::fw_test_gui::Config) {
-        self.set_sending_enabled(false);
-        self.tests.start(config);
-        self.take_commands();
-    }
-
-    pub fn is_running(&self) -> bool {
-        self.running.load(Ordering::Relaxed)
-    }
-
-    pub fn request_stop(&self) {
-        self.running.store(false, Ordering::Relaxed);
-    }
-
     pub fn status_snapshot(&self) -> Status {
         self.status.lock().unwrap().clone()
     }
-
-    /// 指令を送信待ちに積む。送信停止中でも送るので、STOP は必ず届く。
-    pub fn queue_command(&self, command: Command) -> bool {
-        if self.tests.enabled() {
-            if matches!(command, Command::Stop | Command::Safe) {
-                self.tests.command("stop".into());
-                return true;
-            }
-            self.update_status(|s| s.last_error = Some("動作テスト中は通常操作できません".into()));
-            return false;
-        }
-        if command == Command::Run {
-            let status = self.status.lock().unwrap();
-            if !self.config().machine.dc_motors.is_empty() && status.dcmd.is_none() {
-                drop(status);
-                self.update_status(|s| {
-                    s.last_error = Some("DCMDの状態応答を待っています".to_owned())
-                });
-                return false;
-            }
-            let Some(device) = &status.device else {
-                drop(status);
-                self.update_status(|status| {
-                    status.last_error = Some("FWの能力確認が完了していません".to_owned());
-                });
-                return false;
-            };
-            if device.protocol != 1 || device.board != "cctl" || device.slots < 3 {
-                drop(status);
-                self.update_status(|status| {
-                    status.last_error = Some("cctlの能力またはバージョンが不一致です".to_owned());
-                });
-                return false;
-            }
-            if self.config.lock().unwrap().machine.requires_can_bus_2()
-                && !device.can_buses.contains(&2)
-            {
-                drop(status);
-                self.update_status(|status| {
-                    status.last_error = Some("FWに必要なCAN bus 2がありません".to_owned());
-                });
-                return false;
-            }
-        }
-        self.queue_line(command.to_line());
-        let config = self.config();
-        if !config.machine.dc_motors.is_empty() {
-            match command {
-                Command::Run => {
-                    self.queue_line(crate::dcmd::line(0, 0, 0));
-                    let mut mask = 0;
-                    for motor in &config.machine.dc_motors {
-                        self.queue_line(crate::dcmd::line(4, motor.channel, 0));
-                        mask |= 1 << motor.channel;
-                    }
-                    self.queue_line(crate::dcmd::line(2, mask, 0));
-                }
-                Command::Safe | Command::Stop => self.queue_line(crate::dcmd::line(3, 0, 0)),
-                _ => {}
-            }
-        }
-        if matches!(command, Command::Stop | Command::Safe)
-            && !self.config.lock().unwrap().machine.pwm_servos.is_empty()
-        {
-            self.queue_line(svmd::Command::Stop.to_cctl_line());
-        }
-        if command == Command::Run {
-            for servo in &self.config().machine.pwm_servos {
-                self.queue_line(
-                    svmd::Command::Enable {
-                        channel: servo.channel,
-                        enabled: servo.enabled,
-                    }
-                    .to_cctl_line(),
-                );
-            }
-        }
-        if self.config.lock().unwrap().machine.requires_serial_svmd() {
-            match command {
-                Command::Stop => self.queue_line(serial_svmd::Command::Stop.to_cctl_line()),
-                Command::Safe => self.queue_line(serial_svmd::Command::Safe.to_cctl_line()),
-                Command::Run => {
-                    self.queue_line(serial_svmd::Command::Hello.to_cctl_line());
-                    self.queue_line(serial_svmd::Command::Run.to_cctl_line());
-                }
-                _ => {}
-            }
-        }
-        true
-    }
-
-    /// cctl へそのまま送る行を積む。コマンドラインからの入力に使う。
-    pub fn queue_line(&self, line: String) {
-        if self.tests.enabled() {
-            return;
-        }
-        self.commands.lock().unwrap().push_back(line);
-    }
-
-    /// 送信待ちの行を全て取り出す。
-    pub fn take_commands(&self) -> Vec<String> {
-        self.commands.lock().unwrap().drain(..).collect()
-    }
-
-    /// 指定した軸の現在位置を原点として採るよう要求する。
-    pub fn request_origin(&self, index: usize) {
-        self.origin_requests.lock().unwrap().push(index);
-    }
-
-    pub fn take_origin_requests(&self) -> Vec<usize> {
-        std::mem::take(&mut *self.origin_requests.lock().unwrap())
-    }
-
-    /// ワーカーから状態を更新する。
     pub fn update_status(&self, f: impl FnOnce(&mut Status)) {
         f(&mut self.status.lock().unwrap());
     }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn test_session_blocks_normal_commands_and_does_not_resume_sending() {
-        let shared = Shared::new(BridgeConfig {
-            serial_device: "/dev/null".into(),
-            baud_rate: 115200,
-            rate_hz: 20.0,
-            machine: pwm_profile(),
+    pub fn log(&self, line: String) {
+        self.update_status(|s| {
+            if s.logs.len() >= 300 {
+                s.logs.pop_front();
+            }
+            s.logs.push_back(line);
         });
-        shared.queue_line("RUN".into());
-        shared.start_test(crate::fw_test_gui::Config {
-            board: crate::fw_test::Board::Dcmd,
-            device: "/dev/null".into(),
-            baud: 115200,
-            seconds: 5,
-        });
-        assert!(shared.take_commands().is_empty());
-        shared.queue_line("TARGET 0 1".into());
-        assert!(shared.take_commands().is_empty());
-        assert!(!shared.queue_command(Command::Run));
-        assert!(shared.queue_command(Command::Stop));
-        assert!(shared.take_commands().is_empty());
-        shared.set_sending_enabled(true);
-        assert!(!shared.sending_enabled());
-        shared.tests.end();
-        shared.tests.finish();
-        assert!(!shared.sending_enabled());
     }
-
-    fn pwm_profile() -> MachineProfile {
-        MachineProfile::parse(
-            r#"
-protocol_version = 1
-
-[[pwm_servos]]
-name = "gripper"
-channel = 0
-speed_us_per_second = 0.0
-minimum_us = 900
-maximum_us = 2100
-initial_us = 1500
-enabled = true
-"#,
-        )
-        .unwrap()
+    pub fn is_running(&self) -> bool {
+        self.alive.load(Ordering::Acquire)
     }
-
-    fn serial_profile() -> MachineProfile {
-        MachineProfile::parse(
-            r#"
-protocol_version = 1
-
-[serial_svmd]
-device = "/dev/ttyUSB0"
-
-[[serial_svmd.servos]]
-name = "arm"
-id = 1
-speed_position_per_second = 0.0
-minimum_position = 1000
-maximum_position = 3000
-initial_position = 2000
-move_speed = 400
-acceleration = 30
-enabled = true
-"#,
-        )
-        .unwrap()
+    pub fn request_stop(&self) {
+        self.alive.store(false, Ordering::Release);
     }
-
-    #[test]
-    fn stop_is_forwarded_to_cctl_and_svmd() {
-        let shared = Shared::new(BridgeConfig {
-            serial_device: "/dev/null".to_owned(),
-            baud_rate: 115_200,
-            rate_hz: 20.0,
-            machine: pwm_profile(),
-        });
-
-        assert!(shared.queue_command(Command::Stop));
-        assert_eq!(
-            shared.take_commands(),
-            vec!["STOP", "CAN 2 768 0100000000000000"]
-        );
-        assert!(shared.queue_command(Command::Safe));
-        assert_eq!(
-            shared.take_commands(),
-            vec!["SAFE", "CAN 2 768 0100000000000000"]
-        );
-        shared.update_status(|status| {
-            status.device = crate::device::parse_device_info(
-                "DEVICE protocol=2 board=cctl slots=3 can=2 watchdog_ms=250",
-            );
-        });
-        assert!(!shared.queue_command(Command::Run));
-        assert!(shared.take_commands().is_empty());
-        shared.update_status(|status| {
-            status.device.as_mut().unwrap().protocol = 1;
-        });
-        assert!(shared.queue_command(Command::Run));
-        assert_eq!(
-            shared.take_commands(),
-            vec!["RUN", "CAN 2 768 0102000100000000"]
-        );
+    pub fn take_requests(&self) -> Vec<Pending> {
+        self.pending.lock().unwrap().drain(..).collect()
     }
-
-    #[test]
-    fn state_commands_reach_serial_svmd_through_the_can_gateway() {
-        let shared = Shared::new(BridgeConfig {
-            serial_device: "/dev/null".to_owned(),
-            baud_rate: 115_200,
-            rate_hz: 20.0,
-            machine: serial_profile(),
-        });
-
-        assert!(shared.queue_command(Command::Safe));
-        assert!(shared.queue_command(Command::Home { slots: 7 }));
-        // cctlへの行に、serial_svmd宛のCANフレームが混ざって流れる。
-        assert_eq!(
-            shared.take_commands(),
-            vec!["SAFE", "CAN 2 800 0101000000000000", "HOME 7"]
-        );
+    pub fn submit(&self, request: Request, manual: bool) -> Reply {
+        match request.action.as_str() {
+            "status" => {
+                return Reply::data(toml::to_string(&self.status_snapshot()).unwrap_or_default());
+            }
+            "config" => {
+                return Reply::data(
+                    toml::to_string_pretty(&self.config().machine).unwrap_or_default(),
+                );
+            }
+            _ => {}
+        }
+        let (tx, rx) = mpsc::channel();
+        {
+            let mut queue = self.pending.lock().unwrap();
+            if request.action == "stop" {
+                for item in queue.drain(..) {
+                    let _ = item.reply.send(Reply::error("STOPにより取消"));
+                }
+                queue.push_front(Pending {
+                    request,
+                    manual,
+                    deadline: std::time::Instant::now() + Duration::from_secs(1),
+                    reply: tx,
+                });
+            } else {
+                if queue.len() >= 32 {
+                    return Reply::error("操作受付が混雑しています");
+                }
+                queue.push_back(Pending {
+                    request,
+                    manual,
+                    deadline: std::time::Instant::now() + Duration::from_secs(1),
+                    reply: tx,
+                });
+            }
+        }
+        // 実行期限を超えた要求はワーカーが取り消す。
+        rx.recv_timeout(Duration::from_secs(2))
+            .unwrap_or_else(|_| Reply::error("応答期限切れ。状態を確認してください"))
     }
 }
