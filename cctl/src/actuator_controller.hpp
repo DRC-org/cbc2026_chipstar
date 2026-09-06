@@ -5,6 +5,7 @@
 #include "dm_motor.hpp"
 #include "domain/can_frame.hpp"
 #include "domain/run_state.hpp"
+#include "domain/feedback_watch.hpp"
 #include "domain/parameters.hpp"
 #include "el05_motor.hpp"
 #include "m3508_motor.hpp"
@@ -42,7 +43,7 @@ class ActuatorController {
   // slot単位の異常。bit7はフィードバック途絶を表す。
   uint8_t errorBits(uint8_t slot) const;
   // フィードバックが途絶えたslotのbit mask。
-  uint8_t staleSlots() const { return stale_slots_; }
+  uint8_t staleSlots() const { return feedback_.stale(); }
 
  private:
   void applySlotStates();
@@ -59,8 +60,7 @@ class ActuatorController {
   float targets_[domain::SLOT_COUNT] = {};
   domain::RunMode mode_ = domain::RunMode::Safe;
   uint8_t enabled_slots_ = 0;
-  uint32_t last_rx_ms_[domain::SLOT_COUNT] = {};
-  uint8_t stale_slots_ = 0;
+  domain::FeedbackWatch feedback_;
   uint32_t last_m3508_ms_ = 0;
   uint32_t last_dm_ms_ = 0;
   uint32_t last_el05_ms_ = 0;
