@@ -247,7 +247,15 @@ void apply(const domain::ServoCommand& command) {
       if (command.param_id == static_cast<uint8_t>(domain::ServoParamId::ServoBaud)) {
         // サーボが1 Mbps出荷の個体だと、ここを変えられないと手が出ない。
         huart1.Init.BaudRate = parameters.baud();
-        HAL_UART_Init(&huart1);
+        if (HAL_UART_Init(&huart1) != HAL_OK) { reply("ERR code=SERVO_UART"); break; }
+      }
+      if (source == Link::Can) {
+        const float value = parameters.get(static_cast<domain::ServoParamId>(command.param_id));
+        uint32_t bits; std::memcpy(&bits, &value, sizeof(bits));
+        uint8_t report[8] = {1, command.param_id, 0, 0,
+            static_cast<uint8_t>(bits >> 24), static_cast<uint8_t>(bits >> 16),
+            static_cast<uint8_t>(bits >> 8), static_cast<uint8_t>(bits)};
+        sendCan(domain::servo_can::canId(0x324, address), report);
       }
       break;
     }
