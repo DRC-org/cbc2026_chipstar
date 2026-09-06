@@ -233,12 +233,12 @@ domain::Status ledStatus() {
     for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
         if (controller.errorBits(slot) != 0) return domain::Status::Error;
     }
+    // 停止はBootより先に見る。通信断はprotocol_readyも落とすため、
+    // 順序を逆にすると「止まった」が「起動直後」に見えてしまう。
+    if (controller.mode() == domain::RunMode::Stop) return domain::Status::Stop;
     if (!protocol_ready) return domain::Status::Boot;
-    switch (controller.mode()) {
-        case domain::RunMode::Run: return domain::Status::Run;
-        case domain::RunMode::Stop: return domain::Status::Stop;
-        default: return domain::Status::Safe;
-    }
+    return controller.mode() == domain::RunMode::Run ? domain::Status::Run
+                                                     : domain::Status::Safe;
 }
 }  // namespace
 

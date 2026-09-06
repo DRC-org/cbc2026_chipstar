@@ -53,12 +53,10 @@ Link source = Link::Serial;
 // LED1..6は基板の左から並ぶ。状態は点け方で表す。
 domain::Status ledStatus() {
   if (!bus_ready) return domain::Status::Error;
+  // 停止はBootより先に見る。通信断はprotocol_readyも落とすため。
+  if (mode == Mode::Stop) return domain::Status::Stop;
   if (!protocol_ready) return domain::Status::Boot;
-  switch (mode) {
-    case Mode::Run: return domain::Status::Run;
-    case Mode::Stop: return domain::Status::Stop;
-    default: return domain::Status::Safe;
-  }
+  return mode == Mode::Run ? domain::Status::Run : domain::Status::Safe;
 }
 
 void updateLeds(uint32_t now) {

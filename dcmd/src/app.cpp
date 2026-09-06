@@ -18,7 +18,13 @@ volatile uint16_t index_count = 0;
 uint8_t address = 0;
 
 // 通信断で止まった場合と、指令で止めた場合を見分けられるようにする。
-domain::Status ledStatus();
+// 停止はBootより先に見る。順序を逆にすると「止まった」が「起動直後」に見える。
+domain::Status ledStatus() {
+  if (!bus_ready || controller.timedOut()) return domain::Status::Error;
+  if (controller.mode() == dcmd::Mode::Stop) return domain::Status::Stop;
+  if (!controller.ready()) return domain::Status::Boot;
+  return controller.mode() == dcmd::Mode::Run ? domain::Status::Run : domain::Status::Safe;
+}
 
 void sampleInputs() {
   const uint16_t a = GPIOA->IDR;

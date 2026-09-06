@@ -40,6 +40,7 @@ class Controller {
   int16_t output(uint8_t channel) const { return output_[channel]; }
   uint8_t enabled() const { return enabled_; }
   bool timedOut() const { return timed_out_; }
+  bool ready() const { return ready_; }
   void updateInputs(uint8_t raw, uint8_t dip, uint32_t now) { inputs_.sample(raw, dip, now); }
   const domain::DigitalInputs& inputs() const { return inputs_; }
   const Parameters& parameters() const { return parameters_; }
