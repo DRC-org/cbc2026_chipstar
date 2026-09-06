@@ -32,7 +32,7 @@ ERR code=OUT_OF_RANGE
 | 基板 | 接点 | `available` | DIP | 報告の経路 |
 |---|---|---|---|---|
 | cctl | SW1〜SW3 | 7 | DIP1〜4 | `STATE` の `sw=` |
-| serial_svmd | SW1〜SW6 | 63 | DIP1〜4 | `INPUT READ` |
+| serial_svmd | SW1〜SW6 | 63 | DIP1〜4 | `INPUT READ` / CAN指令 `8` |
 | DCMD | SW_A〜SW_C | 7 | DIP1〜2 | CAN指令 `6` |
 | svmd | なし | — | — | なし |
 
@@ -98,6 +98,31 @@ DEVICE protocol=1 board=serial_svmd slots=16 watchdog_ms=250
 SERVO_STATE id=12 position=2048 enabled=1 error=00
 INPUT_STATE raw=3 stable=1 dip=5 available=63
 ```
+
+### CAN
+
+同じ指令をcctlのFDCAN2からも受ける。機体としてはこちらを使い、PCへのUSBは
+cctlの1本にまとめる。USART2のASCIIは基板単体で触るための口として残す。
+どちらの経路も同じ状態機械とWatchdogに入る。
+
+指令は標準ID `0x320`（800）、8 byte固定。
+
+| byte | 内容 |
+|---|---|
+| 0 | version=1 |
+| 1 | 0=HELLO、1=SAFE、2=RUN、3=STOP、4=TARGET、5=HEARTBEAT、6=ENABLE、7=READ、8=INPUT READ |
+| 2 | サーボID（1..253）。IDを取らない指令は0 |
+| 3 | ENABLEの`0|1`、TARGETの加速度（0..254）。それ以外は0 |
+| 4..5 | TARGETの位置（0..4095）、big endian。それ以外は0 |
+| 6..7 | TARGETの速度（0..1000）、big endian。それ以外は0 |
+
+応答は3種類。指令の受理結果は標準ID `0x321`（801）で
+`[1, status, mode, servo_count, 0, 0, 0, 0]`。statusは0=OK、1=拒否、2=timeout、
+modeは0=SAFE、1=RUN、2=STOP。READの応答は `0x322`（802）で
+`[1, id, pos_hi, pos_lo, enabled, error, 0, 0]`。INPUT READの応答は `0x323`（803）で、
+形式は接点入力の表に従う。
+
+1バス上のserial_svmdは1台を想定する。複数台にはアドレス割当の拡張が必要。
 
 ## svmd
 

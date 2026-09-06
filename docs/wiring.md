@@ -14,28 +14,19 @@ CAN で分配する。
 PC ──USB──▶ DualSense（コントローラ）
    └─USB──▶ cctl  J12 (USB-C)          指令とテレメトリ 115200 baud
                    ├─ FDCAN1  J2 ──▶ EL05 / M3508+C620 / DM-S3519     1 Mbps
-                   └─ FDCAN2  J3 ──▶ svmd J7 ──▶ DCMD J7              1 Mbps
-                                       (J8で数珠つなぎ)  (J8で数珠つなぎ)
+                   └─ FDCAN2  J3 ──▶ svmd ──▶ DCMD ──▶ serial_svmd    1 Mbps
+                                       (各基板のCANコネクタ2個で数珠つなぎ)
+                                                          └─ USART1 ──▶ STS3215 J11〜J14
 ```
 
-### serial_svmd だけ例外
-
-serial_svmd は CAN コネクタ（J1 / J2）を持つが、**現在の FW は CAN を使わない**。
-host とは USART2 の USB シリアルで繋ぐため、使うなら PC への USB が 2 本目になる。
-
-```
-PC ──USB──▶ serial_svmd  J15 (USB-C)   USART2 38400 baud
-                   └─ USART1 ──▶ STS3215 バス  J11〜J14
-```
-
-cctl 経由に一本化したい場合は、serial_svmd の CAN 受信と cctl FDCAN2 側の
-ゲートウェイ対応を実装する必要がある（svmd / DCMD と同じ形）。
+serial_svmd の USART2（J15 の USB-C）は基板単体で触るための口として残っている。
+機体としては使わないので、PC への USB は cctl の 1 本だけになる。
 
 ### 現在の機体プロファイル
 
 `host/config/rtheta.toml` は cctl の 3 軸だけを構成しており、svmd・DCMD・serial_svmd は
-どれも入っていない。上図の周辺基板は動作テストで単体確認できる状態で、機体としては
-まだ組み込まれていない。
+どれも入っていない。周辺基板は動作テストで単体確認できる状態で、機体としてはまだ
+組み込まれていない。
 
 ## 間違えやすい箇所
 
@@ -64,8 +55,8 @@ Feetech の設定ツールでサーボを直接触るための口であり、hos
 - **SW4（SWCTL）**: サーボバスの相手を MCU（USART1）と J16（USB_Servo）で切り替える
   スライドスイッチ。host から動かすときは MCU 側にする。
   外部接点コネクタ J7 にも silk で「SW4」と振られており、別物なので注意する。
-- **SW3**: CAN の終端抵抗 120Ω（R7）をバスへ入れるスイッチ。CAN を使わない現構成では
-  影響しないが、CAN を使う場合は端の基板だけ ON にする。
+- **SW3**: CAN の終端抵抗 120Ω（R7）をバスへ入れるスイッチ。バスの端に置く基板だけ
+  ON にする。serial_svmd を数珠つなぎの終端にするなら ON。
 
 ### DCMD のエンコーダコネクタは silk が両方 ENC0
 
@@ -108,12 +99,12 @@ FDCAN1 に繋ぐモータの ID 割当は [cctl_can_bus.md](cctl_can_bus.md)。
 
 | コネクタ | 用途 | ピン |
 |---|---|---|
-| J15 | **host との USB シリアル（USART2、38400 baud）** | USB-C |
+| J1 / J2 | **CAN — 機体での接続経路（cctl FDCAN2）** | 1=GND, 2=CAN_L, 3=CAN_H, 4=+5V |
+| J15 | USART2 の USB シリアル（38400 baud、基板単体で触る用） | USB-C |
 | J16 | USB_Servo（サーボバス直結、SW4 で切替） | USB-C |
 | J10 | サーボ電源 +BATT 入力 | 1=GNDPWR, 2=+BATT |
 | J11〜J14 | STS3215 サーボ 1〜4 | 1=GNDPWR, 2=+BATT, 3=SIG |
 | J4〜J9 | 接点 SW1〜SW6（PB1, PB0, PA7, PA6, PA5, PA4） | 1=GND, 2=信号 |
-| J1 / J2 | CAN（現 FW では未使用） | 1=GND, 2=CAN_L, 3=CAN_H, 4=+5V |
 | J3 | ST-LINK | 1=GND, 2=+電源, 3=+3V3, 4=NRST, 5=SWCLK, 6=SWDIO |
 
 サーボ電源は J10 から供給する。USB や ST-LINK の電源だけでサーボは駆動しない。

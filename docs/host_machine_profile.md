@@ -78,14 +78,11 @@ enabled = true
 
 ## serial_svmd / STS3215
 
-serial_svmdを使う場合は上位シリアル接続とサーボを指定する。`baud_rate`省略時は
-38400。IDは1..253で重複不可、位置は0..4095、`move_speed`は0..1000、
-`acceleration`は0..254とする。
+serial_svmdはcctlのFDCAN2経由で繋ぐため、接続先は指定しない。サーボだけを並べる。
+IDは1..253で重複不可、位置は0..4095、`move_speed`は0..1000、`acceleration`は0..254とする。
 
 ```toml
 [serial_svmd]
-device = "/dev/ttyUSB0"
-baud_rate = 38400
 
 [[serial_svmd.servos]]
 name = "arm"
@@ -103,6 +100,7 @@ enabled = true
 
 ## 安全動作
 
-hostはプロトコルと必要なデバイス能力を確認するまでRUNを送らない。コントローラ入力の
-送信が止まると各FWの250ms Watchdogが出力を切る。GUIのSpaceによるSTOPはcctl、
-使用中のsvmd、serial_svmdへ配信する。
+hostはcctlのプロトコルと必要なCANバスを確認するまでRUNを送らない。CAN先の基板
+（svmd、DCMD、serial_svmd）の能力はcctlの`DEVICE`からは分からないため、RUNの前提には
+含めない。コントローラ入力の送信が止まると各FWの250ms Watchdogが出力を切る。
+GUIのSpaceによるSTOPは、cctlと使用中のCAN先すべてへ配信する。
