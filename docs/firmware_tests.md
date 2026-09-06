@@ -13,6 +13,7 @@ cargo run --bin host
 
 1. 「5 動作テスト」タブを開く。
 2. **1. 接続** で対象・接続先・baud・出力の自動OFF時間を決め、「テストを開始」を押す。
+   組んだ機体をまとめて確認するなら対象に「ネットワーク一括」を選ぶ。
 3. 画面上部が「テスト中 — 出力できます」になったら、**2. 出力** で値を入れて
    「出力」にチェックを入れる。行の見出しは基板に繋がるデバイス名で、
    `slot 0 — EL05` のように表示される。
@@ -38,13 +39,15 @@ GUIとCLIは同じ制御・通信処理を使用する。以下の接続、安�
 
 ```sh
 cd host
+cargo run --bin fw_test -- --board network --serial-device /dev/ttyACM0
 cargo run --bin fw_test -- --board cctl --serial-device /dev/ttyACM0
 cargo run --bin fw_test -- --board svmd --serial-device /dev/ttyACM0
 cargo run --bin fw_test -- --board dcmd --serial-device /dev/ttyACM0
 cargo run --bin fw_test -- --board serial-svmd --serial-device /dev/ttyUSB0
 ```
 
-上記は対象ごとに1つずつ起動する。svmd/DCMDはcctlのFDCAN2を経由する。
+`network` は機体を組んだ状態向けで、cctlのUSB 1本のまま cctl・svmd・DCMD を
+繋ぎ替えずに扱う。それ以外は対象ごとに1つずつ起動する。svmd/DCMDはcctlのFDCAN2を経由する。
 serial_svmdはUSART2のUSBシリアル変換器へ直接接続し、既定38400 baud。
 それ以外は既定115200 baud。必要なら `--baud-rate` で指定する。
 CANは1 Mbps、コネクタと接続の全体像は [wiring.md](wiring.md) を参照。
@@ -52,6 +55,8 @@ GUIでは「6 配線」タブで同じ内容を見られる。
 
 起動時に接続先の能力を照会し、対象基板へSTOPを送る。
 svmd/DCMDはCAN先の応答も確認し、応答がなければ出力テストを開始せず終了する。
+`network` では応答しなかった基板を対象から外して続行し、どこまで見えているかを表示する。
+組み上げ直後にCANのどこで切れているかを切り分けるための挙動である。
 起動時のSTOPは対象基板全体に作用する。svmd/DCMDのテスト時はゲートウェイの
 cctlの3軸も停止・無効化するため、稼働中の機体には接続しない。
 
@@ -76,6 +81,9 @@ serial_svmdはSTOP/SAFE時に有効設定と保持目標を解除するFWを使�
 | DCMD | `status` | `on status` | CAN返信、モード、有効状態、実際に適用されたduty |
 | serial_svmd / DCMD | `inputs` | `on inputs` | 接点の生値・10ms安定値とDIP |
 | 全基板 | `communication` | `on communication` | 能力照会/応答またはCANの定期疎通と受信行の表示 |
+
+`network` では機能名に基板を前置きする（`on cctl.motor0 0.1`、`on svmd.motor2 1500`、
+`on dcmd.motor0 50`）。`stop` と `watchdog` と `communication` は前置きなしで全基板に効く。
 
 `off motor0`、`off encoder` などで個別にOFFにする。
 複数出力は独立して有効化できるが、初回の配線確認は1出力ずつ行う。
