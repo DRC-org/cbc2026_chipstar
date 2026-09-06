@@ -9,9 +9,9 @@ use std::path::Path;
 use anyhow::{Context, Result, bail};
 use serde::{Deserialize, Serialize};
 
-use crate::controller::ControllerState;
-use crate::svmd;
-use crate::telemetry::Telemetry;
+use crate::input::controller::ControllerState;
+use crate::protocol::telemetry::Telemetry;
+use crate::protocol::svmd;
 
 const EMBEDDED_PROFILE: &str = include_str!("../config/rtheta.toml");
 const MAX_SLOTS: usize = 3;
@@ -155,7 +155,7 @@ pub const PARAMETER_NAMES: [&str; 33] = [
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct MachineProfile {
     #[serde(default)]
-    pub dc_motors: Vec<crate::dcmd::MotorProfile>,
+    pub dc_motors: Vec<crate::protocol::dcmd::MotorProfile>,
     pub protocol_version: u8,
     #[serde(default)]
     pub axes: Vec<AxisProfile>,
@@ -191,7 +191,7 @@ impl MachineProfile {
     }
 
     pub fn validate(&self) -> Result<()> {
-        crate::dcmd::validate(&self.dc_motors)?;
+        crate::protocol::dcmd::validate(&self.dc_motors)?;
         if self.protocol_version != 1 {
             bail!(
                 "未対応のプロトコルバージョンです: {}",
@@ -214,11 +214,17 @@ impl MachineProfile {
 
         let tables: [(&ParameterMap, &[&str]); 4] = [
             (&self.parameters, &PARAMETER_NAMES),
-            (&self.svmd_parameters, &crate::svmd::PARAMETER_NAMES),
-            (&self.dcmd_parameters, &crate::dcmd::PARAMETER_NAMES),
+            (
+                &self.svmd_parameters,
+                &crate::protocol::svmd::PARAMETER_NAMES,
+            ),
+            (
+                &self.dcmd_parameters,
+                &crate::protocol::dcmd::PARAMETER_NAMES,
+            ),
             (
                 &self.serial_svmd_parameters,
-                &crate::serial_svmd::PARAMETER_NAMES,
+                &crate::protocol::serial_svmd::PARAMETER_NAMES,
             ),
         ];
         for (values, names) in tables {
@@ -395,18 +401,18 @@ impl MachineProfile {
         let boards: [BoardTable; 3] = [
             (
                 &self.svmd_parameters,
-                &crate::svmd::PARAMETER_NAMES,
-                crate::svmd::parameter_line,
+                &crate::protocol::svmd::PARAMETER_NAMES,
+                crate::protocol::svmd::parameter_line,
             ),
             (
                 &self.dcmd_parameters,
-                &crate::dcmd::PARAMETER_NAMES,
-                crate::dcmd::parameter_line,
+                &crate::protocol::dcmd::PARAMETER_NAMES,
+                crate::protocol::dcmd::parameter_line,
             ),
             (
                 &self.serial_svmd_parameters,
-                &crate::serial_svmd::PARAMETER_NAMES,
-                crate::serial_svmd::parameter_line,
+                &crate::protocol::serial_svmd::PARAMETER_NAMES,
+                crate::protocol::serial_svmd::parameter_line,
             ),
         ];
         for (values, names, encode) in boards {
@@ -680,7 +686,10 @@ impl MachineController {
                 .to_cctl_line(),
             );
         }
-        lines.extend(crate::dcmd::targets(&self.profile.dc_motors, &input.axes));
+        lines.extend(crate::protocol::dcmd::targets(
+            &self.profile.dc_motors,
+            &input.axes,
+        ));
         lines.extend(self.serial_svmd_lines(input, dt));
         lines
     }
@@ -770,7 +779,7 @@ impl MachineController {
                     );
             }
             lines.push(
-                crate::serial_svmd::Command::Target {
+                crate::protocol::serial_svmd::Command::Target {
                     id: servo.id,
                     position: target.round() as u16,
                     speed: servo.move_speed,
@@ -779,7 +788,7 @@ impl MachineController {
                 .to_cctl_line(),
             );
             lines.push(
-                crate::serial_svmd::Command::Enable {
+                crate::protocol::serial_svmd::Command::Enable {
                     id: servo.id,
                     enabled: servo.enabled,
                 }
@@ -791,7 +800,7 @@ impl MachineController {
             let index = self.serial_read_cursor % board.servos.len();
             self.serial_read_cursor = self.serial_read_cursor.wrapping_add(1);
             lines.push(
-                crate::serial_svmd::Command::Read {
+                crate::protocol::serial_svmd::Command::Read {
                     id: board.servos[index].id,
                 }
                 .to_cctl_line(),
@@ -928,7 +937,7 @@ initial = 0.0
 
     /// SW1が閉じた状態（B接点の平常時）のテレメトリ。
     fn telemetry_with(contacts: u8, measured: [f32; 3]) -> Telemetry {
-        use crate::telemetry::{RunMode, SlotState};
+        use crate::protocol::telemetry::{RunMode, SlotState};
         Telemetry {
             uptime_ms: 0,
             slots: [
@@ -1267,7 +1276,7 @@ direction = -1.0
 #[cfg(test)]
 mod manual_tests {
     use super::*;
-    use crate::telemetry::{RunMode, SlotState};
+    use crate::protocol::telemetry::{RunMode, SlotState};
     fn telemetry(native: f32) -> Telemetry {
         Telemetry {
             uptime_ms: 0,

@@ -1,13 +1,13 @@
 //! 機体接続と操作権を単一ワーカーが所有する。
 use crate::{
-    app_state::{BridgeConfig, Shared},
-    control_api::{Reply, Request},
-    controller::{self, ControllerState},
-    device::{DeviceInfo, parse_device_info},
-    link::Link,
+    application::app_state::{BridgeConfig, Shared},
+    application::settings::Settings,
+    input::controller::{self, ControllerState},
+    interface::control_api::{Reply, Request},
     machine::{MachineController, MachineProfile},
-    settings::Settings,
-    telemetry::{RunMode, Telemetry, parse_telemetry},
+    protocol::device::{DeviceInfo, parse_device_info},
+    protocol::telemetry::{RunMode, Telemetry, parse_telemetry},
+    transport::link::Link,
 };
 use anyhow::{Context, Result, bail};
 use std::{
@@ -114,13 +114,13 @@ impl Runtime {
     }
     fn stop_peripherals(&mut self) -> Result<()> {
         if !self.cfg.machine.pwm_servos.is_empty() {
-            self.send(&crate::svmd::Command::Stop.to_cctl_line())?;
+            self.send(&crate::protocol::svmd::Command::Stop.to_cctl_line())?;
         }
         if !self.cfg.machine.dc_motors.is_empty() {
-            self.send(&crate::dcmd::line(3, 0, 0))?;
+            self.send(&crate::protocol::dcmd::line(3, 0, 0))?;
         }
         if self.cfg.machine.requires_serial_svmd() {
-            self.send(&crate::serial_svmd::Command::Stop.to_cctl_line())?;
+            self.send(&crate::protocol::serial_svmd::Command::Stop.to_cctl_line())?;
         }
         Ok(())
     }
@@ -306,7 +306,7 @@ impl Runtime {
                 if self.running || self.awaiting_run.is_some() {
                     bail!("停止してから接続先を変更してください");
                 }
-                let connection: crate::app_state::Connection =
+                let connection: crate::application::app_state::Connection =
                     toml::from_str(req.text.as_deref().context("接続設定が必要です")?)?;
                 if connection.serial_device.is_empty() || connection.baud_rate == 0 {
                     bail!("接続設定が不正です");
@@ -394,7 +394,7 @@ impl Runtime {
     fn receive(&mut self) {
         for line in self.link.read_lines() {
             self.shared.log(format!("RX {line}"));
-            if let Some(status) = crate::dcmd::parse_status(&line) {
+            if let Some(status) = crate::protocol::dcmd::parse_status(&line) {
                 self.shared.update_status(|s| {
                     s.peripherals.insert(
                         "DCMD".into(),
@@ -405,7 +405,7 @@ impl Runtime {
                     );
                 });
             }
-            if let Some(encoder) = crate::dcmd::parse_encoder(&line) {
+            if let Some(encoder) = crate::protocol::dcmd::parse_encoder(&line) {
                 self.shared.update_status(|s| {
                     s.peripherals.insert(
                         "ボーナスENC".into(),
@@ -413,7 +413,7 @@ impl Runtime {
                     );
                 });
             }
-            if let Some(servo) = crate::serial_svmd::parse_state(&line) {
+            if let Some(servo) = crate::protocol::serial_svmd::parse_state(&line) {
                 self.shared.update_status(|s| {
                     s.peripherals.insert(
                         format!("STS3215 ID {}", servo.id),
@@ -509,10 +509,10 @@ impl Runtime {
             self.last_hello = Instant::now();
             self.send("HELLO 1")?;
             if !self.cfg.machine.dc_motors.is_empty() {
-                self.send(&crate::dcmd::line(0, 0, 0))?;
+                self.send(&crate::protocol::dcmd::line(0, 0, 0))?;
             }
             if self.cfg.machine.requires_serial_svmd() {
-                self.send(&crate::serial_svmd::Command::Hello.to_cctl_line())?;
+                self.send(&crate::protocol::serial_svmd::Command::Hello.to_cctl_line())?;
             }
         }
         if self.fresh() && self.device.is_some() && !self.setup {
@@ -567,7 +567,7 @@ impl Runtime {
                 self.send("CAN 2 768 0103000000000000")?;
             }
             if !self.cfg.machine.dc_motors.is_empty() {
-                self.send(&crate::dcmd::line(5, 0, 0))?;
+                self.send(&crate::protocol::dcmd::line(5, 0, 0))?;
             }
             if self.cfg.machine.requires_serial_svmd() {
                 self.send("CAN 2 800 0105000000000000")?;

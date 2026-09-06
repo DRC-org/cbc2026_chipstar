@@ -162,7 +162,7 @@ mod tests {
     #[test]
     fn profile_limits_input_and_rejects_duplicate_channels() {
         let mut profile =
-            crate::machine::MachineProfile::parse(include_str!("../config/dcmd.toml")).unwrap();
+            crate::machine::MachineProfile::parse(include_str!("../../config/dcmd.toml")).unwrap();
         assert_eq!(
             targets(&profile.dc_motors, &[0.0, -2.0, 0.0, 0.05, 0.0, 0.0]),
             vec![line(4, 0, -100)]

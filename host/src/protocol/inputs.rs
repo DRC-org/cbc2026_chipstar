@@ -1,7 +1,7 @@
 //! 基板が報告する接点とDIPの状態。接点はGNDへ閉じたとき1。
 //!
 //! cctlの接点は`STATE`の`sw=`で常時届くため、ここでは要求応答型の基板だけを扱う。
-use crate::fw_test::Board;
+use crate::diagnostics::fw_test::Board;
 
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct InputState {
@@ -103,6 +103,12 @@ mod tests {
         // 他基板の報告や、能力と食い違う値は受け付けない。
         assert!(parse("CAN_RX bus=2 id=787 data=0101000207000000", Board::Cctl).is_none());
         assert!(parse("CAN_RX bus=2 id=787 data=010100020F000000", Board::Dcmd).is_none());
-        assert!(parse("INPUT_STATE raw=64 stable=0 dip=0 available=63", Board::SerialSvmd).is_none());
+        assert!(
+            parse(
+                "INPUT_STATE raw=64 stable=0 dip=0 available=63",
+                Board::SerialSvmd
+            )
+            .is_none()
+        );
     }
 }

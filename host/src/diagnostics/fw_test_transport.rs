@@ -1,5 +1,5 @@
-use crate::fw_test::{Board, Session};
-use crate::{device, serial};
+use crate::diagnostics::fw_test::{Board, Session};
+use crate::{protocol::device, transport::serial};
 use anyhow::{Result, bail};
 use std::{
     thread,

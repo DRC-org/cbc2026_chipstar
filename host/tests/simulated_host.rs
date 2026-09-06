@@ -1,8 +1,6 @@
 //! 実行ファイルを起動し、実際のソケット経由で停止復帰と設定保存を検証する。
-#[allow(dead_code)]
-#[path = "../src/control_api.rs"]
-mod api;
 use api::{Reply, Request};
+use host::interface::control_api as api;
 use std::{
     fs,
     path::PathBuf,

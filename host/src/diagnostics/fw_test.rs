@@ -150,14 +150,17 @@ impl Part {
 
     /// 出力を保つための定期送信。
     fn keepalive(&self, communication: bool) -> Option<String> {
-        if self.outputs.is_empty()
-            && !communication
-            && !(self.board == Board::Svmd && self.status)
+        if self.outputs.is_empty() && !communication && !(self.board == Board::Svmd && self.status)
         {
             return None;
         }
         Some(match self.board {
-            Board::Cctl | Board::SerialSvmd => if communication { "HELLO 1" } else { "HEARTBEAT" }.into(),
+            Board::Cctl | Board::SerialSvmd => if communication {
+                "HELLO 1"
+            } else {
+                "HEARTBEAT"
+            }
+            .into(),
             Board::Svmd => can(768, 3, 0, 0, 0),
             Board::Dcmd | Board::Network => {
                 can(784, if self.outputs.is_empty() { 0 } else { 5 }, 0, 0, 0)
@@ -166,7 +169,7 @@ impl Part {
     }
 
     fn visible(&self, line: &str) -> bool {
-        if self.inputs && crate::inputs::parse(line, self.board).is_some() {
+        if self.inputs && crate::protocol::inputs::parse(line, self.board).is_some() {
             return true;
         }
         match self.board {
@@ -289,7 +292,9 @@ impl Session {
         let features = match self.board {
             Board::Cctl => "motor0..2 <位置>（0/2: rad、1: motor deg）; status".to_owned(),
             Board::Svmd => "motor0..3 <パルス幅500..2500 us>; status".to_owned(),
-            Board::SerialSvmd => "motor1..253 <位置0..4095>; read1..253（同時最大16 ID）".to_owned(),
+            Board::SerialSvmd => {
+                "motor1..253 <位置0..4095>; read1..253（同時最大16 ID）".to_owned()
+            }
             Board::Dcmd => "motor0 <duty -100..100 permille>; encoder; status".to_owned(),
             Board::Network => format!(
                 "基板名を前置きする。応答のあった基板: {}\n  cctl.motor0..2 <位置>; cctl.status\n  svmd.motor0..3 <500..2500 us>; svmd.status\n  dcmd.motor0 <-100..100 permille>; dcmd.encoder; dcmd.status; dcmd.inputs",
@@ -302,7 +307,7 @@ impl Session {
         };
         let inputs = if self.board == Board::Network {
             ""
-        } else if crate::inputs::supported(self.board) {
+        } else if crate::protocol::inputs::supported(self.board) {
             "; inputs (SW/DIP読取り)"
         } else if self.board == Board::Cctl {
             "。接点はstatusのSTATE行にsw=として出る"
@@ -376,7 +381,7 @@ impl Session {
         match name {
             "inputs" => {
                 ensure!(
-                    crate::inputs::supported(board),
+                    crate::protocol::inputs::supported(board),
                     "この基板に要求応答型の接点報告はありません"
                 );
                 part.inputs = enabled;
@@ -456,8 +461,8 @@ impl Session {
 /// CANの生フレームに配線確認用の値を併記する。
 pub fn describe(line: &str) -> String {
     for board in [Board::Cctl, Board::SerialSvmd, Board::Dcmd, Board::Svmd] {
-        if let Some(state) = crate::inputs::parse(line, board) {
-            return crate::inputs::describe(&state);
+        if let Some(state) = crate::protocol::inputs::parse(line, board) {
+            return crate::protocol::inputs::describe(&state);
         }
     }
     let Some((prefix, payload)) = line.split_once(" data=") else {

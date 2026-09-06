@@ -1,5 +1,5 @@
 //! 実機と模擬機体は同じ指令・応答経路を通る。
-use crate::serial::SerialLink;
+use crate::transport::serial::SerialLink;
 use anyhow::{Result, bail};
 use std::{
     collections::{BTreeMap, VecDeque},

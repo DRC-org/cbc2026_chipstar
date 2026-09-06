@@ -1,10 +1,8 @@
 //! 起動済みhostへ接続する。同じユーザのローカルソケットのみを使用する。
-#[allow(dead_code)]
-#[path = "../control_api.rs"]
-mod control_api;
 use anyhow::{Result, bail};
 use clap::Parser;
 use control_api::{Request, call};
+use host::interface::control_api;
 use std::{
     path::PathBuf,
     time::{Duration, Instant},

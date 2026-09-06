@@ -1,19 +1,12 @@
 //! 汎用FWの対話型動作テスト。通常のGUI/ゲームパッド処理とは独立して実行する。
-#[path = "../device.rs"]
-mod device;
-#[path = "../fw_test.rs"]
-mod fw_test;
-#[path = "../inputs.rs"]
-mod inputs;
-#[path = "../serial.rs"]
-mod serial;
-
 use anyhow::{Result, bail};
-#[path = "../fw_test_transport.rs"]
-mod fw_test_transport;
 use clap::Parser;
 use fw_test::{Board, Session};
 use fw_test_transport::{connect, send};
+use host::{
+    diagnostics::{fw_test, fw_test_transport},
+    transport::serial,
+};
 use std::{
     io::{self, BufRead},
     sync::mpsc,

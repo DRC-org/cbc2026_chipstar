@@ -1,6 +1,6 @@
 use crate::{
-    app_state::Shared,
-    control_api::{Reply, Request, read_frame, write_frame},
+    application::app_state::Shared,
+    interface::control_api::{Reply, Request, read_frame, write_frame},
 };
 use anyhow::{Context, Result, bail};
 use std::{

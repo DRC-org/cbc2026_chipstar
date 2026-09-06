@@ -1,5 +1,7 @@
 //! 操縦、調整、診断。操作はローカルAPIと同じ受付を通す。
-use crate::{app_state::Shared, control_api::Request, machine::MachineProfile};
+use crate::{
+    application::app_state::Shared, interface::control_api::Request, machine::MachineProfile,
+};
 use eframe::egui::{self, Color32, FontData, RichText};
 use std::{sync::Arc, time::Duration};
 
@@ -16,14 +18,14 @@ pub struct BridgeApp {
     source: String,
     base: String,
     message: String,
-    connection: crate::app_state::Connection,
+    connection: crate::application::app_state::Connection,
 }
 impl BridgeApp {
     pub fn new(shared: Arc<Shared>) -> Self {
         let edit = shared.config().machine;
         let source = toml::to_string_pretty(&edit).unwrap_or_default();
         let config = shared.config();
-        let connection = crate::app_state::Connection {
+        let connection = crate::application::app_state::Connection {
             serial_device: config.serial_device,
             baud_rate: config.baud_rate,
         };

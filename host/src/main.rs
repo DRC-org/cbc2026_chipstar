@@ -1,26 +1,15 @@
 //! 機体操作GUIと、同じ接続を使うローカル操作API。
-mod api_server;
-mod app_state;
-mod control_api;
-mod controller;
-mod dcmd;
-mod device;
-mod gui;
-mod link;
-mod machine;
-mod serial;
-mod serial_svmd;
-mod settings;
-mod svmd;
-mod telemetry;
-mod worker;
-
-use crate::{
-    app_state::{BridgeConfig, Shared},
-    machine::MachineProfile,
-};
 use clap::Parser;
 use eframe::egui;
+use host::{
+    application::{
+        app_state::{BridgeConfig, Shared},
+        worker,
+    },
+    gui,
+    interface::{api_server, control_api},
+    machine::MachineProfile,
+};
 use std::{path::PathBuf, sync::Arc, thread};
 
 #[derive(Parser)]
