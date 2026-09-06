@@ -31,7 +31,7 @@ FWの`domain/`は指令解釈・制御計算・状態管理を担い、`app.cpp`
 | [transport](../host/src/transport/mod.rs) | USBシリアル、模擬接続、プロファイルの読込・保存 |
 | [input](../host/src/input/mod.rs) | 入力スナップショットとDualSenseの読み取り |
 | [interface](../host/src/interface/mod.rs) | Unixソケットの接続受付、長さ付きTOMLの送受信 |
-| [gui](../host/src/gui/mod.rs) | 画面共通状態と遷移。操縦・調整・診断は各画面のモジュールで描画 |
+| [gui](../host/src/gui/mod.rs) | 画面共通状態と遷移。操縦・調整・診断は各画面のモジュールで描画。`shortcuts.rs`でキーを解釈し、ボタンと共通の操作入口へ渡す |
 | [diagnostics](../host/src/diagnostics/mod.rs) | 通常hostとは独立して使うFW保守セッションと接続準備 |
 
 機体モデルはGUI、ソケット、ファイルシステムを参照しない。基板プロトコルは機体モデルや
