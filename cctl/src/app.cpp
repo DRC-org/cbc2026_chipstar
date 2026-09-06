@@ -76,8 +76,17 @@ void applyCommand(const domain::Command& command) {
     switch (command.kind) {
         case domain::CommandKind::Hello:
             protocol_ready = command.protocol_version == 1;
-            sendText(protocol_ready ? "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250"
-                                    : "ERR code=BAD_VERSION");
+            if (!protocol_ready) {
+                sendText("ERR code=BAD_VERSION");
+                break;
+            } else {
+                char text[80];
+                std::snprintf(text, sizeof(text),
+                              "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=%lu",
+                              static_cast<unsigned long>(
+                                  controller.parameters().getMs(domain::ParamId::WatchdogMs)));
+                sendText(text);
+            }
             break;
         case domain::CommandKind::Stop:
             controller.setMode(domain::RunMode::Stop);
@@ -194,7 +203,7 @@ extern "C" void loop(void) {
 
     const uint32_t now = HAL_GetTick();
     if (controller.mode() == domain::RunMode::Run &&
-        now - last_contact_ms > config::period::WATCHDOG_MS) {
+        now - last_contact_ms > controller.parameters().getMs(domain::ParamId::WatchdogMs)) {
         controller.setMode(domain::RunMode::Stop);
         protocol_ready = false;
     }

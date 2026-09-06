@@ -15,6 +15,9 @@ public:
         kd_ = kd;
     }
 
+    void setOutLimit(float out_limit) { out_limit_ = out_limit; }
+    float outLimit() const { return out_limit_; }
+
     void reset();
 
     // 目標値と計測値から出力を計算し、内部状態を更新する。

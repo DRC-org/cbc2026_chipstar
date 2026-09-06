@@ -69,3 +69,12 @@ TEST_CASE("ゲインは後から差し替えられる") {
 
     CHECK(pid.update(1.0f, 0.0f, 0.0f) == doctest::Approx(3.0f));
 }
+
+TEST_CASE("出力制限を実行時に変えられる") {
+    // m3508_max_rpm は位置ループの出力制限そのもの。PIDへ届かないと効かない。
+    domain::Pid pid(100.0f, 0.0f, 0.0f, 10.0f);
+    CHECK(pid.update(100.0f, 0.0f, 0.01f) == doctest::Approx(10.0f));
+    pid.setOutLimit(50.0f);
+    CHECK(pid.outLimit() == doctest::Approx(50.0f));
+    CHECK(pid.update(100.0f, 0.0f, 0.01f) == doctest::Approx(50.0f));
+}

@@ -155,8 +155,15 @@ void apply(const domain::ServoCommand& command) {
         sendStatus(protocol_ready ? domain::servo_can::Status::Ok
                                   : domain::servo_can::Status::Rejected);
       } else {
-        reply(protocol_ready ? "DEVICE protocol=1 board=serial_svmd slots=16 watchdog_ms=250"
-                             : "ERR code=BAD_VERSION");
+        if (!protocol_ready) {
+          reply("ERR code=BAD_VERSION");
+        } else {
+          char text[80];
+          std::snprintf(text, sizeof(text),
+                        "DEVICE protocol=1 board=serial_svmd slots=16 watchdog_ms=%lu",
+                        static_cast<unsigned long>(parameters.watchdogMs()));
+          reply(text);
+        }
       }
       break;
     case domain::ServoCommandKind::Safe:

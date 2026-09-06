@@ -45,7 +45,11 @@ class M3508Motor {
     pos_pid_.setGains(pos_kp, pos_ki, pos_kd);
     vel_pid_.setGains(vel_kp, vel_ki, vel_kd);
   }
-  void setMaxRpm(float value) { max_rpm_ = value; }
+  // 位置ループの出力制限そのものなので、PIDへ反映しないと効かない。
+  void setMaxRpm(float value) {
+    max_rpm_ = value;
+    pos_pid_.setOutLimit(value);
+  }
   void setMaxCurrentMilliAmp(float value) { max_current_ma_ = value; }
   // 宛先の差し替えはSAFE中だけ行う。
   void setEscId(uint8_t esc_id) { esc_id_ = esc_id; }
