@@ -414,6 +414,8 @@ pub struct MachineController {
     last_contacts: Option<u8>,
     pwm_targets_us: Vec<f32>,
     serial_targets: Vec<f32>,
+    /// 位置読み出しの巡回位置。
+    serial_read_cursor: usize,
 }
 
 impl MachineController {
@@ -438,6 +440,7 @@ impl MachineController {
             targets,
             pwm_targets_us,
             serial_targets,
+            serial_read_cursor: 0,
         }
     }
 
@@ -598,6 +601,17 @@ impl MachineController {
                 .to_cctl_line(),
             );
         }
+        // 実測位置は1周期に1IDずつ巡回して読む。目標送信を遅らせないため。
+        if !board.servos.is_empty() {
+            let index = self.serial_read_cursor % board.servos.len();
+            self.serial_read_cursor = self.serial_read_cursor.wrapping_add(1);
+            lines.push(
+                crate::serial_svmd::Command::Read {
+                    id: board.servos[index].id,
+                }
+                .to_cctl_line(),
+            );
+        }
         lines
     }
 
@@ -718,7 +732,7 @@ mod tests {
             ],
             enabled_slots: 7,
             mode: RunMode::Run,
-            error_bits: 0,
+            error_bits: [0; 3],
             contacts: Some(contacts),
             stale_slots: 0,
         }
@@ -871,6 +885,14 @@ direction = 1.0");
             .iter()
             .filter(|line| line.starts_with("CAN 2 800 "))
             .collect();
-        assert_eq!(servo, ["CAN 2 800 01040C1E08020190", "CAN 2 800 01060C0100000000"]);
+        // 目標・有効化に続けて、実測位置の読み出しを1IDぶん巡回する。
+        assert_eq!(
+            servo,
+            [
+                "CAN 2 800 01040C1E08020190",
+                "CAN 2 800 01060C0100000000",
+                "CAN 2 800 01070C0000000000"
+            ]
+        );
     }
 }

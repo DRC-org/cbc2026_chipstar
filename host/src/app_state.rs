@@ -42,6 +42,8 @@ pub struct Status {
     pub device: Option<DeviceInfo>,
     /// 軸ごとの原点と接点の状態。
     pub origins: Vec<crate::machine::OriginState>,
+    /// STS3215の実測位置。IDごとの最新値。
+    pub serial_servos: std::collections::BTreeMap<u8, crate::serial_svmd::ServoState>,
 }
 
 /// スレッド間共有ハンドル。`Arc<Shared>` で持ち回る。

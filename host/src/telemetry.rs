@@ -1,5 +1,12 @@
 //! cctlが送る汎用slotテレメトリの解釈。
 
+/// `Telemetry::error_bits` のうち cctl 自身が立てるもの。
+/// 下位bitは各モータのドライバが返す値がそのまま入る。
+pub mod error_bit {
+    pub const OVER_TEMPERATURE: u8 = 0x40;
+    pub const FEEDBACK_LOST: u8 = 0x80;
+}
+
 pub mod slot_bit {
     pub const SLOT0: u8 = 1 << 0;
     pub const SLOT1: u8 = 1 << 1;
@@ -36,7 +43,8 @@ pub struct Telemetry {
     pub slots: [SlotState; 3],
     pub enabled_slots: u8,
     pub mode: RunMode,
-    pub error_bits: u8,
+    /// slotごとの異常bit。bit7=フィードバック途絶、bit6=過熱。
+    pub error_bits: [u8; 3],
     /// SW1..SW3の10ms安定値。閉で1。`sw=`を持たないFWではNone。
     pub contacts: Option<u8>,
     /// モータのフィードバックが途絶えたslotのbit mask。
@@ -88,7 +96,17 @@ pub fn parse_telemetry(line: &str) -> Option<Telemetry> {
             "a0" => slots[0] = Some(parse_slot(value)?),
             "a1" => slots[1] = Some(parse_slot(value)?),
             "a2" => slots[2] = Some(parse_slot(value)?),
-            "err" => error_bits = Some(u8::from_str_radix(value, 16).ok()?),
+            "err" => {
+                let mut bits = [0u8; 3];
+                let mut fields = value.split(',');
+                for slot in &mut bits {
+                    *slot = u8::from_str_radix(fields.next()?, 16).ok()?;
+                }
+                if fields.next().is_some() {
+                    return None;
+                }
+                error_bits = Some(bits);
+            }
             "sw" => contacts = Some(value.parse().ok()?),
             "stale" => stale_slots = value.parse().ok()?,
             _ => {}
@@ -111,7 +129,7 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str =
-        "STATE t=12345 mode=RUN en=7 a0=1.200/1.100 a1=-45.000/-44.200 a2=0.500/0.400 err=0A sw=5 stale=2";
+        "STATE t=12345 mode=RUN en=7 a0=1.200/1.100 a1=-45.000/-44.200 a2=0.500/0.400 err=0A,00,03 sw=5 stale=2";
 
     #[test]
     fn parses_all_slots() {
@@ -120,7 +138,7 @@ mod tests {
         assert_eq!(telemetry.slots[0].target, 1.2);
         assert_eq!(telemetry.slots[1].measured, -44.2);
         assert_eq!(telemetry.mode, RunMode::Run);
-        assert_eq!(telemetry.error_bits, 0x0A);
+        assert_eq!(telemetry.error_bits, [0x0A, 0x00, 0x03]);
         assert_eq!(telemetry.contacts, Some(5));
         assert_eq!(telemetry.stale_slots, 2);
         assert!(telemetry.slot_enabled(2));

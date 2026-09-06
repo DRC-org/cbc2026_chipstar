@@ -4,6 +4,10 @@ const CAN_BUS: u8 = 2;
 const COMMAND_CAN_ID: u16 = 0x300;
 const PROTOCOL_VERSION: u8 = 1;
 
+// 基板側はDIPで選ぶアドレスぶんCAN IDをずらせる（0x100刻み、0..3）。
+// hostは後から書き換えられるので、2台目が必要になった時点でここへ足す。
+// いまは address 0 のIDだけを送る。
+
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Command {
     Stop,

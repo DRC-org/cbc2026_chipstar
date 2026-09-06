@@ -295,7 +295,23 @@ impl BridgeApp {
 
                 if self.shared.config().machine.requires_serial_svmd() {
                     ui.label("serial_svmd");
-                    ui.label("cctl の FDCAN2 経由");
+                    ui.label(if status.serial_servos.is_empty() {
+                        "cctl の FDCAN2 経由（応答なし）".to_owned()
+                    } else {
+                        status
+                            .serial_servos
+                            .values()
+                            .map(|servo| {
+                                format!(
+                                    "ID{}={}{}",
+                                    servo.id,
+                                    servo.position,
+                                    if servo.enabled { "" } else { "(トルクOFF)" }
+                                )
+                            })
+                            .collect::<Vec<_>>()
+                            .join("  ")
+                    });
                     ui.end_row();
                 }
 
@@ -838,10 +854,37 @@ fn telemetry_ui(ui: &mut egui::Ui, telemetry: &Telemetry, profile: &MachineProfi
 
     ui.add_space(4.0);
     ui.monospace(format!(
-        "uptime: {} ms / err: {:02X} / 受信: {} 行",
-        telemetry.uptime_ms, telemetry.error_bits, count
+        "uptime: {} ms / err: {} / 受信: {} 行",
+        telemetry.uptime_ms,
+        telemetry
+            .error_bits
+            .iter()
+            .map(|bits| format!("{bits:02X}"))
+            .collect::<Vec<_>>()
+            .join(","),
+        count
     ));
-    if telemetry.error_bits != 0 {
+    for (slot, bits) in telemetry.error_bits.iter().enumerate() {
+        let mut causes = Vec::new();
+        if bits & crate::telemetry::error_bit::FEEDBACK_LOST != 0 {
+            causes.push("応答途絶");
+        }
+        if bits & crate::telemetry::error_bit::OVER_TEMPERATURE != 0 {
+            causes.push("過熱");
+        }
+        let driver = bits & !(crate::telemetry::error_bit::FEEDBACK_LOST
+            | crate::telemetry::error_bit::OVER_TEMPERATURE);
+        if driver != 0 {
+            causes.push("ドライバ異常");
+        }
+        if !causes.is_empty() {
+            ui.colored_label(
+                egui::Color32::from_rgb(200, 60, 60),
+                format!("slot {slot}: {}（err={bits:02X}）", causes.join(" / ")),
+            );
+        }
+    }
+    if telemetry.error_bits.iter().any(|bits| *bits != 0) {
         ui.colored_label(
             egui::Color32::from_rgb(200, 80, 80),
             "アクチュエータがエラーを報告しています。",

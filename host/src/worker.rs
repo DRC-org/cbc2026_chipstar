@@ -203,6 +203,10 @@ pub fn run(shared: Arc<Shared>) {
                     s.serial_connected = true;
                     s.last_error = None;
                 });
+            } else if let Some(servo) = crate::serial_svmd::parse_state(&line) {
+                shared.update_status(|s| {
+                    s.serial_servos.insert(servo.id, servo);
+                });
             } else if let Some(parsed) = parse_telemetry(&line) {
                 telemetry = Some(parsed.clone());
                 let telemetry = parsed;
