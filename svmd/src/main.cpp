@@ -7,8 +7,7 @@
 namespace proto = domain::servo_can;
 
 namespace {
-constexpr uint32_t COMMAND_CAN_ID = 0x300;
-constexpr uint32_t STATUS_CAN_ID = 0x301;
+
 constexpr uint8_t SERVO_PINS[proto::CHANNEL_COUNT] = {3, 6, 10, 9};
 
 enum class Status : uint8_t { Ok = 0, BadCommand = 1, Timeout = 2 };
@@ -17,6 +16,9 @@ Servo servos[proto::CHANNEL_COUNT];
 bool enabled[proto::CHANNEL_COUNT] = {};
 uint16_t target_us[proto::CHANNEL_COUNT] = {1500, 1500, 1500, 1500};
 proto::Parameters parameters;
+// 基板アドレスはID用DIPのA0..A1から起動時に読む。
+const uint8_t ADDRESS_PINS[] = {A0, A1};
+uint8_t address = 0;
 uint32_t last_contact_ms = 0;
 bool timeout_reported = false;
 
@@ -59,7 +61,7 @@ void sendStatus(Status status, const proto::Command& command) {
         static_cast<uint8_t>(pulse & 0xFF),
         0,
     };
-    CAN.write(CanMsg(CanStandardId(STATUS_CAN_ID), sizeof(data), data));
+    CAN.write(CanMsg(CanStandardId(proto::canId(proto::STATUS_ID, address)), sizeof(data), data));
 }
 
 void apply(const proto::Command& command) {
@@ -89,6 +91,10 @@ void apply(const proto::Command& command) {
 }  // namespace
 
 void setup() {
+    for (auto pin : ADDRESS_PINS) pinMode(pin, INPUT_PULLUP);
+    for (uint8_t i = 0; i < 2; ++i) {
+        if (digitalRead(ADDRESS_PINS[i]) == LOW) address |= 1U << i;
+    }
     Serial.begin(115200);
     stopAll();
     CAN.begin(CanBitRate::BR_1000k);
@@ -98,7 +104,7 @@ void setup() {
 void loop() {
     while (CAN.available()) {
         const CanMsg message = CAN.read();
-        if (message.id != COMMAND_CAN_ID) continue;
+        if (message.id != proto::canId(proto::COMMAND_ID, address)) continue;
 
         proto::Command command;
         if (!proto::parse(message.data, message.data_length, command, parameters)) {

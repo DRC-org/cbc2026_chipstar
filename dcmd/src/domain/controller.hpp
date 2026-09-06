@@ -5,10 +5,19 @@
 #include "domain/parameters.hpp"
 
 namespace dcmd {
+// 基板アドレス。基板上のDIP1..2で0..3を選ぶ。
+// 同じ種類の基板を1バスに複数載せるため、IDへ 0x100*address を足す。
+// address 0 は従来と同じIDになる。
+constexpr uint16_t ADDRESS_STRIDE = 0x100;
+constexpr uint8_t MAX_ADDRESS = 3;
 constexpr uint16_t COMMAND_ID = 0x310;
 constexpr uint16_t STATUS_ID = 0x311;
 constexpr uint16_t ENCODER_ID = 0x312;
 constexpr uint16_t INPUT_ID = 0x313;
+
+constexpr uint16_t canId(uint16_t base, uint8_t address) {
+  return static_cast<uint16_t>(base + ADDRESS_STRIDE * address);
+}
 constexpr int16_t MAX_DUTY = 900;  // permille
 constexpr uint32_t WATCHDOG_MS = 250;
 enum class Op : uint8_t { Hello, Safe, Run, Stop, Target, Heartbeat, InputRead, ParamSet };

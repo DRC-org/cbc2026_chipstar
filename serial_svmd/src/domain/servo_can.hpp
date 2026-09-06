@@ -9,11 +9,18 @@ namespace domain::servo_can {
 
 // cctlのFDCAN2から届く指令。USART2のASCIIと同じ状態機械へ入れるため、
 // 解析結果は ServoCommand に揃える。
+// 基板アドレス。基板上のDIP1..2で0..3を選ぶ。address 0 は従来と同じID。
+constexpr uint16_t ADDRESS_STRIDE = 0x100;
+constexpr uint8_t MAX_ADDRESS = 3;
 constexpr uint16_t COMMAND_ID = 0x320;
 constexpr uint16_t STATUS_ID = 0x321;
 constexpr uint16_t POSITION_ID = 0x322;
 constexpr uint16_t INPUT_ID = 0x323;
 constexpr uint8_t PROTOCOL_VERSION = 1;
+
+constexpr uint16_t canId(uint16_t base, uint8_t address) {
+    return static_cast<uint16_t>(base + ADDRESS_STRIDE * address);
+}
 
 enum class Op : uint8_t {
     Hello = 0,

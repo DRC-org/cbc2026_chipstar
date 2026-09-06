@@ -46,6 +46,7 @@ std::size_t line_length = 0;
 bool line_overflow = false;
 domain::DigitalInputs inputs(63);
 bool bus_ready = false;
+uint8_t address = 0;
 Link source = Link::Serial;
 
 void sampleInputs() {
@@ -75,7 +76,7 @@ void sendStatus(domain::servo_can::Status status) {
   }
   uint8_t frame[8];
   domain::servo_can::encodeStatus(status, static_cast<uint8_t>(mode), count, frame);
-  sendCan(domain::servo_can::STATUS_ID, frame);
+  sendCan(domain::servo_can::canId(domain::servo_can::STATUS_ID, address), frame);
 }
 
 // USART2へはASCIIの1行、CANへは拒否として返す。
@@ -137,7 +138,7 @@ void reportPosition(uint8_t id, uint16_t position, bool enabled) {
   if (source == Link::Can) {
     uint8_t frame[8];
     domain::servo_can::encodePosition(id, position, enabled, bus.lastServoError(), frame);
-    sendCan(domain::servo_can::POSITION_ID, frame);
+    sendCan(domain::servo_can::canId(domain::servo_can::POSITION_ID, address), frame);
     return;
   }
   char output[80] = {};
@@ -234,7 +235,7 @@ void apply(const domain::ServoCommand& command) {
         uint8_t frame[8];
         domain::servo_can::encodeInputs(inputs.raw(), inputs.stable(), inputs.dip(),
                                         inputs.available(), frame);
-        sendCan(domain::servo_can::INPUT_ID, frame);
+        sendCan(domain::servo_can::canId(domain::servo_can::INPUT_ID, address), frame);
         break;
       }
       char text[96];
@@ -253,7 +254,7 @@ void pollCan(void) {
     uint8_t data[8] = {};
     if (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &header, data) != HAL_OK) break;
     if (header.IDE != CAN_ID_STD || header.RTR != CAN_RTR_DATA ||
-        header.StdId != domain::servo_can::COMMAND_ID) {
+        header.StdId != domain::servo_can::canId(domain::servo_can::COMMAND_ID, address)) {
       continue;
     }
     domain::ServoCommand command;
@@ -296,6 +297,9 @@ void consume(uint8_t byte) {
 }  // namespace
 
 extern "C" void setup(void) {
+  // アドレスは起動時に一度だけ読む。
+  sampleInputs();
+  address = static_cast<uint8_t>(inputs.dip() & domain::servo_can::MAX_ADDRESS);
   mode = Mode::Safe;
   protocol_ready = false;
   last_contact_ms = HAL_GetTick();
@@ -304,7 +308,7 @@ extern "C" void setup(void) {
   filter.FilterBank = 0;
   filter.FilterMode = CAN_FILTERMODE_IDMASK;
   filter.FilterScale = CAN_FILTERSCALE_32BIT;
-  filter.FilterIdHigh = domain::servo_can::COMMAND_ID << 5;
+  filter.FilterIdHigh = domain::servo_can::canId(domain::servo_can::COMMAND_ID, address) << 5;
   filter.FilterMaskIdHigh = 0x7FF << 5;
   filter.FilterFIFOAssignment = CAN_FILTER_FIFO0;
   filter.FilterActivation = ENABLE;

@@ -14,6 +14,8 @@ dcmd::Controller controller;
 bool bus_ready = false;
 dcmd::Encoder encoder;
 volatile uint16_t index_count = 0;
+uint8_t address = 0;
+
 void sampleInputs() {
   const uint16_t a = GPIOA->IDR;
   const uint16_t b = GPIOB->IDR;
@@ -43,7 +45,7 @@ void status(uint8_t result) {
     data[4 + i * 2] = static_cast<uint8_t>(duty >> 8);
     data[5 + i * 2] = static_cast<uint8_t>(duty);
   }
-  send(dcmd::STATUS_ID, data);
+  send(dcmd::canId(dcmd::STATUS_ID, address), data);
 }
 void encoderStatus() {
   const uint32_t count = encoder.count();
@@ -51,7 +53,7 @@ void encoderStatus() {
   uint8_t data[8] = {1, 1, static_cast<uint8_t>(count >> 24),
     static_cast<uint8_t>(count >> 16), static_cast<uint8_t>(count >> 8),
     static_cast<uint8_t>(count), static_cast<uint8_t>(index >> 8), static_cast<uint8_t>(index)};
-  send(dcmd::ENCODER_ID, data);
+  send(dcmd::canId(dcmd::ENCODER_ID, address), data);
 }
 }
 
@@ -70,6 +72,9 @@ extern "C" void dcmd_brake(void) {
 }
 
 extern "C" void setup(void) {
+  // アドレスは起動時に一度だけ読む。走行中に変わると宛先が食い違う。
+  sampleInputs();
+  address = static_cast<uint8_t>(controller.inputs().dip() & dcmd::MAX_ADDRESS);
   output(&htim2, 0);
   if (HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_3) != HAL_OK ||
       HAL_TIM_PWM_Start(&htim2, TIM_CHANNEL_4) != HAL_OK) Error_Handler();
@@ -79,7 +84,7 @@ extern "C" void setup(void) {
   CAN_FilterTypeDef filter = {};
   filter.FilterMode = CAN_FILTERMODE_IDMASK;
   filter.FilterScale = CAN_FILTERSCALE_32BIT;
-  filter.FilterIdHigh = dcmd::COMMAND_ID << 5;
+  filter.FilterIdHigh = dcmd::canId(dcmd::COMMAND_ID, address) << 5;
   filter.FilterMaskIdHigh = 0x7FF << 5;
   filter.FilterMaskIdLow = 6;  // 標準ID、データフレームのみ。
   filter.FilterActivation = ENABLE;
@@ -97,12 +102,12 @@ extern "C" void loop(void) {
     if (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &header, data) != HAL_OK) break;
     dcmd::Command cmd;
     const bool accepted = header.IDE == CAN_ID_STD && header.RTR == CAN_RTR_DATA &&
-        header.StdId == dcmd::COMMAND_ID && dcmd::parse(data, header.DLC, cmd) &&
+        header.StdId == dcmd::canId(dcmd::COMMAND_ID, address) && dcmd::parse(data, header.DLC, cmd) &&
         controller.apply(cmd, HAL_GetTick());
     if (accepted && cmd.op == dcmd::Op::InputRead) {
       const domain::DigitalInputs& in = controller.inputs();
       uint8_t report[8] = {1, in.raw(), in.stable(), in.dip(), in.available(), 0, 0, 0};
-      send(dcmd::INPUT_ID, report);
+      send(dcmd::canId(dcmd::INPUT_ID, address), report);
     } else status(accepted ? 0 : 1);
   }
   output(&htim2, controller.output(0));
