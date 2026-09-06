@@ -9,7 +9,6 @@ namespace proto = domain::servo_can;
 namespace {
 constexpr uint32_t COMMAND_CAN_ID = 0x300;
 constexpr uint32_t STATUS_CAN_ID = 0x301;
-constexpr uint32_t WATCHDOG_MS = 250;
 constexpr uint8_t SERVO_PINS[proto::CHANNEL_COUNT] = {3, 6, 10, 9};
 
 enum class Status : uint8_t { Ok = 0, BadCommand = 1, Timeout = 2 };
@@ -17,6 +16,7 @@ enum class Status : uint8_t { Ok = 0, BadCommand = 1, Timeout = 2 };
 Servo servos[proto::CHANNEL_COUNT];
 bool enabled[proto::CHANNEL_COUNT] = {};
 uint16_t target_us[proto::CHANNEL_COUNT] = {1500, 1500, 1500, 1500};
+proto::Parameters parameters;
 uint32_t last_contact_ms = 0;
 bool timeout_reported = false;
 
@@ -32,7 +32,8 @@ void setEnabled(uint8_t channel, bool value) {
     if (enabled[channel] == value) return;
     enabled[channel] = value;
     if (value) {
-        servos[channel].attach(SERVO_PINS[channel], proto::MIN_PULSE_US, proto::MAX_PULSE_US);
+        servos[channel].attach(SERVO_PINS[channel], parameters.minPulseUs(),
+                               parameters.maxPulseUs());
         servos[channel].writeMicroseconds(target_us[channel]);
     } else {
         servos[channel].detach();
@@ -77,6 +78,9 @@ void apply(const proto::Command& command) {
             break;
         case proto::CommandKind::Heartbeat:
             break;
+        case proto::CommandKind::ParamSet:
+            parameters.set(command.param_id, command.value);
+            break;
         case proto::CommandKind::Invalid:
             return;
     }
@@ -97,7 +101,7 @@ void loop() {
         if (message.id != COMMAND_CAN_ID) continue;
 
         proto::Command command;
-        if (!proto::parse(message.data, message.data_length, command)) {
+        if (!proto::parse(message.data, message.data_length, command, parameters)) {
             sendStatus(Status::BadCommand, command);
             continue;
         }
@@ -107,7 +111,7 @@ void loop() {
         apply(command);
     }
 
-    if (!timeout_reported && millis() - last_contact_ms > WATCHDOG_MS) {
+    if (!timeout_reported && millis() - last_contact_ms > parameters.watchdogMs()) {
         stopAll();
         proto::Command timeout;
         sendStatus(Status::Timeout, timeout);

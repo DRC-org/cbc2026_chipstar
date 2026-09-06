@@ -1,6 +1,7 @@
 #include "domain/servo_can.hpp"
 
 #include "device_config.hpp"
+#include "domain/parameters.hpp"
 
 namespace domain::servo_can {
 namespace {
@@ -22,11 +23,23 @@ void putBe16(uint16_t value, uint8_t* out) {
 
 bool parse(const uint8_t* data, std::size_t length, ServoCommand& out) {
     out = {};
-    if (data == nullptr || length != 8 || data[0] != PROTOCOL_VERSION || data[1] > 8) {
+    if (data == nullptr || length != 8 || data[0] != PROTOCOL_VERSION || data[1] > 9) {
         return false;
     }
 
     const auto op = static_cast<Op>(data[1]);
+    if (op == Op::ParamSet) {
+        if (data[3] != 0 || data[2] >= SERVO_PARAM_COUNT) return false;
+        uint32_t bits = 0;
+        for (uint8_t index = 0; index < 4; ++index) bits = (bits << 8) | data[4 + index];
+        float value = 0.0f;
+        __builtin_memcpy(&value, &bits, sizeof(value));
+        if (!ServoParameters::valid(data[2], value)) return false;
+        out.kind = ServoCommandKind::ParamSet;
+        out.param_id = data[2];
+        out.value = value;
+        return true;
+    }
     const uint8_t id = data[2];
     const uint8_t flag = data[3];
     const uint16_t position = be16(&data[4]);
@@ -72,6 +85,8 @@ bool parse(const uint8_t* data, std::size_t length, ServoCommand& out) {
             out.id = id;
             out.enabled = flag != 0;
             return true;
+        case Op::ParamSet:
+            return false;  // 上で処理済み
         case Op::Target:
             if (!validId(id) || flag > config::MAX_ACCELERATION || position > MAX_POSITION ||
                 speed > config::MAX_SPEED) {

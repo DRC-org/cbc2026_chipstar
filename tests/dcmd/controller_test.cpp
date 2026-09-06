@@ -26,7 +26,7 @@ TEST_CASE("INPUT READ はchannelとdutyを0に要求する") {
   data[2] = 1;
   CHECK_FALSE(parse(data, 8, command));
   data[2] = 0;
-  data[1] = 7;
+  data[1] = 8;  // 未定義のop
   CHECK_FALSE(parse(data, 8, command));
 }
 
@@ -35,8 +35,12 @@ TEST_CASE("指令の範囲と予約byteを検証する") {
   uint8_t data[8] = {1, 4, 0, 0, 0xFC, 0x7C, 0, 0};
   CHECK(parse(data, 8, cmd));
   CHECK(cmd.duty == -900);
+  // Duty上限は実行時に変えられるため、範囲の判定はapply側が持つ。
   data[5] = 0x7B;
-  CHECK_FALSE(parse(data, 8, cmd));
+  CHECK(parse(data, 8, cmd));
+  CHECK(cmd.duty == -901);
+  Controller limits;
+  CHECK_FALSE(limits.apply(cmd, 0));
   data[5] = 0x7C;
   data[6] = 1;
   CHECK_FALSE(parse(data, 8, cmd));
@@ -98,4 +102,40 @@ TEST_CASE("方向反転はゼロまで減速し2秒制動してから行う") {
   CHECK(c.output(0) == -1);
   c.apply({Op::Stop}, 2041);
   CHECK(c.output(0) == 0);
+}
+
+TEST_CASE("実行時パラメータでDuty上限とランプを変えられる") {
+  Controller c;
+  // 既定では上限900、10msごとに1 permille。
+  CHECK_FALSE(c.apply({Op::Target, 0, 950}, 0));
+
+  uint8_t frame[8] = {1, 7, static_cast<uint8_t>(ParamId::MaxDuty), 0, 0x44, 0x7A, 0x00, 0x00};
+  Command command;
+  CHECK(parse(frame, 8, command));  // 1000.0f
+  CHECK(command.op == Op::ParamSet);
+  CHECK(c.apply(command, 0));
+  CHECK(c.parameters().maxDuty() == 1000);
+  CHECK(c.apply({Op::Target, 0, 950}, 0));
+
+  // ランプ幅を10 permilleにすると1段で10進む。
+  uint8_t step[8] = {1, 7, static_cast<uint8_t>(ParamId::RampStep), 0, 0x41, 0x20, 0x00, 0x00};
+  CHECK(parse(step, 8, command));  // 10.0f
+  CHECK(c.apply(command, 0));
+  CHECK(c.apply({Op::Hello}, 0));
+  CHECK(c.apply({Op::Run, 1}, 0));
+  c.tick(10);
+  CHECK(c.output(0) == 10);
+}
+
+TEST_CASE("FWが壊れるパラメータを拒否する") {
+  Command command;
+  // ランプ間隔0は待ち時間の判定を壊す。
+  uint8_t zero[8] = {1, 7, static_cast<uint8_t>(ParamId::RampIntervalMs), 0, 0, 0, 0, 0};
+  CHECK_FALSE(parse(zero, 8, command));
+  // 未定義のパラメータid。
+  uint8_t unknown[8] = {1, 7, PARAM_COUNT, 0, 0x3F, 0x80, 0x00, 0x00};
+  CHECK_FALSE(parse(unknown, 8, command));
+  // byte 3 は予約。
+  uint8_t reserved[8] = {1, 7, 0, 1, 0x44, 0x7A, 0x00, 0x00};
+  CHECK_FALSE(parse(reserved, 8, command));
 }

@@ -1,5 +1,6 @@
 #include "doctest.h"
 
+#include "domain/parameters.hpp"
 #include "domain/servo_can.hpp"
 
 #include <utility>
@@ -112,4 +113,35 @@ TEST_CASE("応答を8 byteへ符号化する") {
     CHECK(frame[2] == 1);
     CHECK(frame[3] == 5);
     CHECK(frame[4] == 63);
+}
+
+TEST_CASE("実行時パラメータの設定を解釈する") {
+    domain::ServoCommand command;
+    // サーボバスを1 Mbpsへ（1000000.0f = 0x49742400）
+    const uint8_t baud[8] = {1, 9, static_cast<uint8_t>(domain::ServoParamId::ServoBaud), 0,
+                             0x49, 0x74, 0x24, 0x00};
+    CHECK(parse(baud, sizeof(baud), command));
+    CHECK(command.kind == ServoCommandKind::ParamSet);
+    CHECK(command.param_id == 0);
+    CHECK(command.value == doctest::Approx(1000000.0f));
+
+    domain::ServoParameters parameters;
+    CHECK(parameters.baud() == 115200);
+    CHECK(parameters.set(command.param_id, command.value));
+    CHECK(parameters.baud() == 1000000);
+}
+
+TEST_CASE("FWが壊れるパラメータと未定義idを拒否する") {
+    domain::ServoCommand command;
+    // ボーレート0は通信が成立しない。
+    const uint8_t zero[8] = {1, 9, 0, 0, 0, 0, 0, 0};
+    CHECK_FALSE(parse(zero, sizeof(zero), command));
+    const uint8_t unknown[8] = {1, 9, domain::SERVO_PARAM_COUNT, 0, 0x47, 0x00, 0x00, 0x00};
+    CHECK_FALSE(parse(unknown, sizeof(unknown), command));
+    // byte 3 は予約。
+    const uint8_t reserved[8] = {1, 9, 0, 1, 0x49, 0x74, 0x24, 0x00};
+    CHECK_FALSE(parse(reserved, sizeof(reserved), command));
+    // 未定義のop。
+    const uint8_t bad_op[8] = {1, 10, 0, 0, 0, 0, 0, 0};
+    CHECK_FALSE(parse(bad_op, sizeof(bad_op), command));
 }

@@ -16,6 +16,7 @@ enum class ServoCommandKind : uint8_t {
     Target,
     Read,
     InputRead,
+    ParamSet,
 };
 
 struct ServoCommand {
@@ -26,6 +27,8 @@ struct ServoCommand {
     uint16_t position = 0;
     uint16_t speed = 0;
     uint8_t acceleration = 0;
+    uint8_t param_id = 0;
+    float value = 0.0f;
 };
 
 ServoCommand parseServoCommand(const char* line, std::size_t length);

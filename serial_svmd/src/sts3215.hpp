@@ -39,6 +39,12 @@ class Sts3215 {
         timeout_ms_(timeout_ms),
         wait_for_write_status_(wait_for_write_status) {}
 
+  // hostからの実行時調整。サーボの応答が遅い個体に合わせられる。
+  void setTiming(uint32_t timeout_ms, bool wait_for_write_status) {
+    timeout_ms_ = timeout_ms;
+    wait_for_write_status_ = wait_for_write_status;
+  }
+
   // 指定 ID の応答を確認する。
   Result ping(uint8_t id);
 

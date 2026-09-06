@@ -2,6 +2,7 @@
 #include "domain/servo_can.hpp"
 #include "domain/servo_command.hpp"
 #include "domain/digital_inputs.hpp"
+#include "domain/parameters.hpp"
 #include "main.h"
 #include "sts3215.hpp"
 
@@ -34,6 +35,7 @@ struct ServoState {
   Sts3215::Target target = {};
 };
 
+domain::ServoParameters parameters;
 Sts3215 bus(&huart1, config::SERVO_TIMEOUT_MS, config::WAIT_FOR_WRITE_STATUS);
 ServoState servos[config::MAX_SERVOS];
 Mode mode = Mode::Safe;
@@ -205,6 +207,19 @@ void apply(const domain::ServoCommand& command) {
       }
       break;
     }
+    case domain::ServoCommandKind::ParamSet: {
+      if (!parameters.set(command.param_id, command.value)) {
+        reply("ERR code=OUT_OF_RANGE");
+        break;
+      }
+      bus.setTiming(parameters.timeoutMs(), parameters.waitForWriteStatus());
+      if (command.param_id == static_cast<uint8_t>(domain::ServoParamId::ServoBaud)) {
+        // サーボが1 Mbps出荷の個体だと、ここを変えられないと手が出ない。
+        huart1.Init.BaudRate = parameters.baud();
+        HAL_UART_Init(&huart1);
+      }
+      break;
+    }
     case domain::ServoCommandKind::None:
       break;
     case domain::ServoCommandKind::InputRead: {
@@ -300,7 +315,7 @@ extern "C" void loop(void) {
   }
 
   const uint32_t now = HAL_GetTick();
-  if (mode == Mode::Run && now - last_contact_ms > config::WATCHDOG_MS) {
+  if (mode == Mode::Run && now - last_contact_ms > parameters.watchdogMs()) {
     setMode(Mode::Stop);
     protocol_ready = false;
     sendStatus(domain::servo_can::Status::Timeout);

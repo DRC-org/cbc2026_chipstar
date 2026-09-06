@@ -25,6 +25,7 @@ enum class Op : uint8_t {
     Enable = 6,
     Read = 7,
     InputRead = 8,
+    ParamSet = 9,
 };
 
 enum class Status : uint8_t { Ok = 0, Rejected = 1, Timeout = 2 };
@@ -36,6 +37,7 @@ enum class Status : uint8_t { Ok = 0, Rejected = 1, Timeout = 2 };
 //   3    ENABLEの0/1、TARGETの加速度、それ以外は0
 //   4..5 TARGETの位置、big endian。それ以外は0
 //   6..7 TARGETの速度、big endian。それ以外は0
+// PARAM SET だけは byte 2 をパラメータid、byte 4..7 を float32 として使う。
 bool parse(const uint8_t* data, std::size_t length, ServoCommand& out);
 
 // 指令の受理結果と現在のモード。指令受信時と定期送信で返す。
