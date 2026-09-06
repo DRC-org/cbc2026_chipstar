@@ -23,11 +23,20 @@ void sampleInputs() {
   controller.updateInputs(static_cast<uint8_t>((~b >> 3) & 7), dip, HAL_GetTick());
 }
 void output(TIM_HandleTypeDef* timer, int16_t duty) {
+  // 周期は実行時に変えられるので、スケールはARRから読む。
+  const int32_t period = static_cast<int32_t>(timer->Instance->ARR) + 1;
+  const int32_t magnitude = duty < 0 ? -duty : duty;
+  const int32_t compare = magnitude * period / 1000;
   // CCRプリロードを同じupdateイベントで反映し、方向切替を一括適用する。
   timer->Instance->CR1 |= TIM_CR1_UDIS;
-  __HAL_TIM_SET_COMPARE(timer, TIM_CHANNEL_3, duty > 0 ? duty * 400 / 1000 : 0);
-  __HAL_TIM_SET_COMPARE(timer, TIM_CHANNEL_4, duty < 0 ? -duty * 400 / 1000 : 0);
+  __HAL_TIM_SET_COMPARE(timer, TIM_CHANNEL_3, duty > 0 ? compare : 0);
+  __HAL_TIM_SET_COMPARE(timer, TIM_CHANNEL_4, duty < 0 ? compare : 0);
   timer->Instance->CR1 &= ~TIM_CR1_UDIS;
+}
+
+// PWM周期の変更を反映する。Dutyのスケールも同じARRから決まる。
+void applyPwmPeriod(void) {
+  __HAL_TIM_SET_AUTORELOAD(&htim2, controller.parameters().pwmPeriodTicks() - 1);
 }
 void send(uint16_t id, uint8_t* data) {
   CAN_TxHeaderTypeDef header = {};
@@ -104,6 +113,10 @@ extern "C" void loop(void) {
     const bool accepted = header.IDE == CAN_ID_STD && header.RTR == CAN_RTR_DATA &&
         header.StdId == dcmd::canId(dcmd::COMMAND_ID, address) && dcmd::parse(data, header.DLC, cmd) &&
         controller.apply(cmd, HAL_GetTick());
+    if (accepted && cmd.op == dcmd::Op::ParamSet &&
+        cmd.param_id == static_cast<uint8_t>(dcmd::ParamId::PwmFrequencyHz)) {
+      applyPwmPeriod();
+    }
     if (accepted && cmd.op == dcmd::Op::InputRead) {
       const domain::DigitalInputs& in = controller.inputs();
       uint8_t report[8] = {1, in.raw(), in.stable(), in.dip(), in.available(), 0, 0, 0};

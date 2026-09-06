@@ -130,12 +130,13 @@ pub fn parse_status(line: &str) -> Option<Status> {
 }
 
 /// DCMDの実行時パラメータ。名前とidの対応は device_protocol.md の表に従う。
-pub const PARAMETER_NAMES: [&str; 5] = [
+pub const PARAMETER_NAMES: [&str; 6] = [
     "max_duty",
     "ramp_interval_ms",
     "ramp_step",
     "reverse_brake_ms",
     "watchdog_ms",
+    "pwm_frequency_hz",
 ];
 
 /// `PARAM SET` のCANフレーム行。byte 4..7 に float32 を big endian で載せる。

@@ -149,3 +149,14 @@ TEST_CASE("基板アドレスでCAN IDをずらす") {
   // 標準IDの範囲に収まる。
   CHECK(canId(INPUT_ID, MAX_ADDRESS) <= 0x7FF);
 }
+
+TEST_CASE("PWM周波数から周期tickを求める") {
+  Parameters parameters;
+  // 既定20kHz、TIM2は8MHz → 400 tick（ARR=399）。
+  CHECK(parameters.pwmPeriodTicks() == 400);
+  CHECK(parameters.set(static_cast<uint8_t>(ParamId::PwmFrequencyHz), 10000.0f));
+  CHECK(parameters.pwmPeriodTicks() == 800);
+  // 分解能が落ちすぎる、あるいは高すぎる指定は拒否する。
+  CHECK_FALSE(parameters.set(static_cast<uint8_t>(ParamId::PwmFrequencyHz), 100.0f));
+  CHECK_FALSE(parameters.set(static_cast<uint8_t>(ParamId::PwmFrequencyHz), 200000.0f));
+}

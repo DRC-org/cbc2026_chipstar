@@ -159,6 +159,7 @@ byte 2 にパラメータid、byte 4..7 に float32 をbig endianで載せる。
 | DCMD | 2 | `ramp_step` | 1段あたりのDuty変化 |
 | DCMD | 3 | `reverse_brake_ms` | 方向反転前にゼロを保つ時間 |
 | DCMD | 4 | `watchdog_ms` | 通信期限 |
+| DCMD | 5 | `pwm_frequency_hz` | PWMキャリア周波数。TIM2は8MHzで、周期tickは`8000000/Hz` |
 | serial_svmd | 0 | `servo_baud` | STS3215バスのボーレート |
 | serial_svmd | 1 | `servo_timeout_ms` | サーボ応答の待ち時間 |
 | serial_svmd | 2 | `wait_for_write_status` | 書き込み命令の応答を待つか（0/1） |
