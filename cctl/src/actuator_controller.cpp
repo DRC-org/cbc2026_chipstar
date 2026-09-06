@@ -102,13 +102,13 @@ void ActuatorController::begin() {
 
 bool ActuatorController::setTarget(uint8_t slot, float value) {
   if (!std::isfinite(value)) return false;
-  if (slot < domain::SLOT_COUNT) jog_[slot].reset(measured(slot));
   switch (slot) {
     case 0:
       if (value < parameters_.get(domain::ParamId::Slot0Min) ||
           value > parameters_.get(domain::ParamId::Slot0Max)) {
         return false;
       }
+      jog_[0].reset(measured(0));
       targets_[0] = value;
       return true;
     case 1:
@@ -116,6 +116,7 @@ bool ActuatorController::setTarget(uint8_t slot, float value) {
           value > parameters_.get(domain::ParamId::Slot1Max)) {
         return false;
       }
+      jog_[1].reset(measured(1));
       targets_[1] = value;
       slot1_.setTargetMotorDeg(value);
       return true;
@@ -124,6 +125,7 @@ bool ActuatorController::setTarget(uint8_t slot, float value) {
           value > parameters_.get(domain::ParamId::Slot2Max)) {
         return false;
       }
+      jog_[2].reset(measured(2));
       targets_[2] = value;
       return true;
     default:
