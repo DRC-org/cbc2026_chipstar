@@ -1,5 +1,7 @@
 #include "doctest.h"
 
+#include <initializer_list>
+
 #include "domain/dm_codec.hpp"
 
 #include <cstring>
@@ -171,4 +173,16 @@ TEST_CASE("別 ID 宛の設定応答は自分のものではない") {
     encodeConfig(0x0A, CONFIG_READ, reg::PMAX, 0, reply);
 
     CHECK_FALSE(isConfigReply(0x09, reply));
+}
+
+TEST_CASE("ドライバの状態コードから異常を判別する") {
+    using namespace domain::dm::error_code;
+    // 0=Disabled と 1=Enabled 以外はすべて異常として扱う。
+    CHECK_FALSE(isFault(DISABLED));
+    CHECK_FALSE(isFault(ENABLED));
+    for (uint8_t code : {SENSOR, PARAMETER, OVERVOLTAGE, UNDERVOLTAGE, OVERCURRENT,
+                         MOS_OVER_TEMPERATURE, COIL_OVER_TEMPERATURE, COMMUNICATION_LOST,
+                         OVERLOAD}) {
+        CHECK(isFault(code));
+    }
 }

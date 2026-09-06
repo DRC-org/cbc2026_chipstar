@@ -18,13 +18,18 @@ constexpr uint16_t MIT_CMD_BASE = 0x000;
 constexpr uint16_t POS_VEL_CMD_BASE = 0x100;
 constexpr uint16_t VELOCITY_CMD_BASE = 0x200;
 
-// 設定フレーム
+// 設定フレーム。ID 0x7FF へ [CANID_L, CANID_H, cmd, RID, data(32bit LE)] を送る。
+// 応答は MST_ID で返る。READ / WRITE はマニュアル記載。
 constexpr uint16_t CONFIG_ID = 0x7FF;
 constexpr uint8_t CONFIG_READ = 0x33;
 constexpr uint8_t CONFIG_WRITE = 0x55;
+// ⚠ STOREはV1.1のマニュアルに記載がない。DM系共通の保存コマンドに基づく。
 constexpr uint8_t CONFIG_STORE = 0xAA;
 
-// 特殊コマンド（D0..D6 = 0xFF, D7 = コード）
+// 特殊コマンド（D0..D6 = 0xFF, D7 = コード）。MITのID（= CAN_ID）へ送る。
+//
+// ⚠ V1.1のマニュアルにはこれらの記載がなく、DM系共通のプロトコルに基づく。
+// 実機で応答（フィードバックのERRが 1 = Enabled になること）を確認すること。
 constexpr uint8_t SPECIAL_ENABLE = 0xFC;
 constexpr uint8_t SPECIAL_DISABLE = 0xFD;
 constexpr uint8_t SPECIAL_ZERO = 0xFE;
@@ -71,6 +76,15 @@ constexpr uint8_t PARAMETER = 6;
 constexpr uint8_t OVERVOLTAGE = 8;
 constexpr uint8_t UNDERVOLTAGE = 9;
 constexpr uint8_t OVERCURRENT = 0x0A;
+constexpr uint8_t MOS_OVER_TEMPERATURE = 0x0B;
+constexpr uint8_t COIL_OVER_TEMPERATURE = 0x0C;
+constexpr uint8_t COMMUNICATION_LOST = 0x0D;
+constexpr uint8_t OVERLOAD = 0x0E;
+
+// 出力を続けてはいけない状態か。ENABLED と DISABLED 以外はすべて異常。
+constexpr bool isFault(uint8_t code) {
+    return code != DISABLED && code != ENABLED;
+}
 }  // namespace error_code
 
 // 位置・速度・トルクの線形マッピング範囲。

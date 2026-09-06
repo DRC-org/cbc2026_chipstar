@@ -1,6 +1,7 @@
 #include "actuator_controller.hpp"
 
 #include "device_config.hpp"
+#include "domain/dm_codec.hpp"
 
 #include <cmath>
 
@@ -103,8 +104,14 @@ uint8_t ActuatorController::errorBits(uint8_t slot) const {
                        parameters_.get(domain::ParamId::M3508MaxTemperatureC);
       return static_cast<uint8_t>((hot ? domain::error_bit::OVER_TEMPERATURE : 0) | stale);
     }
-    default:
-      return static_cast<uint8_t>(slot2_.errorState() | stale);
+    default: {
+      // DMのERRは列挙値で、bit maskではない。そのまま載せると
+      // 「過負荷(0x0E)」と他コードのbitが混ざって見えるため、
+      // 異常かどうかだけを上位bitで示し、生の値は下位に残す。
+      const uint8_t code = slot2_.errorState();
+      const uint8_t fault = domain::dm::error_code::isFault(code) ? 0x10 : 0;
+      return static_cast<uint8_t>(code | fault | stale);
+    }
   }
 }
 
