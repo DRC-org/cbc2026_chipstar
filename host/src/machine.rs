@@ -116,7 +116,7 @@ fn yes() -> bool {
 /// パラメータ名から値への対応。名前は device_protocol.md の表に従う。
 pub type ParameterMap = std::collections::BTreeMap<String, f32>;
 
-pub const PARAMETER_NAMES: [&str; 32] = [
+pub const PARAMETER_NAMES: [&str; 33] = [
     "m3508_pos_kp",
     "m3508_pos_ki",
     "m3508_pos_kd",
@@ -149,6 +149,7 @@ pub const PARAMETER_NAMES: [&str; 32] = [
     "telemetry_period_ms",
     "watchdog_ms",
     "feedback_timeout_ms",
+    "m3508_max_temperature_c",
 ];
 
 #[derive(Clone, Debug, Deserialize, PartialEq)]
@@ -462,6 +463,32 @@ impl MachineController {
                 position: *target,
             })
             .collect()
+    }
+
+    /// いまの実測位置を目標として取り込む。
+    ///
+    /// 目標を過去の値のまま RUN すると、機体がその位置まで戻ろうとして跳ねる。
+    /// 非常停止で手動退避した後がとくに危ない。位置ループを有効にする直前に
+    /// 目標と実測を揃えておけば、RUN してもその場を保持する。
+    pub fn hold_at_measured(&mut self, telemetry: Option<&Telemetry>) {
+        let Some(telemetry) = telemetry else {
+            return;
+        };
+        for index in 0..self.profile.axes.len() {
+            let axis = &self.profile.axes[index];
+            let Some(slot) = telemetry.slots.get(axis.slot as usize) else {
+                continue;
+            };
+            let value = (slot.measured - self.origins_native[index]) / axis.native_per_unit;
+            if !value.is_finite() {
+                continue;
+            }
+            self.targets[index] = if self.origin_captured[index] {
+                value.clamp(axis.minimum, axis.maximum)
+            } else {
+                value
+            };
+        }
     }
 
     /// いまの実測位置に `origin_position` を割り当てる。
@@ -816,6 +843,40 @@ direction = -1.0
 "#,
         )
         .unwrap()
+    }
+
+    #[test]
+    fn run_holds_the_current_position_instead_of_returning() {
+        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let mut input = neutral_input();
+
+        // ジョグでrを進めてから、停止中に手で戻された状況をつくる。
+        input.axes[1] = 1.0;
+        for _ in 0..5 {
+            machine.update(&input, 0.1, None);
+        }
+        assert!(machine.target("r").unwrap() > 40.0);
+
+        // 実測は手で戻された位置。RUN前に取り込めば、その場を保持する。
+        let moved = telemetry_with(0, [1.0005072, 0.0, 0.0]);
+        machine.hold_at_measured(Some(&moved));
+        assert!((machine.target("r").unwrap() - 10.0).abs() < 1e-3);
+
+        // 直後の指令は実測と一致し、機体は動かない。
+        let lines = machine.update(&neutral_input(), 0.1, Some(&moved));
+        assert_eq!(lines[0], "TARGET 0 1.00051");
+    }
+
+    #[test]
+    fn holding_needs_feedback() {
+        let mut machine = MachineController::new(MachineProfile::load(None).unwrap());
+        let mut input = neutral_input();
+        input.axes[1] = 1.0;
+        machine.update(&input, 0.1, None);
+        let before = machine.target("r").unwrap();
+        // テレメトリが無ければ何もしない。勝手に0へ飛ばさない。
+        machine.hold_at_measured(None);
+        assert_eq!(machine.target("r"), Some(before));
     }
 
     #[test]

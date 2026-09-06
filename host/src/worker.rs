@@ -15,6 +15,17 @@ use crate::machine::MachineController;
 use crate::telemetry::parse_telemetry;
 use crate::{controller, serial::SerialLink};
 
+/// cctlの `PARAM <id> <value>` 応答。
+fn parse_parameter(line: &str) -> Option<(u8, f32)> {
+    let mut tokens = line.strip_prefix("PARAM ")?.split_whitespace();
+    let id = tokens.next()?.parse().ok()?;
+    let value = tokens.next()?.parse().ok()?;
+    if tokens.next().is_some() {
+        return None;
+    }
+    Some((id, value))
+}
+
 fn period_from_hz(rate_hz: f64) -> Duration {
     let hz = if rate_hz > 0.0 { rate_hz } else { 1.0 };
     Duration::from_secs_f64(1.0 / hz)
@@ -117,6 +128,11 @@ pub fn run(shared: Arc<Shared>) {
         shared.update_status(|s| s.origins = origins);
 
         for line in shared.take_commands() {
+            // RUNの直前に目標を実測へ揃える。揃えないと、停止中に手で動かした
+            // ぶんだけ機体が元の位置へ戻ろうとする。
+            if line == "RUN" {
+                machine.hold_at_measured(telemetry.as_ref());
+            }
             if let Err(err) = link.write_line(&line) {
                 shared.update_status(|s| {
                     s.serial_connected = false;
@@ -208,6 +224,10 @@ pub fn run(shared: Arc<Shared>) {
                     s.device = Some(device);
                     s.serial_connected = true;
                     s.last_error = None;
+                });
+            } else if let Some((id, value)) = parse_parameter(&line) {
+                shared.update_status(|s| {
+                    s.parameters.insert(id, value);
                 });
             } else if let Some(servo) = crate::serial_svmd::parse_state(&line) {
                 shared.update_status(|s| {

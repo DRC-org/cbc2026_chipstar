@@ -24,15 +24,27 @@ enum Screen {
     Help,
     Test,
     Wiring,
+    Parameters,
 }
 
-const SCREENS: [(Screen, &str); 6] = [
+/// パラメータ画面の並び。用途ごとにまとめて、調整する塊が分かるようにする。
+const PARAMETER_GROUPS: [(&str, u8, u8); 6] = [
+    ("M3508 + C620（θ軸）", 0, 7),
+    ("EL05（r軸・ドライバへ書き込む）", 8, 10),
+    ("DM-S3519（z軸）", 11, 14),
+    ("slotの絶対可動域（ネイティブ単位）", 15, 20),
+    ("モータのCAN ID（SAFE中のみ変更可）", 21, 25),
+    ("制御周期と監視 [ms / degC]", 26, 32),
+];
+
+const SCREENS: [(Screen, &str); 7] = [
     (Screen::Status, "1 ステータス"),
     (Screen::Config, "2 設定"),
     (Screen::Operation, "3 操作"),
     (Screen::Help, "4 ヘルプ"),
     (Screen::Test, "5 動作テスト"),
     (Screen::Wiring, "6 配線"),
+    (Screen::Parameters, "7 パラメータ"),
 ];
 
 /// 配線ガイドは docs/wiring.md を唯一の出典として埋め込む。
@@ -80,6 +92,9 @@ pub struct BridgeApp {
     mode: Mode,
     normal: Normal,
     command_input: String,
+    /// パラメータ画面の編集値。FWから読んだ値で初期化する。
+    param_edit: Vec<f32>,
+    param_seeded: bool,
     /// 直前の操作結果。画面下部に出す。
     message: Option<String>,
     /// 現在の画面での選択位置。
@@ -99,6 +114,8 @@ impl BridgeApp {
             mode: Mode::Normal,
             normal: Normal::default(),
             command_input: String::new(),
+            param_edit: vec![0.0; crate::machine::PARAMETER_NAMES.len()],
+            param_seeded: false,
             message: None,
             selection: 0,
         }
@@ -616,6 +633,96 @@ impl BridgeApp {
         ui.label("未採用の軸は可動域の制限が効きません。低速で当ててください。");
     }
 
+
+    /// 実行時パラメータの表示と変更。FWはRAM保持なので、電源を入れ直すと
+    /// 既定値へ戻り、機体プロファイルの値がhostから送り直される。
+    fn parameters_ui(&mut self, ui: &mut egui::Ui) {
+        use crate::machine::PARAMETER_NAMES;
+        ui.heading("実行時パラメータ");
+        ui.label(
+            "ゲイン・上限・CAN ID・周期を書き込みなしで変更します。RAM保持で、電源を\
+             入れ直すと既定値に戻ります。恒久的にしたい値は config/rtheta.toml の \
+             [parameters] に書いてください。",
+        );
+
+        let status = self.shared.status_snapshot();
+        if self.shared.tests.enabled() {
+            ui.label("動作テスト中は変更できません。");
+            return;
+        }
+
+        ui.horizontal(|ui| {
+            if ui.button("FWから読み出す").clicked() {
+                for id in 0..PARAMETER_NAMES.len() {
+                    self.shared.queue_line(format!("PARAM {id}"));
+                }
+            }
+            if ui
+                .add_enabled(!status.parameters.is_empty(), egui::Button::new("読んだ値を編集欄へ"))
+                .clicked()
+            {
+                for (id, value) in &status.parameters {
+                    if let Some(slot) = self.param_edit.get_mut(usize::from(*id)) {
+                        *slot = *value;
+                    }
+                }
+            }
+            ui.label(format!("読み出し済み: {} / {}", status.parameters.len(), PARAMETER_NAMES.len()));
+        });
+
+        // 最初にFWの値が届いた時点で編集欄を埋める。毎フレーム上書きすると
+        // 入力中の値が戻ってしまうので一度だけにする。
+        if !self.param_seeded && status.parameters.len() == PARAMETER_NAMES.len() {
+            for (id, value) in &status.parameters {
+                if let Some(slot) = self.param_edit.get_mut(usize::from(*id)) {
+                    *slot = *value;
+                }
+            }
+            self.param_seeded = true;
+        }
+
+        let safe = status
+            .telemetry
+            .as_ref()
+            .is_none_or(|telemetry| telemetry.mode == RunMode::Safe);
+
+        ui.separator();
+        egui::ScrollArea::vertical().show(ui, |ui| {
+            for (title, first, last) in PARAMETER_GROUPS {
+                ui.add_space(6.0);
+                ui.label(egui::RichText::new(title).strong());
+                let needs_safe = first == 21;
+                if needs_safe && !safe {
+                    ui.label("SAFE でないため変更できません。");
+                }
+                for id in first..=last {
+                    let index = usize::from(id);
+                    let Some(name) = PARAMETER_NAMES.get(index) else {
+                        continue;
+                    };
+                    ui.horizontal(|ui| {
+                        ui.label(egui::RichText::new(format!("{id:>2} {name:<24}")).monospace());
+                        ui.add(
+                            egui::DragValue::new(&mut self.param_edit[index])
+                                .speed(0.05)
+                                .max_decimals(5),
+                        );
+                        let enabled = !needs_safe || safe;
+                        if ui.add_enabled(enabled, egui::Button::new("送信")).clicked() {
+                            self.shared
+                                .queue_line(format!("PARAM {id} {:.5}", self.param_edit[index]));
+                            self.shared.queue_line(format!("PARAM {id}"));
+                        }
+                        match status.parameters.get(&id) {
+                            Some(value) => ui.label(format!("FW: {value:.5}")),
+                            None => ui.label("FW: 未読"),
+                        };
+                    });
+                }
+            }
+        });
+    }
+
     fn help_ui(&mut self, ui: &mut egui::Ui) {
         ui.heading("キー操作");
         ui.separator();
@@ -626,7 +733,7 @@ impl BridgeApp {
             ("gg / G", "選択を先頭 / 末尾へ"),
             ("Enter", "選択中の項目を実行"),
             ("gt / gT", "次 / 前の画面へ"),
-            ("1 - 6", "画面を直接選ぶ"),
+            ("1 - 7", "画面を直接選ぶ"),
             ("i", "設定画面で編集を始める"),
             ("Esc", "編集・コマンドラインを抜ける"),
             (
@@ -740,6 +847,7 @@ impl eframe::App for BridgeApp {
                 Screen::Help => self.help_ui(ui),
                 Screen::Test => self.test_panel.ui(ui, &self.shared),
                 Screen::Wiring => wiring_ui(ui),
+                Screen::Parameters => self.parameters_ui(ui),
             });
         });
     }
@@ -954,6 +1062,21 @@ mod tests {
             assert!(WIRING_GUIDE.contains(board), "{board} が配線ガイドにない");
         }
         assert!(WIRING_GUIDE.contains("FDCAN2"));
+    }
+
+    #[test]
+    fn parameter_groups_cover_every_id_exactly_once() {
+        // 表示漏れや重複があると、調整できない値が残る。
+        let mut seen = vec![false; crate::machine::PARAMETER_NAMES.len()];
+        for (_, first, last) in PARAMETER_GROUPS {
+            for id in first..=last {
+                let index = usize::from(id);
+                assert!(index < seen.len(), "id {id} は名前表にない");
+                assert!(!seen[index], "id {id} が重複している");
+                seen[index] = true;
+            }
+        }
+        assert!(seen.iter().all(|covered| *covered), "表示されないidがある");
     }
 
     #[test]
