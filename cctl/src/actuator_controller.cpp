@@ -185,15 +185,23 @@ void ActuatorController::update() {
     last_m3508_ms_ = now;
     c620_group_.send();
   }
-  if (slotActive(domain::slot_bit::SLOT2) &&
-      now - last_dm_ms_ >= parameters_.getMs(domain::ParamId::DmPeriodMs)) {
+  // 有効でないslotへも同じ指令を出し続ける。EL05もDMも指令に応答して
+  // フィードバックを返すため、送るのをやめると実測値が止まる。SAFE中でも
+  // 位置が見えないと、原点を採る前の姿勢確認ができない。
+  //
+  // 非アクティブ時の目標には現在の実測値を入れる。トルクが切れているので
+  // 動かないうえ、ドライバ内の目標が現在位置に追随するので、有効化した
+  // 瞬間に跳ねない。
+  if (now - last_dm_ms_ >= parameters_.getMs(domain::ParamId::DmPeriodMs)) {
     last_dm_ms_ = now;
-    slot2_.sendPositionVelocity(targets_[2], parameters_.get(domain::ParamId::DmPosVelLimit));
+    const bool active = slotActive(domain::slot_bit::SLOT2);
+    slot2_.sendPositionVelocity(active ? targets_[2] : slot2_.position(),
+                                parameters_.get(domain::ParamId::DmPosVelLimit));
   }
-  if (slotActive(domain::slot_bit::SLOT0) &&
-      now - last_el05_ms_ >= parameters_.getMs(domain::ParamId::El05PeriodMs)) {
+  if (now - last_el05_ms_ >= parameters_.getMs(domain::ParamId::El05PeriodMs)) {
     last_el05_ms_ = now;
-    slot0_.setLocRef(targets_[0]);
+    const bool active = slotActive(domain::slot_bit::SLOT0);
+    slot0_.setLocRef(active ? targets_[0] : slot0_.position());
   }
 }
 
