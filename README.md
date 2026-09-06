@@ -9,7 +9,7 @@
 
 ### ROS2（archived）
 `ros2/` は archived。開発・ビルド検証の対象外で、参照用に残している。
-コントローラ入力の中継は `host/`（Rust）が担当する。
+機体座標、手動速度制御、操作権と設定反映は `host/`（Rust）が担当する。
 
 基板FWはデバイス制御と安全停止を担う汎用実行基盤とし、機体の軸名、機械換算、
 入力割当、サーボIDは`host/config/*.toml`に置く。構成の詳細は
@@ -31,4 +31,5 @@ cargo run --locked --manifest-path host/Cargo.toml --bin host -- --simulate
 ```
 
 GUIは操縦・調整・診断の3画面。起動済みhostには`hostctl`から接続できる。
-操作権、停止復帰、設定保存の手順は[host操作ガイド](docs/host_operation.md)を参照。
+操作権、停止復帰、設定保存の手順は[host操作ガイド](docs/host_operation.md)、
+開発時の責務分担と拡張先は[hostアーキテクチャ](docs/host_architecture.md)を参照。

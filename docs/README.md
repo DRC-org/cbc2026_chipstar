@@ -4,6 +4,8 @@
 
 ## 開発
 
+- [host_architecture.md](host_architecture.md) — 責務分担、実行状態、依存方向、機能追加の配置
+
 - [ai_workflow.md](ai_workflow.md) — AI エージェントの作業分割とコミットの規約
 - [clangd.md](clangd.md) — clangd(LSP) の設定、compile_commands.json の生成、クロスコンパイラの扱い
 - [generic_firmware.md](generic_firmware.md) — 汎用FWとhostの責務、安全状態、基板ごとの能力

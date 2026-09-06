@@ -102,7 +102,7 @@ APIは同じOSユーザだけが接続できるUnixソケット。既定は
 両プログラムの`--socket`で変更できる。ネットワークへは公開しない。
 
 通信形式は、UTF-8 TOML本文の長さを4 byteのbig endianで前置する。1接続1要求、本文上限
-128KiB。要求の構造は`host/src/control_api.rs`の`Request`、応答は`Reply`。
+128KiB。要求の構造は`host/src/application/command.rs`の`Request`、応答は`Reply`。
 `ok`は受付結果、`data`は状態または設定のTOML文字列。状態取得は操作権不要。
 
 ## ソフトウェアでの確認
