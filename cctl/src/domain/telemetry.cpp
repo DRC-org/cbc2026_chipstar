@@ -64,12 +64,13 @@ std::size_t formatTelemetry(const Telemetry& telemetry, char* out, std::size_t c
              appendFixed3(out, capacity, length, telemetry.targets[slot]) && text("/") &&
              appendFixed3(out, capacity, length, telemetry.measured[slot]);
     }
-    ok = ok && append(" err=%02X,%02X,%02X sw=%u stale=%u",
+    ok = ok && append(" err=%02X,%02X,%02X sw=%u stale=%u can=%u",
                       static_cast<unsigned>(telemetry.error_bits[0]),
                       static_cast<unsigned>(telemetry.error_bits[1]),
                       static_cast<unsigned>(telemetry.error_bits[2]),
                       static_cast<unsigned>(telemetry.contacts),
-                      static_cast<unsigned>(telemetry.stale_slots));
+                      static_cast<unsigned>(telemetry.stale_slots),
+                      static_cast<unsigned>(telemetry.buses));
     return ok ? length : 0;
 }
 

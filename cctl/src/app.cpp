@@ -36,6 +36,7 @@ domain::CommandQueue commands;
 volatile uint32_t last_contact_ms = 0;
 bool protocol_ready = false;
 bool peripheral_bus_ready = false;
+bool motor_bus_ready = false;
 domain::DigitalInputs inputs(7);
 
 void sampleInputs() {
@@ -220,6 +221,9 @@ void sendTelemetry() {
     }
     telemetry.contacts = inputs.stable();
     telemetry.stale_slots = controller.staleSlots();
+    telemetry.buses = static_cast<uint8_t>(
+        (motor_bus_ready && !motor_bus.busOff() ? 1 : 0) |
+        (peripheral_bus_ready && !peripheral_bus.busOff() ? 2 : 0));
 
     const std::size_t length = domain::formatTelemetry(
         telemetry, reinterpret_cast<char*>(line), domain::TELEMETRY_LINE_CAPACITY);
@@ -245,7 +249,7 @@ domain::Status ledStatus() {
 extern "C" void setup(void) {
     ui.begin();
     HAL_TIM_Base_Start_IT(&htim2);
-    motor_bus.begin();
+    motor_bus_ready = motor_bus.begin();
     peripheral_bus_ready = peripheral_bus.begin();
     controller.begin();
     last_contact_ms = HAL_GetTick();
@@ -268,6 +272,14 @@ extern "C" void loop(void) {
     }
 
     controller.update();
+
+    // バスオフからの自動復帰。放置すると電源を入れ直すまでCANが死ぬ。
+    static uint32_t last_recover_ms = 0;
+    if (now - last_recover_ms >= 100) {
+        last_recover_ms = now;
+        motor_bus.recover();
+        peripheral_bus.recover();
+    }
 
     static uint32_t last_lcd_ms = 0;
     if (now - last_lcd_ms >= config::period::LCD_MS) {

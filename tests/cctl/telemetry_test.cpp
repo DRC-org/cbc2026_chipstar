@@ -36,6 +36,7 @@ Telemetry sample() {
     telemetry.error_bits[2] = 0x03;
     telemetry.contacts = 5;
     telemetry.stale_slots = 2;
+    telemetry.buses = 3;
     return telemetry;
 }
 }  // namespace
@@ -54,7 +55,7 @@ TEST_CASE("有限でない値をnanと書く") {
 TEST_CASE("slot単位の状態と接点を出力する") {
     CHECK(line(sample()) ==
           "STATE t=12345 mode=RUN en=7 a0=1.200/1.100 a1=-45.000/-44.200 "
-          "a2=0.500/0.400 err=0A,00,03 sw=5 stale=2");
+          "a2=0.500/0.400 err=0A,00,03 sw=5 stale=2 can=3");
 }
 
 TEST_CASE("容量不足では出力しない") {
@@ -74,5 +75,6 @@ TEST_CASE("最大構成が規定容量に収まる") {
     for (auto& bits : telemetry.error_bits) bits = 0xFF;
     telemetry.contacts = 7;
     telemetry.stale_slots = 7;
+    telemetry.buses = 3;
     CHECK(!line(telemetry).empty());
 }

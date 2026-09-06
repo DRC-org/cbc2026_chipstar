@@ -14,6 +14,15 @@ class CanBus {
   // グローバルフィルタを FIFO0 受理に設定し、バスを開始する。
   bool begin();
 
+  // バスオフか。ACKの返らない送信が続くと入り、放置すると送受信とも止まったままになる。
+  bool busOff() const { return (hcan_->Instance->PSR & FDCAN_PSR_BO) != 0; }
+
+  // バスオフから復帰させる。INITを落とすと復帰シーケンスが始まる。
+  // 競技中にバスが乱れただけで死んだままになるのを避けるため、周期的に呼ぶ。
+  void recover() {
+    if (busOff()) HAL_FDCAN_Start(hcan_);
+  }
+
   // 標準ID(11bit) データフレーム送信（最大8byte）。
   bool sendStd(uint16_t id, const uint8_t* data, uint8_t len);
   // 拡張ID(29bit) データフレーム送信（最大8byte）。

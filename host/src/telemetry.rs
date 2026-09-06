@@ -49,6 +49,9 @@ pub struct Telemetry {
     pub contacts: Option<u8>,
     /// モータのフィードバックが途絶えたslotのbit mask。
     pub stale_slots: u8,
+    /// 使えるCANバス。bit0=FDCAN1（モータ）、bit1=FDCAN2（周辺基板）。
+    /// バスオフや初期化失敗でbitが落ちる。
+    pub buses: u8,
 }
 
 impl Telemetry {
@@ -87,6 +90,7 @@ pub fn parse_telemetry(line: &str) -> Option<Telemetry> {
     let mut error_bits = None;
     let mut contacts = None;
     let mut stale_slots = 0;
+    let mut buses = 3;
     for token in tokens {
         let (key, value) = token.split_once('=')?;
         match key {
@@ -109,6 +113,7 @@ pub fn parse_telemetry(line: &str) -> Option<Telemetry> {
             }
             "sw" => contacts = Some(value.parse().ok()?),
             "stale" => stale_slots = value.parse().ok()?,
+            "can" => buses = value.parse().ok()?,
             _ => {}
         }
     }
@@ -121,6 +126,7 @@ pub fn parse_telemetry(line: &str) -> Option<Telemetry> {
         error_bits: error_bits?,
         contacts,
         stale_slots,
+        buses,
     })
 }
 
@@ -129,7 +135,7 @@ mod tests {
     use super::*;
 
     const SAMPLE: &str =
-        "STATE t=12345 mode=RUN en=7 a0=1.200/1.100 a1=-45.000/-44.200 a2=0.500/0.400 err=0A,00,03 sw=5 stale=2";
+        "STATE t=12345 mode=RUN en=7 a0=1.200/1.100 a1=-45.000/-44.200 a2=0.500/0.400 err=0A,00,03 sw=5 stale=2 can=3";
 
     #[test]
     fn parses_all_slots() {
@@ -141,12 +147,13 @@ mod tests {
         assert_eq!(telemetry.error_bits, [0x0A, 0x00, 0x03]);
         assert_eq!(telemetry.contacts, Some(5));
         assert_eq!(telemetry.stale_slots, 2);
+        assert_eq!(telemetry.buses, 3);
         assert!(telemetry.slot_enabled(2));
     }
 
     #[test]
     fn treats_missing_contacts_as_unknown_not_as_asserted() {
-        let line = SAMPLE.strip_suffix(" sw=5 stale=2").unwrap();
+        let line = SAMPLE.strip_suffix(" sw=5 stale=2 can=3").unwrap();
         assert_eq!(parse_telemetry(line).unwrap().contacts, None);
     }
 

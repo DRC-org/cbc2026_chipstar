@@ -735,6 +735,7 @@ mod tests {
             error_bits: [0; 3],
             contacts: Some(contacts),
             stale_slots: 0,
+            buses: 3,
         }
     }
 

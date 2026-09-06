@@ -17,6 +17,7 @@ struct Telemetry {
     uint8_t error_bits[SLOT_COUNT] = {};
     uint8_t contacts = 0;  // SW1..SW3の10ms安定値。閉で1。
     uint8_t stale_slots = 0;  // フィードバックが途絶えたslotのbit mask。
+    uint8_t buses = 0;  // 使えるCANバス。bit0=FDCAN1, bit1=FDCAN2。
 };
 
 constexpr std::size_t TELEMETRY_LINE_CAPACITY = 144;
