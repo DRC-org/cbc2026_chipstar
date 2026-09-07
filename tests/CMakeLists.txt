@@ -97,3 +97,10 @@ add_firmware_tests(motor_transport_tests ${REPO_ROOT}/cctl/src
     ${REPO_ROOT}/cctl/src/domain/delta_timer.cpp
 )
 target_include_directories(motor_transport_tests BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cctl/fakes)
+
+add_firmware_tests(sts3215_transport_tests ${REPO_ROOT}/serial_svmd/src
+    serial_svmd/sts3215_transport_test.cpp
+    ${REPO_ROOT}/serial_svmd/src/sts3215.cpp
+    ${REPO_ROOT}/serial_svmd/src/domain/sts3215_protocol.cpp
+)
+target_include_directories(sts3215_transport_tests BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/serial_svmd/fakes)

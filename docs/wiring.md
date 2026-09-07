@@ -1,5 +1,7 @@
 # 配線ガイド
 
+STS3215-C018の電源・ID・通信速度・SWCTLの設定は[STS3215導入手順](sts3215_bringup.md)を参照。
+
 現在の想定配線。回路図（`DRC-CCTL2026` / `DRC-SerialSVMD2026` / `DRC-DCMD2026.2ch-2E` /
 `DRC-SVMD2025_Ver2.1`）から起こしたコネクタ表と、間違えやすい箇所をまとめる。
 

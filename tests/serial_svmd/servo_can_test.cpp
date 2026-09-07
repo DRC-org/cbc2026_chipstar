@@ -126,7 +126,7 @@ TEST_CASE("実行時パラメータの設定を解釈する") {
     CHECK(command.value == doctest::Approx(1000000.0f));
 
     domain::ServoParameters parameters;
-    CHECK(parameters.baud() == 115200);
+    CHECK(parameters.baud() == 1000000);
     CHECK(parameters.set(command.param_id, command.value));
     CHECK(parameters.baud() == 1000000);
 }

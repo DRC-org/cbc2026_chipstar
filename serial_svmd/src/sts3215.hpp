@@ -23,6 +23,8 @@ class Sts3215 {
     ProtocolError,
     ChecksumError,
     ServoError,
+    UnsupportedMode,
+    ReadbackMismatch,
   };
 
   using Target = domain::sts3215::Target;
@@ -44,6 +46,11 @@ class Sts3215 {
     timeout_ms_ = timeout_ms;
     wait_for_write_status_ = wait_for_write_status;
   }
+
+  // USART1 RXを循環DMAで受ける。huart->hdmarxは基板側で初期化する。
+  Result startReceiver();
+  void stopReceiver();
+  Result preparePosition(uint8_t id, const Target* target = nullptr);
 
   // 指定 ID の応答を確認する。
   Result ping(uint8_t id);
@@ -77,6 +84,11 @@ class Sts3215 {
                        uint8_t& parameter_count);
   Result receiveExact(uint8_t* data, uint16_t length, uint32_t start_ms);
   void flushRx();
+  Result writeVerified(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length);
+  static constexpr uint16_t RX_BUFFER_SIZE = 256;
+  uint8_t rx_buffer_[RX_BUFFER_SIZE] = {};
+  uint16_t rx_tail_ = 0;
+  bool dma_rx_ = false;
 
   UART_HandleTypeDef* huart_;
   uint32_t timeout_ms_;

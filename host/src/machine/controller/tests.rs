@@ -16,6 +16,25 @@ fn embedded_profile_is_valid() {
 }
 
 #[test]
+fn serial_servo_bringup_profile_is_valid_and_initially_disabled() {
+    let profile = MachineProfile::parse(include_str!("../../../config/serial_svmd_bringup.toml"));
+    assert!(profile.is_ok(), "{profile:?}");
+    let profile = profile.unwrap();
+    assert!(profile.axes.is_empty());
+    assert!(profile.requires_serial_svmd());
+    assert!(profile.requires_can_bus_2());
+    assert!(
+        profile
+            .serial_svmd
+            .as_ref()
+            .unwrap()
+            .servos
+            .iter()
+            .all(|servo| !servo.enabled)
+    );
+}
+
+#[test]
 fn every_axis_can_be_jogged_for_manual_checks() {
     // 配線後の手動確認とホーミングに必要。動かせない軸があると原点が採れない。
     let profile = MachineProfile::embedded().unwrap();

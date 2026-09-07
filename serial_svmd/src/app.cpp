@@ -37,6 +37,11 @@ struct ServoState {
 };
 
 domain::ServoParameters parameters;
+DMA_HandleTypeDef servo_rx_dma{};
+bool servo_uart_ready = false;
+bool command_failed = false;
+bool stop_retry = false;
+uint32_t last_stop_retry_ms = 0;
 Sts3215 bus(&huart1, config::SERVO_TIMEOUT_MS, config::WAIT_FOR_WRITE_STATUS);
 ServoState servos[config::MAX_SERVOS];
 Mode mode = Mode::Safe;
@@ -52,7 +57,7 @@ Link source = Link::Serial;
 
 // LED1..6は基板の左から並ぶ。状態は点け方で表す。
 domain::Status ledStatus() {
-  if (!bus_ready) return domain::Status::Error;
+  if (!bus_ready || !servo_uart_ready) return domain::Status::Error;
   // 停止はBootより先に見る。通信断はprotocol_readyも落とすため。
   if (mode == Mode::Stop) return domain::Status::Stop;
   if (!protocol_ready) return domain::Status::Boot;
@@ -104,6 +109,7 @@ void sendStatus(domain::servo_can::Status status) {
 
 // USART2へはASCIIの1行、CANへは拒否として返す。
 void reply(const char* text) {
+  if (std::strncmp(text, "ERR", 3) == 0) command_failed = true;
   if (source == Link::Can) {
     sendStatus(domain::servo_can::Status::Rejected);
     return;
@@ -126,34 +132,68 @@ ServoState* findServo(uint8_t id, bool create) {
   return free_entry;
 }
 
+bool configureServoUart() {
+  servo_uart_ready = false;
+  bus.stopReceiver();
+  huart1.Init.BaudRate = parameters.baud();
+  // 8MHzで1Mbpsには8倍サンプリングが必要。16倍ではBRRの下限を満たさない。
+  huart1.Init.OverSampling = UART_OVERSAMPLING_8;
+  if (HAL_UART_Init(&huart1) != HAL_OK) return false;
+  servo_uart_ready = bus.startReceiver() == Sts3215::Result::Ok;
+  return servo_uart_ready;
+}
+
 void disableAll() {
+  // 登録されていない個体も停止対象。broadcastにはACKは返らない。
+  stop_retry = bus.setTorque(Sts3215::BROADCAST_ID, false) != Sts3215::Result::Ok;
   for (auto& servo : servos) {
-    if (servo.used) bus.setTorque(servo.id, false);
+    if (servo.used) {
+      const auto result = bus.setTorque(servo.id, false);
+      if (result != Sts3215::Result::Ok) { command_failed = true; stop_retry = true; }
+    }
+    servo.enabled = false;
+    servo.has_target = false;
   }
+}
+
+bool checkServoIo(Sts3215::Result result, uint8_t id) {
+  g_servo_status = result;
+  g_servo_id = id;
+  g_servo_error_flags = bus.lastServoError();
+  if (result == Sts3215::Result::Ok) return true;
+  const auto hal = bus.lastHalStatus();
+  const auto flags = bus.lastServoError();
+  disableAll();
+  mode = Mode::Stop;
+  command_failed = true;
+  if (source == Link::Can) {
+    uint8_t detail[8] = {1, id, static_cast<uint8_t>(result), static_cast<uint8_t>(hal), flags, 0, 0, 0};
+    sendCan(domain::servo_can::canId(0x325, address), detail);
+    sendStatus(domain::servo_can::Status::Rejected);
+  } else {
+    char text[96];
+    std::snprintf(text, sizeof(text), "ERR code=SERVO_IO id=%u result=%u hal=%u flags=%u", id,
+                  static_cast<unsigned>(result), static_cast<unsigned>(hal), flags);
+    reply(text);
+  }
+  return false;
 }
 
 void setMode(Mode next) {
   if (next != Mode::Run) {
     disableAll();
-    // 再RUN時に前のセッションの出力を復帰させない。
-    for (auto& servo : servos) {
-      servo.enabled = false;
-      servo.has_target = false;
-    }
     mode = next;
+    if (command_failed) reply("ERR code=SERVO_STOP_UNCONFIRMED");
     return;
   }
-  if (!protocol_ready) {
-    reply("ERR code=NOT_READY");
-    return;
-  }
+  if (!protocol_ready) { reply("ERR code=NOT_READY"); return; }
+  if (!servo_uart_ready) { reply("ERR code=SERVO_UART"); return; }
+  if (stop_retry) { reply("ERR code=STOP_PENDING"); return; }
+  if (mode == Mode::Run) return;
   mode = Mode::Run;
   for (auto& servo : servos) {
     if (!servo.used || !servo.enabled) continue;
-    g_servo_status = bus.setTorque(servo.id, true);
-    if (g_servo_status == Sts3215::Result::Ok && servo.has_target) {
-      g_servo_status = bus.setTarget(servo.target);
-    }
+    if (!checkServoIo(bus.preparePosition(servo.id, servo.has_target ? &servo.target : nullptr), servo.id)) return;
   }
 }
 
@@ -172,6 +212,7 @@ void reportPosition(uint8_t id, uint16_t position, bool enabled) {
 }
 
 void apply(const domain::ServoCommand& command) {
+  command_failed = false;
   switch (command.kind) {
     case domain::ServoCommandKind::Hello:
       protocol_ready = command.protocol_version == config::PROTOCOL_VERSION;
@@ -207,8 +248,13 @@ void apply(const domain::ServoCommand& command) {
         reply("ERR code=NO_SLOT");
         break;
       }
+      if (mode == Mode::Run && command.enabled && !servo->enabled) {
+        if (!checkServoIo(bus.preparePosition(command.id, servo->has_target ? &servo->target : nullptr), command.id)) break;
+      } else if (!command.enabled) {
+        if (!checkServoIo(bus.setTorque(command.id, false), command.id)) break;
+      }
       servo->enabled = command.enabled;
-      if (mode == Mode::Run) g_servo_status = bus.setTorque(command.id, command.enabled);
+      if (!command.enabled) servo->has_target = false;
       break;
     }
     case domain::ServoCommandKind::Target: {
@@ -220,7 +266,7 @@ void apply(const domain::ServoCommand& command) {
       servo->target = Sts3215::Target{command.id, command.acceleration, command.position, 0,
                                       command.speed};
       servo->has_target = true;
-      if (mode == Mode::Run && servo->enabled) g_servo_status = bus.setTarget(servo->target);
+      if (mode == Mode::Run && servo->enabled) checkServoIo(bus.setTarget(servo->target), command.id);
       break;
     }
     case domain::ServoCommandKind::Read: {
@@ -234,11 +280,13 @@ void apply(const domain::ServoCommand& command) {
         reportPosition(command.id, position,
                        mode == Mode::Run && servo != nullptr && servo->enabled);
       } else {
-        reply("ERR code=SERVO_IO");
+        checkServoIo(g_servo_status, command.id);
       }
       break;
     }
     case domain::ServoCommandKind::ParamSet: {
+      if (mode == Mode::Run) { reply("ERR code=BUSY"); break; }
+      const auto previous = parameters;
       if (!parameters.set(command.param_id, command.value)) {
         reply("ERR code=OUT_OF_RANGE");
         break;
@@ -246,8 +294,12 @@ void apply(const domain::ServoCommand& command) {
       bus.setTiming(parameters.timeoutMs(), parameters.waitForWriteStatus());
       if (command.param_id == static_cast<uint8_t>(domain::ServoParamId::ServoBaud)) {
         // サーボが1 Mbps出荷の個体だと、ここを変えられないと手が出ない。
-        huart1.Init.BaudRate = parameters.baud();
-        if (HAL_UART_Init(&huart1) != HAL_OK) { reply("ERR code=SERVO_UART"); break; }
+        if (!configureServoUart()) {
+          parameters = previous;
+          bus.setTiming(parameters.timeoutMs(), parameters.waitForWriteStatus());
+          configureServoUart();
+          reply("ERR code=SERVO_UART"); break;
+        }
       }
       if (source == Link::Can) {
         const float value = parameters.get(static_cast<domain::ServoParamId>(command.param_id));
@@ -291,11 +343,13 @@ void pollCan(void) {
     domain::ServoCommand command;
     source = Link::Can;
     if (domain::servo_can::parse(data, header.DLC, command)) {
-      last_contact_ms = HAL_GetTick();
+      if (command.kind == domain::ServoCommandKind::Run ||
+          command.kind == domain::ServoCommandKind::Target ||
+          command.kind == domain::ServoCommandKind::Heartbeat) last_contact_ms = HAL_GetTick();
       apply(command);
       if (command.kind != domain::ServoCommandKind::Read &&
           command.kind != domain::ServoCommandKind::InputRead &&
-          command.kind != domain::ServoCommandKind::Hello) {
+          command.kind != domain::ServoCommandKind::Hello && !command_failed) {
         sendStatus(domain::servo_can::Status::Ok);
       }
     } else {
@@ -316,7 +370,9 @@ void consume(uint8_t byte) {
   if (!line_overflow && line_length != 0) {
     const domain::ServoCommand command = domain::parseServoCommand(line, line_length);
     if (command.kind != domain::ServoCommandKind::None) {
-      last_contact_ms = HAL_GetTick();
+      if (command.kind == domain::ServoCommandKind::Run ||
+          command.kind == domain::ServoCommandKind::Target ||
+          command.kind == domain::ServoCommandKind::Heartbeat) last_contact_ms = HAL_GetTick();
       apply(command);
     } else {
       reply("ERR code=BAD_COMMAND");
@@ -346,6 +402,19 @@ void pollSerial() {
 }  // namespace
 
 extern "C" void setup(void) {
+  __HAL_RCC_DMA1_CLK_ENABLE();
+  servo_rx_dma.Instance = DMA1_Channel5; // STM32F303 USART1_RXの既定マッピング
+  servo_rx_dma.Init.Direction = DMA_PERIPH_TO_MEMORY;
+  servo_rx_dma.Init.PeriphInc = DMA_PINC_DISABLE;
+  servo_rx_dma.Init.MemInc = DMA_MINC_ENABLE;
+  servo_rx_dma.Init.PeriphDataAlignment = DMA_PDATAALIGN_BYTE;
+  servo_rx_dma.Init.MemDataAlignment = DMA_MDATAALIGN_BYTE;
+  servo_rx_dma.Init.Mode = DMA_CIRCULAR;
+  servo_rx_dma.Init.Priority = DMA_PRIORITY_HIGH;
+  __HAL_LINKDMA(&huart1, hdmarx, servo_rx_dma);
+  if (HAL_DMA_Init(&servo_rx_dma) != HAL_OK || !configureServoUart()) {
+    g_servo_status = Sts3215::Result::HalError;
+  }
   // アドレスは起動時に一度だけ読む。
   sampleInputs();
   address = static_cast<uint8_t>(inputs.dip() & domain::servo_can::MAX_ADDRESS);
@@ -372,6 +441,10 @@ extern "C" void loop(void) {
 
   const uint32_t now = HAL_GetTick();
   updateLeds(now);
+  if (mode != Mode::Run && stop_retry && now - last_stop_retry_ms >= 50) {
+    last_stop_retry_ms = now;
+    disableAll();
+  }
   if (mode == Mode::Run && now - last_contact_ms > parameters.watchdogMs()) {
     setMode(Mode::Stop);
     protocol_ready = false;

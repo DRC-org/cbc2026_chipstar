@@ -282,7 +282,16 @@ CAN送信は`HELLO 1`が成功した後だけ受理する。FDCAN2を開始で�
 
 IDは1..253、positionは0..4095とする。範囲外の指令はサーボへ送らない。
 speedは0..1000、accelは0..254。最大16個のIDをRAM上に保持し、RUN中に250ms以上
-有効な指令が途切れると全サーボのトルクを切る。
+RUN・TARGET・HEARTBEATが途切れると全サーボへトルクOFFを送る。HELLOやREADでは期限を延長しない。
+
+サーボUARTの既定値は1Mbps、応答期限20ms。対応baudは1000000 / 500000 / 250000 /
+128000 / 115200 / 76800 / 57600 / 38400。`servo_baud`の変更はSTOP/SAFE中だけ受理し、
+サーボ本体のEPROMは変更しない。`wait_for_write_status=0`は単体宛のSYNC_WRITEと読戻し、
+1は通常WRITEのACKと読戻しを使う。トルク・目標レジスタの不一致は失敗扱い。
+
+位置制御開始時はトルクOFF、動作モード0の確認、現在位置取得、目標書込み、トルクONの順。
+明示された目標がなければ現在位置を保持目標に使う。通信・サーボ異常ではSTOPへ移行し、
+登録済み個体のトルクOFF確認が取れない間は再試行してRUNを拒否する。通信断中の物理的停止は保証できない。
 
 STOP・SAFE・Watchdog停止では保持していた有効設定と目標値も解除する。
 再始動にはTARGETとENABLEを再設定する。RUNだけでは以前の出力を復帰させない。
@@ -310,11 +319,16 @@ cctlの1本にまとめる。USART2のASCIIは基板単体で触るための口�
 | 4..5 | TARGETの位置（0..4095）、big endian。それ以外は0 |
 | 6..7 | TARGETの速度（0..1000）、big endian。それ以外は0 |
 
-応答は3種類。指令の受理結果は標準ID `0x321`（801）で
+指令の受理結果は標準ID `0x321`（801）で
 `[1, status, mode, servo_count, 0, 0, 0, 0]`。statusは0=OK、1=拒否、2=timeout、
 modeは0=SAFE、1=RUN、2=STOP。READの応答は `0x322`（802）で
 `[1, id, pos_hi, pos_lo, enabled, error, 0, 0]`。INPUT READの応答は `0x323`（803）で、
 形式は接点入力の表に従う。
+
+サーボ通信失敗時は`0x325`（805）で`[1, id, result, hal, flags, 0, 0, 0]`も通知する。
+resultは1=引数、2=HAL、3=timeout、4=形式、5=checksum、6=サーボ異常、
+7=位置モード以外、8=書込み読戻し不一致。失敗した指令に続けてOKは返さない。
+ASCIIでは`ERR code=SERVO_IO id=... result=... hal=... flags=...`。
 
 1バス上のserial_svmdは1台を想定する。複数台にはアドレス割当の拡張が必要。
 

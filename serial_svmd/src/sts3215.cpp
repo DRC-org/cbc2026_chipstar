@@ -11,33 +11,60 @@ uint32_t remainingTimeout(uint32_t start_ms, uint32_t timeout_ms) {
 }
 }  // namespace
 
+Sts3215::Result Sts3215::startReceiver() {
+  if (!huart_ || !huart_->hdmarx) return Result::ArgumentError;
+  rx_tail_ = 0;
+  last_hal_status_ = HAL_UART_Receive_DMA(huart_, rx_buffer_, RX_BUFFER_SIZE);
+  dma_rx_ = last_hal_status_ == HAL_OK;
+  if (dma_rx_) __HAL_DMA_DISABLE_IT(huart_->hdmarx, DMA_IT_HT | DMA_IT_TC);
+  return dma_rx_ ? Result::Ok : Result::HalError;
+}
+
+void Sts3215::stopReceiver() {
+  if (dma_rx_) HAL_UART_AbortReceive(huart_);
+  dma_rx_ = false;
+}
+
 void Sts3215::flushRx() {
-  __HAL_UART_SEND_REQ(huart_, UART_RXDATA_FLUSH_REQUEST);
+  if (dma_rx_) {
+    rx_tail_ = (RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(huart_->hdmarx)) % RX_BUFFER_SIZE;
+  } else {
+    __HAL_UART_SEND_REQ(huart_, UART_RXDATA_FLUSH_REQUEST);
+  }
   __HAL_UART_CLEAR_OREFLAG(huart_);
 }
 
 Sts3215::Result Sts3215::receiveExact(uint8_t* data, uint16_t length, uint32_t start_ms) {
-  const uint32_t remaining = remainingTimeout(start_ms, timeout_ms_);
-  if (remaining == 0) {
-    last_hal_status_ = HAL_TIMEOUT;
-    return Result::Timeout;
+  if (!dma_rx_) {
+    const uint32_t remaining = remainingTimeout(start_ms, timeout_ms_);
+    if (remaining == 0) { last_hal_status_ = HAL_TIMEOUT; return Result::Timeout; }
+    last_hal_status_ = HAL_UART_Receive(huart_, data, length, remaining);
+    return last_hal_status_ == HAL_OK ? Result::Ok :
+           last_hal_status_ == HAL_TIMEOUT ? Result::Timeout : Result::HalError;
   }
-
-  last_hal_status_ = HAL_UART_Receive(huart_, data, length, remaining);
-  if (last_hal_status_ == HAL_TIMEOUT) {
-    return Result::Timeout;
+  for (uint16_t i = 0; i < length;) {
+    if (remainingTimeout(start_ms, timeout_ms_) == 0) {
+      last_hal_status_ = HAL_TIMEOUT;
+      return Result::Timeout;
+    }
+    if (huart_->ErrorCode != HAL_UART_ERROR_NONE) return Result::HalError;
+    const uint16_t head = (RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(huart_->hdmarx)) % RX_BUFFER_SIZE;
+    if (head == rx_tail_) continue;
+    data[i++] = reinterpret_cast<volatile uint8_t*>(rx_buffer_)[rx_tail_];
+    rx_tail_ = (rx_tail_ + 1) % RX_BUFFER_SIZE;
   }
-  if (last_hal_status_ != HAL_OK) {
-    return Result::HalError;
-  }
+  last_hal_status_ = HAL_OK;
   return Result::Ok;
 }
 
 Sts3215::Result Sts3215::sendInstruction(uint8_t id, uint8_t instruction,
                                          const uint8_t* parameters,
                                          uint8_t parameter_count) {
-  if (huart_ == nullptr) {
-    return Result::ArgumentError;
+  if (huart_ == nullptr || id == 0xFF) return Result::ArgumentError;
+  last_servo_error_ = 0;
+  if (dma_rx_ && huart_->ErrorCode != HAL_UART_ERROR_NONE) {
+    stopReceiver();
+    if (startReceiver() != Result::Ok) return Result::HalError;
   }
 
   uint8_t packet[proto::MAX_PACKET_SIZE];
@@ -68,54 +95,46 @@ Sts3215::Result Sts3215::receiveStatus(uint8_t expected_id, uint8_t* parameters,
 
   const uint32_t start_ms = HAL_GetTick();
 
-  // FF FF が2バイト続くまでを同期用に読み飛ばす。
-  uint8_t header_count = 0;
-  while (header_count < 2) {
+  parameter_count = 0;
+  // 他ID・古い書込みACK・壊れたフレームを捨て、同じ期限内で再同期する。
+  Result last = Result::Timeout;
+  while (remainingTimeout(start_ms, timeout_ms_) != 0) {
+    uint8_t header_count = 0;
     uint8_t byte = 0;
-    const Result result = receiveExact(&byte, 1, start_ms);
-    if (result != Result::Ok) {
-      return result;
+    while (header_count < 2) {
+      const auto result = receiveExact(&byte, 1, start_ms);
+      if (result != Result::Ok) return result == Result::Timeout ? last : result;
+      header_count = byte == proto::HEADER ? header_count + 1 : 0;
     }
-    header_count = (byte == proto::HEADER) ? static_cast<uint8_t>(header_count + 1) : 0;
+    do {
+      const auto result = receiveExact(&byte, 1, start_ms);
+      if (result != Result::Ok) return result == Result::Timeout ? last : result;
+    } while (byte == proto::HEADER);
+    const uint8_t response_id = byte;
+    uint8_t length = 0;
+    auto result = receiveExact(&length, 1, start_ms);
+    if (result != Result::Ok) return result;
+    if (response_id > 253 || length < 2 || length > proto::MAX_RX_PARAMETERS + 2) {
+      last = Result::ProtocolError; continue;
+    }
+    uint8_t body[proto::MAX_RX_PARAMETERS + 2];
+    result = receiveExact(body, length, start_ms);
+    if (result != Result::Ok) return result;
+    if (!proto::verifyStatusChecksum(response_id, length, body)) {
+      last = Result::ChecksumError; continue;
+    }
+    if (response_id != expected_id) continue;
+    if (body[0] != 0) { last_servo_error_ = body[0]; return Result::ServoError; }
+    if (length - 2 != capacity) { last = Result::ProtocolError; continue; }
+    parameter_count = length - 2;
+    if (parameter_count && parameters) std::memcpy(parameters, body + 1, parameter_count);
+    return Result::Ok;
   }
-
-  uint8_t prefix[2];
-  Result result = receiveExact(prefix, sizeof(prefix), start_ms);
-  if (result != Result::Ok) {
-    return result;
-  }
-
-  const uint8_t response_id = prefix[0];
-  const uint8_t response_length = prefix[1];
-  if (response_id != expected_id || response_length < 2 ||
-      response_length > (proto::MAX_RX_PARAMETERS + 2)) {
-    return Result::ProtocolError;
-  }
-
-  // body = <エラービット> <パラメータ...> <チェックサム>
-  uint8_t body[proto::MAX_RX_PARAMETERS + 2];
-  result = receiveExact(body, response_length, start_ms);
-  if (result != Result::Ok) {
-    return result;
-  }
-
-  if (!proto::verifyStatusChecksum(response_id, response_length, body)) {
-    return Result::ChecksumError;
-  }
-
-  last_servo_error_ = body[0];
-  parameter_count = static_cast<uint8_t>(response_length - 2);
-  if (parameter_count > capacity) {
-    return Result::ProtocolError;
-  }
-  if (parameter_count != 0 && parameters != nullptr) {
-    std::memcpy(parameters, &body[1], parameter_count);
-  }
-
-  return last_servo_error_ != 0 ? Result::ServoError : Result::Ok;
+  return last;
 }
 
 Sts3215::Result Sts3215::ping(uint8_t id) {
+  if (id >= BROADCAST_ID) return Result::ArgumentError;
   const Result result = sendInstruction(id, proto::INSTRUCTION_PING, nullptr, 0);
   if (result != Result::Ok) {
     return result;
@@ -126,7 +145,7 @@ Sts3215::Result Sts3215::ping(uint8_t id) {
 }
 
 Sts3215::Result Sts3215::read(uint8_t id, uint8_t address, uint8_t* data, uint8_t length) {
-  if (data == nullptr || length == 0 || length > proto::MAX_RX_PARAMETERS) {
+  if (id >= BROADCAST_ID || data == nullptr || length == 0 || length > proto::MAX_RX_PARAMETERS) {
     return Result::ArgumentError;
   }
 
@@ -152,6 +171,14 @@ Sts3215::Result Sts3215::write(uint8_t id, uint8_t address, const uint8_t* data,
     return Result::ArgumentError;
   }
 
+  // 応答を待たない単体WRITEは遅延ACKと次のREADが衝突する。
+  // SYNC_WRITEの1台指定なら仕様上ACKがなく、読戻しで確認できる。
+  if (!wait_for_write_status_ && id < BROADCAST_ID) {
+    if (length + 3 > proto::MAX_TX_PARAMETERS) return Result::ArgumentError;
+    uint8_t sync[proto::MAX_TX_PARAMETERS] = {address, length, id};
+    std::memcpy(sync + 3, data, length);
+    return sendInstruction(BROADCAST_ID, proto::INSTRUCTION_SYNC_WRITE, sync, length + 3);
+  }
   uint8_t parameters[proto::MAX_TX_PARAMETERS];
   parameters[0] = address;
   std::memcpy(&parameters[1], data, length);
@@ -169,7 +196,8 @@ Sts3215::Result Sts3215::write(uint8_t id, uint8_t address, const uint8_t* data,
 
 Sts3215::Result Sts3215::setTorque(uint8_t id, bool enable) {
   const uint8_t value = enable ? 1 : 0;
-  return write(id, proto::reg::TORQUE_ENABLE, &value, 1);
+  return id == BROADCAST_ID ? write(id, proto::reg::TORQUE_ENABLE, &value, 1)
+                            : writeVerified(id, proto::reg::TORQUE_ENABLE, &value, 1);
 }
 
 Sts3215::Result Sts3215::setTarget(const Target& target) {
@@ -179,7 +207,7 @@ Sts3215::Result Sts3215::setTarget(const Target& target) {
 
   uint8_t data[proto::TARGET_DATA_LENGTH];
   proto::encodeTarget(target, data);
-  return write(target.id, proto::reg::ACCELERATION, data, sizeof(data));
+  return writeVerified(target.id, proto::reg::ACCELERATION, data, sizeof(data));
 }
 
 Sts3215::Result Sts3215::syncWriteTargets(const Target* targets, std::size_t count) {
@@ -214,5 +242,31 @@ Sts3215::Result Sts3215::readPosition(uint8_t id, uint16_t& position) {
   }
 
   position = proto::decodeUint16(data);
-  return Result::Ok;
+  return position <= MAX_POSITION ? Result::Ok : Result::ProtocolError;
+}
+
+Sts3215::Result Sts3215::writeVerified(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length) {
+  if (id >= BROADCAST_ID || length > proto::MAX_RX_PARAMETERS) return Result::ArgumentError;
+  auto result = write(id, address, data, length);
+  if (result != Result::Ok) return result;
+  uint8_t actual[proto::MAX_RX_PARAMETERS];
+  result = read(id, address, actual, length);
+  if (result != Result::Ok) return result;
+  return std::memcmp(data, actual, length) == 0 ? Result::Ok : Result::ReadbackMismatch;
+}
+
+Sts3215::Result Sts3215::preparePosition(uint8_t id, const Target* target) {
+  auto result = setTorque(id, false);
+  if (result != Result::Ok) return result;
+  uint8_t mode = 0;
+  result = read(id, 33, &mode, 1);
+  if (result != Result::Ok) return result;
+  if (mode != 0) return Result::UnsupportedMode;
+  uint16_t position = 0;
+  result = readPosition(id, position);
+  if (result != Result::Ok) return result;
+  const Target hold{id, 0, position, 0, 100};
+  result = setTarget(target ? *target : hold);
+  if (result != Result::Ok) return result;
+  return setTorque(id, true);
 }

@@ -6,8 +6,7 @@ namespace domain {
 
 // hostが実行時に変更できる基板パラメータ。RAM保持で、電源投入で既定値へ戻る。
 //
-// STS3215は工場出荷時に1 Mbpsの個体がある。書き込み環境がない場所でそれに
-// 当たると詰むため、サーボバスのボーレートを実行時に変えられるようにしてある。
+// STS3215-C018の出荷時は1 Mbps。UART側の変更はサーボ本体の保存設定を変更しない。
 enum class ServoParamId : uint8_t {
   ServoBaud = 0,       // USART1のボーレート
   ServoTimeoutMs,      // サーボ応答の待ち時間 [ms]
@@ -23,7 +22,7 @@ class ServoParameters {
   ServoParameters() { reset(); }
 
   void reset() {
-    values_[0] = 115200.0f;
+    values_[0] = 1000000.0f;
     values_[1] = 20.0f;
     values_[2] = 0.0f;
     values_[3] = 250.0f;
@@ -44,7 +43,7 @@ class ServoParameters {
   static bool valid(uint8_t id, float value) {
     if (id >= SERVO_PARAM_COUNT || !(value == value)) return false;
     switch (static_cast<ServoParamId>(id)) {
-      case ServoParamId::ServoBaud: return value >= 1200.0f && value <= 1000000.0f;
+      case ServoParamId::ServoBaud: return value == 1000000 || value == 500000 || value == 250000 || value == 128000 || value == 115200 || value == 76800 || value == 57600 || value == 38400;
       case ServoParamId::ServoTimeoutMs: return value >= 1.0f && value <= 10000.0f;
       case ServoParamId::WaitForWriteStatus: return value == 0.0f || value == 1.0f;
       case ServoParamId::WatchdogMs: return value >= 1.0f && value <= 60000.0f;

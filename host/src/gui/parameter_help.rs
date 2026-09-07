@@ -142,7 +142,7 @@ pub(super) fn help(name: &str) -> Option<(&'static str, &'static str)> {
         ),
         "servo_baud" => (
             "baud",
-            "STS3215バスの通信速度。接続するサーボ側の設定に合わせます。",
+            "STS3215バスの通信速度。C018の出荷時は1000000。サーボ本体の保存設定は変更しないので、全個体と同じ値にします。",
         ),
         "servo_timeout_ms" => (
             "ms",
@@ -150,7 +150,7 @@ pub(super) fn help(name: &str) -> Option<(&'static str, &'static str)> {
         ),
         "wait_for_write_status" => (
             "0/1",
-            "STS3215への書き込み後に応答を待つか。0は待たない、1は待つ設定です。",
+            "0は応答を返さないSYNC_WRITE、1は通常WRITEの応答も待ちます。どちらもトルク・目標値を読み戻して確認します。通常は0。",
         ),
         _ => return None,
     })

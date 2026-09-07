@@ -289,6 +289,12 @@ impl Runtime {
                 }
             }
             self.shared.log(format!("RX {line}"));
+            if let Some((id, detail)) = crate::protocol::serial_svmd::parse_diagnostic(&line) {
+                self.shared.update_status(|s| {
+                    s.peripherals
+                        .insert(format!("STS3215 ID {id} 通信診断"), detail);
+                });
+            }
             if let Some(status) = crate::protocol::dcmd::parse_status(&line) {
                 self.shared.update_status(|s| {
                     s.peripherals.insert(
@@ -310,6 +316,10 @@ impl Runtime {
             }
             if let Some(servo) = crate::protocol::serial_svmd::parse_state(&line) {
                 self.shared.update_status(|s| {
+                    if servo.error == 0 {
+                        s.peripherals
+                            .remove(&format!("STS3215 ID {} 通信診断", servo.id));
+                    }
                     s.peripherals.insert(
                         format!("STS3215 ID {}", servo.id),
                         format!(

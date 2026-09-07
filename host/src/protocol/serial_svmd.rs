@@ -115,9 +115,44 @@ pub fn parse_state(line: &str) -> Option<ServoState> {
     })
 }
 
+/// サーボ通信失敗の詳細（0x325）。値はSts3215::Resultに対応する。
+pub fn parse_diagnostic(line: &str) -> Option<(u8, String)> {
+    let data = line.strip_prefix("CAN_RX bus=2 id=805 data=")?;
+    if data.len() != 16 || !data.is_ascii() {
+        return None;
+    }
+    let byte = |i: usize| u8::from_str_radix(&data[i * 2..i * 2 + 2], 16).ok();
+    if byte(0)? != 1 {
+        return None;
+    }
+    let result = match byte(2)? {
+        1 => "引数不正",
+        2 => "UART異常",
+        3 => "応答なし（ID・通信速度・電源を確認）",
+        4 => "応答形式・位置範囲の不一致",
+        5 => "チェックサム不一致",
+        6 => "サーボ保護状態",
+        7 => "位置モードではありません（Mode=0が必要）",
+        8 => "書込み値と読戻し値の不一致",
+        _ => "未定義の通信結果",
+    };
+    Some((
+        byte(1)?,
+        format!("{result} / HAL={} / error=0x{:02X}", byte(3)?, byte(4)?),
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn explains_servo_uart_and_mode_failures() {
+        let (id, detail) = parse_diagnostic("CAN_RX bus=2 id=805 data=0101070000000000").unwrap();
+        assert_eq!(id, 1);
+        assert!(detail.contains("Mode=0"));
+        assert!(parse_diagnostic("CAN_RX bus=2 id=805 data=0201070000000000").is_none());
+    }
 
     #[test]
     fn encodes_commands_for_cctl_gateway() {

@@ -1,0 +1,19 @@
+# SerialSVMD単体のGUI確認用。接続はPC -> CCTL -> FDCAN2 -> SerialSVMD。
+protocol_version = 1
+
+[serial_svmd_parameters]
+servo_baud = 1000000.0
+servo_timeout_ms = 20.0
+wait_for_write_status = 0.0
+watchdog_ms = 250.0
+
+[[serial_svmd.servos]]
+name = "sts3215_test"
+id = 1
+speed_position_per_second = 100.0
+minimum_position = 0
+maximum_position = 4095
+initial_position = 2048
+move_speed = 100
+acceleration = 20
+enabled = false
