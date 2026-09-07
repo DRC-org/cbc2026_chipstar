@@ -722,4 +722,50 @@ mod workflow_tests {
         let stopped = harness.wait(|status| !status.sts.active && !status.sts.busy);
         assert!(!stopped.outputs_active);
     }
+
+    #[test]
+    fn gui_emergency_stops_individual_output_and_tab_exit_keeps_latch() {
+        let mut harness = Harness::new();
+        harness.app.select_cctl_test(1);
+        harness.app.request(Request {
+            axis: Some("cctl:1".into()),
+            text: Some(Kind::Position.key().into()),
+            ..Request::new("test_select")
+        });
+        harness.app.request(Request {
+            value: Some(0.0),
+            flag: Some(true),
+            ..Request::new("test_output")
+        });
+        harness.wait(|status| status.test_active);
+
+        harness.app.dispatch(Action::Emergency(true));
+        let emergency = harness.wait(|status| status.emergency && !status.test_active);
+        assert!(!emergency.outputs_active);
+        assert!(emergency.test_mode);
+        harness.app.switch_screen(Screen::Documents);
+        let exited = harness.wait(|status| !status.test_mode);
+        assert!(exited.emergency);
+        assert!(!exited.outputs_active && !exited.running);
+    }
+
+    #[test]
+    fn gui_emergency_stops_sts_and_reset_does_not_restart_it() {
+        let mut harness = Harness::new();
+        let operation = sts::Operation::Move {
+            targets: vec![sts::Target::default()],
+        };
+        harness.app.request(Request {
+            text: Some(toml::to_string(&operation).unwrap()),
+            ..Request::new("sts")
+        });
+        harness.wait(|status| status.sts.active);
+
+        harness.app.dispatch(Action::Emergency(true));
+        harness.wait(|status| status.emergency && !status.sts.active && !status.outputs_active);
+        harness.app.dispatch(Action::Emergency(false));
+        let reset = harness.wait(|status| !status.emergency);
+        assert!(!reset.sts.active && !reset.sts.busy);
+        assert!(!reset.outputs_active && !reset.running);
+    }
 }
