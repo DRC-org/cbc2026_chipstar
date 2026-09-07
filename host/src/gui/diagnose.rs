@@ -9,6 +9,14 @@ pub(super) enum DiagnosisView {
 }
 
 impl BridgeApp {
+    pub(super) fn switch_diagnosis_view(&mut self, view: DiagnosisView) {
+        if self.diagnosis_view != view {
+            self.end_test_on_tab_change();
+            self.diagnosis_view = view;
+            self.navigation = Some(Action::Edge(true));
+        }
+    }
+
     pub(super) fn diagnose(&mut self, ui: &mut egui::Ui) {
         let status = self.shared.status_snapshot();
         let can_change =
@@ -62,13 +70,11 @@ impl BridgeApp {
             });
         });
         if open_error_log {
-            self.end_test_on_tab_change();
             self.log_filter = "ERR".into();
-            self.diagnosis_view = DiagnosisView::Log;
+            self.switch_diagnosis_view(DiagnosisView::Log);
         }
         ui.add_space(8.0);
-        let previous = self.diagnosis_view;
-        let mut view = previous;
+        let mut view = self.diagnosis_view;
         ui.horizontal_top(|ui| {
             ui.vertical(|ui| {
                 ui.set_width(165.0);
@@ -303,11 +309,7 @@ impl BridgeApp {
                 }
             });
         });
-        if view != previous {
-            self.end_test_on_tab_change();
-            self.diagnosis_view = view;
-            self.navigation = Some(Action::Edge(true));
-        }
+        self.switch_diagnosis_view(view);
     }
 }
 

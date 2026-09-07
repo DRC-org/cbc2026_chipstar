@@ -561,3 +561,165 @@ mod documents;
 mod parameter_help;
 
 mod shell;
+
+#[cfg(test)]
+mod workflow_tests {
+    use super::*;
+    use crate::{
+        application::{app_state::BridgeConfig, sts, worker},
+        diagnostics::individual::Kind,
+    };
+    use std::{
+        thread,
+        time::{Duration, Instant},
+    };
+
+    struct Harness {
+        app: BridgeApp,
+        shared: Arc<Shared>,
+        worker: Option<thread::JoinHandle<()>>,
+    }
+
+    impl Harness {
+        fn new() -> Self {
+            let shared = Arc::new(Shared::new(BridgeConfig {
+                serial_device: "unused".into(),
+                baud_rate: 115200,
+                rate_hz: 100.0,
+                machine: MachineProfile::embedded().unwrap(),
+                profile_path: "/dev/null".into(),
+                simulate: true,
+            }));
+            let worker_shared = shared.clone();
+            let worker = thread::spawn(move || worker::run(worker_shared));
+            let start = Instant::now();
+            while !shared.status_snapshot().configured {
+                assert!(start.elapsed() < Duration::from_secs(5));
+                thread::sleep(Duration::from_millis(10));
+            }
+            let app = BridgeApp::new(shared.clone());
+            Self {
+                app,
+                shared,
+                worker: Some(worker),
+            }
+        }
+
+        fn wait(&self, predicate: impl Fn(&Status) -> bool) -> Status {
+            let start = Instant::now();
+            loop {
+                let status = self.shared.status_snapshot();
+                if predicate(&status) {
+                    return status;
+                }
+                assert!(start.elapsed() < Duration::from_secs(5), "state timeout");
+                thread::sleep(Duration::from_millis(10));
+            }
+        }
+
+        fn capture_origins(&mut self) {
+            for axis in ["r", "theta", "z"] {
+                self.app.request(Request {
+                    axis: Some(axis.into()),
+                    ..Request::new("origin")
+                });
+                assert!(!self.app.message_error, "{}", self.app.message);
+            }
+            self.wait(|status| status.origins.iter().all(|origin| origin.captured));
+        }
+
+        fn run(&mut self) {
+            self.app.stop_requested = false;
+            self.app.dispatch(Action::Run);
+            assert!(!self.app.message_error, "{}", self.app.message);
+            self.wait(|status| status.running);
+        }
+    }
+
+    impl Drop for Harness {
+        fn drop(&mut self) {
+            self.shared.request_stop();
+            if let Some(worker) = self.worker.take() {
+                worker.join().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn gui_emergency_reset_keeps_outputs_stopped_until_explicit_run() {
+        let mut harness = Harness::new();
+        harness.capture_origins();
+        harness.run();
+
+        harness.app.dispatch(Action::Emergency(true));
+        let emergency = harness.wait(|status| status.emergency && !status.outputs_active);
+        assert!(!emergency.running);
+        assert!(emergency.origins.iter().all(|origin| origin.captured));
+
+        harness.app.dispatch(Action::Emergency(false));
+        let reset = harness.wait(|status| !status.emergency);
+        assert!(!reset.running && !reset.outputs_active);
+        assert!(reset.origins.iter().all(|origin| origin.captured));
+        thread::sleep(Duration::from_millis(100));
+        assert!(!harness.shared.status_snapshot().running);
+
+        harness.run();
+    }
+
+    #[test]
+    fn gui_navigation_keeps_normal_run_but_ends_both_individual_test_modes() {
+        let mut harness = Harness::new();
+        harness.capture_origins();
+        harness.run();
+        harness.app.switch_screen(Screen::Documents);
+        assert!(harness.shared.status_snapshot().running);
+        harness.app.dispatch(Action::Stop);
+        harness.wait(|status| !status.running);
+
+        for (kind, value) in [(Kind::Velocity, 0.1), (Kind::Position, 0.0)] {
+            harness.app.select_cctl_test(1);
+            harness.app.request(Request {
+                axis: Some("cctl:1".into()),
+                text: Some(kind.key().into()),
+                ..Request::new("test_select")
+            });
+            harness.app.request(Request {
+                value: Some(value),
+                flag: (kind == Kind::Position).then_some(true),
+                ..Request::new("test_output")
+            });
+            harness.wait(|status| status.test_active);
+
+            if kind == Kind::Velocity {
+                harness
+                    .app
+                    .switch_diagnosis_view(diagnose::DiagnosisView::Connection);
+            } else {
+                harness.app.switch_screen(Screen::Documents);
+            }
+            let stopped = harness.wait(|status| !status.test_mode && !status.test_active);
+            assert!(!stopped.outputs_active);
+        }
+    }
+
+    #[test]
+    fn gui_diagnosis_navigation_stops_sts_output() {
+        let mut harness = Harness::new();
+        harness.app.screen = Screen::Diagnose;
+        harness.app.diagnosis_view = diagnose::DiagnosisView::Sts;
+        let operation = sts::Operation::Move {
+            targets: vec![sts::Target::default()],
+        };
+        harness.app.request(Request {
+            text: Some(toml::to_string(&operation).unwrap()),
+            ..Request::new("sts")
+        });
+        harness.wait(|status| status.sts.active);
+
+        harness
+            .app
+            .switch_diagnosis_view(diagnose::DiagnosisView::Connection);
+        let stopped = harness.wait(|status| !status.sts.active && !status.sts.busy);
+        assert!(!stopped.outputs_active);
+    }
+}
