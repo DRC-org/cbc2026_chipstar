@@ -203,10 +203,9 @@ impl BridgeApp {
         ui.horizontal(|ui| match self.screen {
             Screen::Tune => {
                 for (view, label) in [
-                    (tune::TuneView::Axes, "軸・原点"),
-                    (tune::TuneView::Pid, "PID調整"),
-                    (tune::TuneView::Ee, "EE設定"),
-                    (tune::TuneView::Parameters, "基板パラメータ"),
+                    (tune::TuneView::Axes, "アーム"),
+                    (tune::TuneView::Ee, "EE"),
+                    (tune::TuneView::Parameters, "基板"),
                     (tune::TuneView::File, "設定ファイル"),
                 ] {
                     changed |= ui

@@ -106,59 +106,178 @@ impl BridgeApp {
         let before = toml::to_string(&self.edit).unwrap_or_default();
         section(
             ui,
-            "EEの割当・動作範囲",
-            "出力を停止して編集 → 適用 → 単体テスト → 通常出力を許可",
+            "EEを調整",
+            "サーボの接続先、移動範囲、DualSenseでの動かし方を設定します。",
         );
-        ui.label("初期候補値は機構の安全範囲を保証しません。配線・可動範囲・開始指令を確認して設定してください。開始指令はGUIの初期値・パッド操作開始位置です。起動時には送信しません。");
-        for (name, label) in ee::ROLES {
-            panel().show(ui,|ui| {
-                ui.set_width(ui.available_width());ui.heading(label);
-                let exists=self.edit.pwm_servos.iter().any(|s|s.name==name)||self.edit.serial_svmd.as_ref().is_some_and(|b|b.servos.iter().any(|s|s.name==name));
+        ui.colored_label(
+            WARNING,
+            "初期値は安全な校正値ではありません。単体テストで方向と端点を確認してから通常出力を許可してください。",
+        );
+        ui.horizontal_wrapped(|ui| {
+            ui.label("調整する機構");
+            for (name, label) in ee::ROLES {
+                let assigned = ee::axes(&self.edit).iter().any(|axis| axis.name == name);
+                let text = if assigned {
+                    label.to_owned()
+                } else {
+                    format!("{label}（未割当）")
+                };
+                ui.selectable_value(&mut self.tune_ee_axis, name.into(), text);
+            }
+        });
+        ui.add_space(6.0);
+        panel().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            for (name, label) in ee::ROLES
+                .into_iter()
+                .filter(|(name, _)| *name == self.tune_ee_axis.as_str())
+            {
+                let exists = self.edit.pwm_servos.iter().any(|s| s.name == name)
+                    || self
+                        .edit
+                        .serial_svmd
+                        .as_ref()
+                        .is_some_and(|board| board.servos.iter().any(|s| s.name == name));
+                ui.horizontal(|ui| {
+                    ui.label(RichText::new(label).strong().color(ACCENT));
+                    if let Some(axis) = ee::axes(&self.edit).iter().find(|axis| axis.name == name) {
+                        chip(
+                            ui,
+                            if axis.enabled {
+                                "通常操作で使用"
+                            } else {
+                                "単体テストのみ"
+                            },
+                            if axis.enabled { ACCENT } else { WARNING },
+                        );
+                    }
+                });
                 if !exists {
-                    if name=="ee_rotation" {
+                    if name == "ee_rotation" {
                         if ui.button("STS割当を追加（出力無効）").clicked() {
-                            let board=self.edit.serial_svmd.get_or_insert(SerialSvmdProfile{servos:vec![]});
-                            let id=(1..=253).find(|id|board.servos.iter().all(|s|s.id!=*id)).unwrap_or(1);
-                            board.servos.push(SerialServoProfile{name:name.into(),id,input_axis:None,input_sign:1.0,speed_position_per_second:100.0,minimum_position:1800,maximum_position:2200,initial_position:2048,move_speed:100,acceleration:10,enabled:false});
+                            let board = self
+                                .edit
+                                .serial_svmd
+                                .get_or_insert(SerialSvmdProfile { servos: vec![] });
+                            let id = (1..=253)
+                                .find(|id| board.servos.iter().all(|s| s.id != *id))
+                                .unwrap_or(1);
+                            board.servos.push(SerialServoProfile {
+                                name: name.into(),
+                                id,
+                                input_axis: None,
+                                input_sign: 1.0,
+                                speed_position_per_second: 100.0,
+                                minimum_position: 1800,
+                                maximum_position: 2200,
+                                initial_position: 2048,
+                                move_speed: 100,
+                                acceleration: 10,
+                                enabled: false,
+                            });
                         }
                     } else {
-                        let channel=(0..4).find(|ch|self.edit.pwm_servos.iter().all(|s|s.channel!=*ch));
-                        if ui.add_enabled(channel.is_some(),egui::Button::new("PWM割当を追加（出力無効）")).clicked() {
-                            self.edit.pwm_servos.push(PwmServoProfile{name:name.into(),channel:channel.unwrap(),input_axis:None,input_sign:1.0,speed_us_per_second:100.0,minimum_us:1400,maximum_us:1600,initial_us:1500,enabled:false});
+                        let channel =
+                            (0..4).find(|ch| self.edit.pwm_servos.iter().all(|s| s.channel != *ch));
+                        if ui
+                            .add_enabled(
+                                channel.is_some(),
+                                egui::Button::new("空いているPWM出力へ割り当て"),
+                            )
+                            .clicked()
+                        {
+                            self.edit.pwm_servos.push(PwmServoProfile {
+                                name: name.into(),
+                                channel: channel.unwrap(),
+                                input_axis: None,
+                                input_sign: 1.0,
+                                speed_us_per_second: 100.0,
+                                minimum_us: 1400,
+                                maximum_us: 1600,
+                                initial_us: 1500,
+                                enabled: false,
+                            });
                         }
                     }
-                    return;
+                    continue;
                 }
-                let mut remove=false;
-                if let Some(s)=self.edit.pwm_servos.iter_mut().find(|s|s.name==name) {
+                let mut remove = false;
+                if let Some(s) = self.edit.pwm_servos.iter_mut().find(|s| s.name == name) {
                     ui.horizontal_wrapped(|ui| {
-                        ui.label("PWM ch");ui.add(egui::DragValue::new(&mut s.channel).range(0..=3));
-                        pulse_fields(ui,&mut s.minimum_us,&mut s.maximum_us,&mut s.initial_us,500..=2500,"µs");
+                        ui.label("接続先：PWM");
+                        ui.label("ch");
+                        ui.add(egui::DragValue::new(&mut s.channel).range(0..=3));
+                        pulse_fields(
+                            ui,
+                            &mut s.minimum_us,
+                            &mut s.maximum_us,
+                            &mut s.initial_us,
+                            500..=2500,
+                            "µs",
+                        );
                     });
-                    input_fields(ui,&mut s.input_axis,&mut s.input_sign,&mut s.speed_us_per_second,"µs/s");
-                    ui.checkbox(&mut s.enabled,"位置指令方式・配線・動作範囲を確認し、通常出力を許可");
+                    input_fields(
+                        ui,
+                        &mut s.input_axis,
+                        &mut s.input_sign,
+                        &mut s.speed_us_per_second,
+                        "µs/s",
+                    );
+                    ui.checkbox(&mut s.enabled, "通常操作でこのサーボへ出力する");
                 }
-                if let Some(s)=self.edit.serial_svmd.as_mut().and_then(|b|b.servos.iter_mut().find(|s|s.name==name)) {
+                if let Some(s) = self
+                    .edit
+                    .serial_svmd
+                    .as_mut()
+                    .and_then(|board| board.servos.iter_mut().find(|s| s.name == name))
+                {
                     ui.horizontal_wrapped(|ui| {
-                        ui.label("STS ID");ui.add(egui::DragValue::new(&mut s.id).range(1..=253));
-                        pulse_fields(ui,&mut s.minimum_position,&mut s.maximum_position,&mut s.initial_position,0..=4095,"count");
+                        ui.label("接続先：STS3215");
+                        ui.label("ID");
+                        ui.add(egui::DragValue::new(&mut s.id).range(1..=253));
+                        pulse_fields(
+                            ui,
+                            &mut s.minimum_position,
+                            &mut s.maximum_position,
+                            &mut s.initial_position,
+                            0..=4095,
+                            "count",
+                        );
                     });
                     ui.horizontal_wrapped(|ui| {
-                        ui.label("サーボ速度上限");ui.add(egui::DragValue::new(&mut s.move_speed).range(1..=1000));
-                        ui.label("加速度");ui.add(egui::DragValue::new(&mut s.acceleration).range(0..=254));
+                        ui.label("サーボ内部の速度上限");
+                        ui.add(egui::DragValue::new(&mut s.move_speed).range(1..=1000));
+                        ui.label("サーボ内部の加速度");
+                        ui.add(egui::DragValue::new(&mut s.acceleration).range(0..=254));
                     });
-                    input_fields(ui,&mut s.input_axis,&mut s.input_sign,&mut s.speed_position_per_second,"count/s");
-                    ui.checkbox(&mut s.enabled,"ID・動作範囲を確認し、通常出力を許可");
-                    ui.label("STSは通常位置モード0で使用します。EE角度への換算とθ連動の姿勢補償は行いません。");
+                    input_fields(
+                        ui,
+                        &mut s.input_axis,
+                        &mut s.input_sign,
+                        &mut s.speed_position_per_second,
+                        "count/s",
+                    );
+                    ui.checkbox(&mut s.enabled, "通常操作でこのサーボへ出力する");
                 }
-                if ui.button("割当を削除").clicked() {remove=true;}
+                if ui.small_button("この割当を削除").clicked() {
+                    remove = true;
+                }
                 if remove {
-                    self.edit.pwm_servos.retain(|s|s.name!=name);
-                    if let Some(b)=&mut self.edit.serial_svmd {b.servos.retain(|s|s.name!=name);if b.servos.is_empty(){self.edit.serial_svmd=None;}}
+                    self.edit.pwm_servos.retain(|s| s.name != name);
+                    if let Some(board) = &mut self.edit.serial_svmd {
+                        board.servos.retain(|s| s.name != name);
+                        if board.servos.is_empty() {
+                            self.edit.serial_svmd = None;
+                        }
+                    }
                 }
-            });
-            ui.add_space(8.0);
-        }
+            }
+        });
+        ui.label(
+            RichText::new("EE全体回転はSTS3215の位置カウントで設定します。EE角度への換算とθ連動補正は未設定です。")
+                .size(12.0)
+                .color(MUTED),
+        );
         before != toml::to_string(&self.edit).unwrap_or_default()
     }
 }
@@ -170,13 +289,22 @@ fn pulse_fields(
     range: std::ops::RangeInclusive<u16>,
     unit: &str,
 ) {
-    for (label, value) in [("下限", min), ("上限", max), ("開始指令", initial)] {
+    for (label, value, description) in [
+        ("移動下限", min, "通常操作で送信できる最小値です"),
+        ("移動上限", max, "通常操作で送信できる最大値です"),
+        (
+            "操作開始位置",
+            initial,
+            "停止後、DualSenseで最初に動かすときの指令値です",
+        ),
+    ] {
         ui.label(label);
         ui.add(
             egui::DragValue::new(value)
                 .range(range.clone())
                 .suffix(format!(" {unit}")),
-        );
+        )
+        .on_hover_text(description);
     }
 }
 fn input_fields(
@@ -188,9 +316,9 @@ fn input_fields(
 ) {
     ui.horizontal_wrapped(|ui| {
         egui::ComboBox::from_id_salt(ui.id().with("input"))
-            .selected_text(axis.map_or("標準パッド割当".into(), |i| format!("入力軸{i}")))
+            .selected_text(axis.map_or("標準パッド".into(), |i| format!("入力軸{i}")))
             .show_ui(ui, |ui| {
-                ui.selectable_value(axis, None, "標準パッド割当");
+                ui.selectable_value(axis, None, "標準パッド");
                 for (i, label) in [
                     "左X（θと共用）",
                     "左Y（rと共用）",
@@ -207,12 +335,12 @@ fn input_fields(
             });
         ui.selectable_value(sign, 1.0, "正転");
         ui.selectable_value(sign, -1.0, "反転");
-        ui.label("入力最大時の指令変化速度");
+        ui.label("DualSense速度");
         ui.add(
             egui::DragValue::new(speed)
                 .range(1.0..=5000.0)
                 .suffix(format!(" {unit}")),
         );
     });
-    ui.label(RichText::new("標準割当：回転＝右左右、畳み＝十字上下、把持3本＝十字左右。中立を経た最初の操作で開始指令へ移動し、以後は押している間だけ増減します。正転・反転と速度は各軸に適用。アームと同じ入力を選ぶと同時に動きます。").size(12.0).color(MUTED));
+    ui.label(RichText::new("標準パッド：EE回転は右スティック左右、畳みは十字上下、把持は十字左右。入力中だけ指令位置を変えます。").size(12.0).color(MUTED));
 }

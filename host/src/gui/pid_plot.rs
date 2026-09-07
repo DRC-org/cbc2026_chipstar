@@ -21,29 +21,32 @@ impl Default for Panel {
     }
 }
 impl BridgeApp {
+    pub(super) fn select_pid_axis(&mut self, name: &str) {
+        self.pid_plot.axis = name.to_owned();
+    }
+
     pub(super) fn pid_response(&mut self, ui: &mut egui::Ui) {
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.heading("位置応答・追従誤差");
-            ui.label("全軸を常時記録（直近120秒・最大6000点）。表示停止はモータを停止しません。");
+            ui.heading("指令位置に追従できているか確認");
+            ui.label("選択した軸の指令位置と実測位置、両者の差を表示します。");
             ui.horizontal_wrapped(|ui| {
                 let paused = self.pid_plot.frozen.is_some();
-                if ui.button(if paused { "ライブ表示へ戻る" } else { "表示を停止" }).clicked() {
+                if ui.button(if paused { "現在値の表示を再開" } else { "グラフ表示を一時停止" }).clicked() {
                     self.pid_plot.frozen = if paused { None } else { Some(self.shared.response_history.lock().unwrap().samples.clone()) };
                 }
                 if ui.button("履歴クリア").clicked() {
                     self.shared.response_history.lock().unwrap().samples.clear();
                     if let Some(samples)=&mut self.pid_plot.frozen {samples.clear();}
                 }
-                ui.label("表示幅");
+                ui.label("表示する時間");
                 for seconds in [5.0,10.0,30.0,60.0,120.0] { ui.selectable_value(&mut self.pid_plot.seconds,seconds,format!("{seconds:.0}秒")); }
             });
             let samples = self.pid_plot.frozen.clone().unwrap_or_else(|| self.shared.response_history.lock().unwrap().samples.clone());
             let names: std::collections::BTreeSet<_> = samples.iter().flat_map(|s| s.axes.iter().map(|a| a.name.clone())).collect();
             if !names.contains(&self.pid_plot.axis) { self.pid_plot.axis=names.first().cloned().unwrap_or_default(); }
             ui.horizontal_wrapped(|ui| {
-                ui.label("軸");
-                for name in names { ui.selectable_value(&mut self.pid_plot.axis,name.clone(),name); }
+                ui.label(format!("対象：{}", self.pid_plot.axis));
                 ui.colored_label(WARNING,"━ 目標位置");ui.colored_label(ACCENT,"━ 実測位置");
                 if self.pid_plot.frozen.is_some() { chip(ui,"表示停止中",WARNING); }
                 else if !self.shared.status_snapshot().connected || self.shared.status_snapshot().telemetry_age_ms > 250 { chip(ui,"受信更新なし",DANGER); }
@@ -62,7 +65,7 @@ impl BridgeApp {
                 chart(ui,&points,start,end.max(start+0.01),false);
                 chart(ui,&points,start,end.max(start+0.01),true);
             } else { ui.label("軸の計測データを待っています。"); }
-            ui.label(RichText::new("CCTLの配信周期で取得する位置応答です。速度PID内部のrpm・電流波形は含みません。欠測や原点変更の区間は線を切ります。").color(MUTED).size(12.0));
+            ui.label(RichText::new("このグラフには位置だけを表示します。モータ回転数と電流は記録していません。").color(MUTED).size(12.0));
             ui.horizontal_wrapped(|ui| {
                 ui.text_edit_singleline(&mut self.pid_plot.path);
                 if ui.add_enabled(!samples.is_empty(),egui::Button::new("全軸の履歴をCSV保存")).clicked() {

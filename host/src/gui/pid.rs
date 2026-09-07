@@ -10,74 +10,96 @@ fn motor_prefix(slot: u8) -> Option<&'static str> {
 }
 
 impl BridgeApp {
-    pub(super) fn tune_pid(&mut self, ui: &mut egui::Ui) -> bool {
-        section(
-            ui,
-            "PIDゲイン調整",
-            "P：誤差への反応 · I：残る誤差の補償 · D：誤差変化への反応",
-        );
-        ui.label(
-            "編集 → 停止して適用 → 低速で確認 → 保存。適用ボタンは編集中の全設定を反映します。",
-        );
-        ui.label(RichText::new("位置と速度のゲインは別の制御ループです。一度に変更する項目を絞り、振動・追従・発熱を確認してください。").size(12.0).color(MUTED));
+    pub(super) fn tune_pid_axis(&mut self, ui: &mut egui::Ui, name: &str, slot: u8) -> bool {
         let applied = self.shared.config().machine;
         let status = self.shared.status_snapshot();
-        self.pid_response(ui);
-        let axes: Vec<_> = self
-            .edit
-            .axes
-            .iter()
-            .map(|axis| (axis.name.clone(), axis.slot))
-            .collect();
         let mut edited = false;
-        if axes.is_empty() {
-            ui.label("このプロファイルにはCCTLの軸がありません。");
-        }
-        for (name, slot) in axes {
-            ui.add_space(12.0);
-            ui.push_id(("pid", slot, &name), |ui| {
-                panel().show(ui, |ui| {
-                    ui.set_width(ui.available_width());
-                    ui.horizontal_wrapped(|ui| {
-                        ui.heading(&name);
-                        chip(ui, &format!("slot {slot}"), MUTED);
-                        if let Some(origin) = status.origins.iter().find(|origin| origin.name == name) {
-                            ui.label(format!("現在位置 {:.2} {}", origin.position, origin.unit));
-                            if !status.connected || status.telemetry_age_ms > 200 {
-                                chip(ui, "実測更新なし", WARNING);
+        panel().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new(format!("{name}軸の制御応答")).strong());
+                chip(ui, &format!("CCTL slot {slot}"), MUTED);
+                if !status.connected || status.telemetry_age_ms > 200 {
+                    chip(ui, "実測値を受信できません", WARNING);
+                }
+            });
+            if let Some(prefix) = motor_prefix(slot) {
+                ui.label(
+                    RichText::new("M3508とC620を、位置制御と速度制御の二段で動かします。")
+                        .size(12.0)
+                        .color(MUTED),
+                );
+                for (kind, title) in [
+                    ("pos", "位置のずれを速度指令へ変換"),
+                    ("vel", "速度のずれをモータ電流へ変換"),
+                ] {
+                    ui.add_space(6.0);
+                    ui.label(RichText::new(title).strong().color(ACCENT));
+                    egui::Grid::new(("pid", slot, kind))
+                        .num_columns(4)
+                        .spacing([10.0, 6.0])
+                        .show(ui, |ui| {
+                            for gain in ["kp", "ki", "kd"] {
+                                edited |= parameter_row(
+                                    ui,
+                                    &mut self.edit,
+                                    &applied,
+                                    &format!("{prefix}_{kind}_{gain}"),
+                                    &gain.to_uppercase(),
+                                    true,
+                                );
                             }
+                        });
+                }
+                ui.add_space(6.0);
+                ui.label(RichText::new("モータへの指令上限").strong());
+                egui::Grid::new(("pid-limits", slot))
+                    .num_columns(4)
+                    .spacing([10.0, 6.0])
+                    .show(ui, |ui| {
+                        for (suffix, label) in [("max_rpm", "速度"), ("max_current_ma", "電流")]
+                        {
+                            edited |= parameter_row(
+                                ui,
+                                &mut self.edit,
+                                &applied,
+                                &format!("{prefix}_{suffix}"),
+                                label,
+                                false,
+                            );
                         }
                     });
-                    if let Some(prefix) = motor_prefix(slot) {
-                        ui.label(RichText::new("M3508 + C620 · CCTLで位置 → 速度 → 電流を制御").color(MUTED));
-                        for (kind, title) in [("pos", "位置ループ：位置誤差 → 目標rpm"), ("vel", "速度ループ：速度誤差 → 電流mA")] {
-                            ui.add_space(8.0);
-                            ui.label(RichText::new(title).strong().color(ACCENT));
-                            egui::Grid::new(kind).num_columns(4).spacing([16.0, 8.0]).max_col_width((ui.available_width() - 400.0).max(140.0)).show(ui, |ui| {
-                                for gain in ["kp", "ki", "kd"] {
-                                    edited |= parameter_row(ui, &mut self.edit, &applied, &format!("{prefix}_{kind}_{gain}"), &gain.to_uppercase(), true);
-                                }
-                            });
+            } else if slot == 0 {
+                ui.label(
+                    RichText::new("EL05ドライバ内部の位置制御を調整します。")
+                        .size(12.0)
+                        .color(MUTED),
+                );
+                egui::Grid::new("el05")
+                    .num_columns(4)
+                    .spacing([10.0, 6.0])
+                    .show(ui, |ui| {
+                        for (key, label, gain) in [
+                            ("el05_loc_kp", "位置P", true),
+                            ("el05_limit_spd", "速度上限", false),
+                            ("el05_limit_cur", "電流上限", false),
+                        ] {
+                            edited |= parameter_row(ui, &mut self.edit, &applied, key, label, gain);
                         }
-                        ui.add_space(8.0);
-                        ui.label(RichText::new("出力上限").strong());
-                        egui::Grid::new("limits").num_columns(4).spacing([16.0, 8.0]).max_col_width((ui.available_width() - 400.0).max(140.0)).show(ui, |ui| {
-                            for (suffix, label) in [("max_rpm", "速度上限"), ("max_current_ma", "電流上限")] {
-                                edited |= parameter_row(ui, &mut self.edit, &applied, &format!("{prefix}_{suffix}"), label, false);
-                            }
-                        });
-                    } else if slot == 0 {
-                        ui.label(RichText::new("EL05 · モータ内部で位置制御").color(MUTED));
-                        ui.label("現在の設定APIでは位置Kpのみ変更できます。位置Ki/Kd・速度ループのゲインは公開されていません。");
-                        egui::Grid::new("el05").num_columns(4).spacing([16.0, 8.0]).max_col_width((ui.available_width() - 400.0).max(140.0)).show(ui, |ui| {
-                            for (key, label, gain) in [("el05_loc_kp", "位置 Kp", true), ("el05_limit_spd", "速度上限", false), ("el05_limit_cur", "電流上限", false)] {
-                                edited |= parameter_row(ui, &mut self.edit, &applied, key, label, gain);
-                            }
-                        });
-                    }
-                });
-            });
-        }
+                    });
+                ui.label(
+                    RichText::new("この接続では位置I・位置D・速度ゲインを変更できません。")
+                        .size(12.0)
+                        .color(MUTED),
+                );
+            } else {
+                ui.label("この軸に対応するPID設定はありません。");
+            }
+            ui.colored_label(
+                WARNING,
+                "変更は停止中に適用し、低速で振動・追従・発熱を確認してください。",
+            );
+        });
         edited
     }
 }
@@ -130,7 +152,7 @@ fn parameter_row(
         ui.label("プロファイルに未設定");
         ui.label("設定ファイルで追加してください");
     }
-    ui.add(egui::Label::new(RichText::new(description).size(12.0).color(MUTED)).wrap());
+    ui.label("ⓘ").on_hover_text(format!("{key}\n{description}"));
     ui.end_row();
     changed
 }

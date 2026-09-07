@@ -30,6 +30,8 @@ pub struct BridgeApp {
     shared: Arc<Shared>,
     screen: Screen,
     tune_view: tune::TuneView,
+    tune_axis: String,
+    tune_ee_axis: String,
     diagnosis_view: diagnose::DiagnosisView,
     edit: MachineProfile,
     source: String,
@@ -65,6 +67,11 @@ impl BridgeApp {
     pub fn new(shared: Arc<Shared>) -> Self {
         let config = shared.config();
         let edit = config.machine;
+        let tune_axis = edit
+            .axes
+            .first()
+            .map(|axis| axis.name.clone())
+            .unwrap_or_default();
         let source = toml::to_string_pretty(&edit).unwrap_or_default();
         Self {
             connection: crate::application::app_state::Connection {
@@ -75,6 +82,8 @@ impl BridgeApp {
             shared,
             screen: Screen::Operate,
             tune_view: tune::TuneView::Axes,
+            tune_axis,
+            tune_ee_axis: "ee_rotation".into(),
             diagnosis_view: diagnose::DiagnosisView::Tests,
             edit,
             base: source.clone(),

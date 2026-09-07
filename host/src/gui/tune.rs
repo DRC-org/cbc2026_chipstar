@@ -3,7 +3,6 @@ use super::*;
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum TuneView {
     Axes,
-    Pid,
     Ee,
     Parameters,
     File,
@@ -15,7 +14,12 @@ impl BridgeApp {
         ui.add_enabled_ui(!status.ai_active, |ui| {
             let current = toml::to_string_pretty(&self.shared.config().machine).unwrap_or_default();
             let matches = self.draft_matches_applied();
-            panel().show(ui, |ui| {
+            egui::Frame::new()
+                .fill(SURFACE)
+                .stroke(egui::Stroke::new(1.0, BORDER))
+                .corner_radius(8)
+                .inner_margin(egui::Margin::symmetric(10, 6))
+                .show(ui, |ui| {
                 ui.set_width(ui.available_width());
                 ui.horizontal_wrapped(|ui| {
                     if ui
@@ -47,36 +51,35 @@ impl BridgeApp {
                     chip(
                         ui,
                         if matches {
-                            "適用内容と一致"
+                            "編集内容を適用済み"
                         } else {
-                            "未適用の編集あり"
+                            "未適用の変更あり"
                         },
                         if matches { MUTED } else { WARNING },
                     );
                     chip(
                         ui,
                         if status.saved {
-                            "保存済み"
+                            "ファイル保存済み"
                         } else {
-                            "未保存"
+                            "ファイル未保存"
                         },
                         if status.saved { ACCENT } else { WARNING },
                     );
+                    ui.label(
+                        RichText::new(format!(
+                            "基板への反映 {}/{}",
+                            status.parameters_confirmed, status.parameters_expected
+                        ))
+                        .size(12.0)
+                        .color(MUTED),
+                    )
+                    .on_hover_text(&status.configuration);
                 });
-                ui.label(
-                    RichText::new(format!(
-                        "{}  ·  {}/{}項目",
-                        status.configuration,
-                        status.parameters_confirmed,
-                        status.parameters_expected
-                    ))
-                    .size(12.0)
-                    .color(MUTED),
-                );
                 if current != self.base {
                     ui.colored_label(
                         WARNING,
-                        "外部から設定が更新されています。適用中の内容を読み直してください。",
+                        "別の操作で設定が変わりました。「編集を戻す」で現在の設定を読み込んでください。",
                     );
                 }
             });
@@ -87,7 +90,6 @@ impl BridgeApp {
     pub(super) fn tune(&mut self, ui: &mut egui::Ui) {
         let edited = match self.tune_view {
             TuneView::Axes => self.tune_axes(ui),
-            TuneView::Pid => self.tune_pid(ui),
             TuneView::Ee => self.tune_ee(ui),
             TuneView::Parameters => self.tune_parameters(ui),
             TuneView::File => {
@@ -102,129 +104,138 @@ impl BridgeApp {
 
     fn tune_axes(&mut self, ui: &mut egui::Ui) -> bool {
         let status = self.shared.status_snapshot();
+        let axes: Vec<_> = self
+            .edit
+            .axes
+            .iter()
+            .map(|axis| (axis.name.clone(), axis.slot))
+            .collect();
+        if !axes.iter().any(|(name, _)| name == &self.tune_axis) {
+            self.tune_axis = axes
+                .first()
+                .map(|(name, _)| name.clone())
+                .unwrap_or_default();
+        }
         let mut edited = false;
         section(
             ui,
-            "アームの原点と可動範囲",
-            "r・θ・zの現在位置を機体座標へ対応付けます。",
+            "アームを調整",
+            "対象軸の原点、速度、可動範囲、制御応答をまとめて確認します。",
         );
-        panel().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal_wrapped(|ui| {
-                ui.label("自動ホーミングの制限時間（1軸）");
-                ui.add(
-                    egui::DragValue::new(&mut self.homing_timeout)
-                        .range(10.0..=1800.0)
-                        .suffix(" 秒"),
-                )
-                .on_hover_text("操縦画面から開始するr・z自動ホーミングの時間上限です");
-                ui.label(
-                    RichText::new("開始操作は「操縦」にあります")
-                        .size(12.0)
-                        .color(MUTED),
-                );
-            });
-            let mut adjustment = status.origin_adjustment;
-            if ui
-                .add_enabled(
-                    !status.running,
-                    egui::Checkbox::new(&mut adjustment, "原点調整モード"),
-                )
-                .on_hover_text("低速固定・機体座標の可動域制限を解除")
-                .changed()
+        ui.horizontal_wrapped(|ui| {
+            ui.label("調整する軸");
+            for (name, _) in &axes {
+                let label = if name == "theta" { "θ" } else { name };
+                ui.selectable_value(&mut self.tune_axis, name.clone(), label);
+            }
+            if let Some(origin) = status
+                .origins
+                .iter()
+                .find(|origin| origin.name == self.tune_axis)
             {
+                ui.separator();
+                ui.label(format!("現在位置 {:.2} {}", origin.position, origin.unit));
+                chip(
+                    ui,
+                    if origin.captured {
+                        "原点設定済み"
+                    } else if origin.lost {
+                        "原点を再設定してください"
+                    } else {
+                        "原点未設定"
+                    },
+                    if origin.captured { ACCENT } else { WARNING },
+                );
+            }
+        });
+        ui.add_space(8.0);
+        let selected = axes
+            .iter()
+            .find(|(name, _)| name == &self.tune_axis)
+            .cloned();
+        let mut capture_origin = false;
+        let mut adjustment_change = None;
+        if let Some((name, slot)) = selected {
+            ui.columns(2, |columns| {
+                panel().show(&mut columns[0], |ui| {
+                    ui.set_width(ui.available_width());
+                    ui.label(RichText::new("原点と移動範囲").strong());
+                    if let Some(origin) = status.origins.iter().find(|axis| axis.name == name) {
+                        ui.horizontal_wrapped(|ui| {
+                            ui.label(format!("実測位置 {:.2} {}", origin.position, origin.unit));
+                            if ui
+                                .add_enabled(
+                                    status.connected && !status.running,
+                                    egui::Button::new("この位置を原点として設定"),
+                                )
+                                .on_hover_text("現在の実測位置へ、下の「原点位置」の座標を割り当てます")
+                                .clicked()
+                            {
+                                capture_origin = true;
+                            }
+                        });
+                    }
+                    let mut adjustment = status.origin_adjustment;
+                    if ui
+                        .add_enabled(
+                            !status.running,
+                            egui::Checkbox::new(&mut adjustment, "原点位置まで手動で移動する"),
+                        )
+                        .on_hover_text("低速固定にし、機体座標による移動範囲の制限を一時的に解除します")
+                        .changed()
+                    {
+                        adjustment_change = Some(adjustment);
+                    }
+                    if adjustment {
+                        ui.colored_label(
+                            WARNING,
+                            "低速固定中。機体座標による移動範囲の制限は無効です。",
+                        );
+                    }
+                    if let Some(axis) = self.edit.axes.iter_mut().find(|axis| axis.name == name) {
+                        edited |= axis_settings(ui, axis);
+                    }
+                    if name == "theta" {
+                        ui.colored_label(
+                            WARNING,
+                            "θはどのz高さでも干渉する可能性があります。旋回前に実機を確認してください。",
+                        );
+                    }
+                    ui.separator();
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("r・z自動ホーミングの制限時間");
+                        ui.add(
+                            egui::DragValue::new(&mut self.homing_timeout)
+                                .range(10.0..=1800.0)
+                                .suffix(" 秒/軸"),
+                        );
+                    });
+                    ui.label(
+                        RichText::new("開始操作は操縦画面にあります。")
+                            .size(12.0)
+                            .color(MUTED),
+                    );
+                });
+                edited |= self.tune_pid_axis(&mut columns[1], &name, slot);
+            });
+            if capture_origin {
+                self.request(Request {
+                    axis: Some(name.clone()),
+                    ..Request::new("origin")
+                });
+            }
+            if let Some(adjustment) = adjustment_change {
                 self.request(Request {
                     flag: Some(adjustment),
                     ..Request::new("adjustment")
                 });
             }
-            ui.label(
-                RichText::new(if adjustment {
-                    "低速固定 · 機体座標の可動域制限を解除しています"
-                } else {
-                    "原点まで移動する際に有効にしてください"
-                })
-                .size(12.0)
-                .color(if adjustment { WARNING } else { MUTED }),
-            );
-            ui.add_space(10.0);
-            ui.columns(3, |columns| {
-                for (index, axis) in status.origins.iter().enumerate() {
-                    let ui = &mut columns[index % 3];
-                    ui.horizontal(|ui| {
-                        ui.label(RichText::new(&axis.name).strong().color(ACCENT));
-                        ui.label(format!("{:.1} {}", axis.position, axis.unit));
-                    });
-                    if ui
-                        .add_enabled(
-                            status.connected && !status.running,
-                            egui::Button::new("現在位置を原点に採用"),
-                        )
-                        .clicked()
-                    {
-                        self.request(Request {
-                            axis: Some(axis.name.clone()),
-                            ..Request::new("origin")
-                        });
-                    }
-                    ui.label(
-                        RichText::new(if axis.captured {
-                            "採用済み"
-                        } else if axis.lost {
-                            "原点喪失"
-                        } else {
-                            "未採用"
-                        })
-                        .size(12.0)
-                        .color(if axis.captured {
-                            MUTED
-                        } else {
-                            WARNING
-                        }),
-                    );
-                }
-            });
-        });
-        ui.add_space(12.0);
-        panel().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            for axis in &mut self.edit.axes {
-                ui.push_id(&axis.name, |ui| {
-                    egui::CollapsingHeader::new(format!(
-                        "{}  ·  速度と可動域 [{}]",
-                        axis.name, axis.unit
-                    ))
-                    .default_open(true)
-                    .show(ui, |ui| {
-                        egui::Grid::new("axis")
-                            .num_columns(3)
-                            .spacing([20.0, 10.0])
-                                    .max_col_width((ui.available_width() - 340.0).max(180.0))
-                            .show(ui, |ui| {
-                                for (label, value, description) in [
-                                ("通常速度 / 秒", &mut axis.speed_per_second, "スティック最大入力時の機体速度。低速・画面操作ではこの20%になります。"),
-                                ("最小位置", &mut axis.minimum, "原点採用後に有効になる機体座標の下限。基板側の絶対可動域とは別です。"),
-                                ("最大位置", &mut axis.maximum, "原点採用後に有効になる機体座標の上限。境界付近では速度を抑えます。"),
-                                ("原点採用時の座標", &mut axis.origin_position, "現在位置を原点に採用したとき、その位置に割り当てる機体座標です。"),
-                                ("ネイティブ単位 / 機体単位", &mut axis.native_per_unit, "機体の1 mmまたは1 degをモータ側の単位へ変換する倍率。ギア比などから決めます。"),
-                            ] {
-                                ui.label(label).on_hover_text(description);
-                                edited |= ui.add(egui::DragValue::new(value).speed(0.1)).on_hover_text(description).changed();
-                                ui.label(RichText::new(description).size(12.0).color(MUTED));
-                                ui.end_row();
-                            }
-                            });
-                    });
-                });
-            }
-            ui.label(
-                RichText::new(
-                    "可動域は実機で校正してください。θの安全な全周回転高さはありません。",
-                )
-                .size(12.0)
-                .color(MUTED),
-            );
-        });
+            self.select_pid_axis(&name);
+            ui.add_space(8.0);
+            self.pid_response(ui);
+        } else {
+            ui.label("アーム軸が設定されていません。");
+        }
         edited
     }
 
@@ -232,8 +243,8 @@ impl BridgeApp {
         let mut edited = false;
         section(
             ui,
-            "基板パラメータ",
-            "値と説明を確認し、変更後に適用してください。",
+            "基板の動作条件を調整",
+            "各基板へ送る制限値と通信周期を変更します。",
         );
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -322,4 +333,61 @@ impl BridgeApp {
                 });
         });
     }
+}
+
+fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> bool {
+    let mut edited = false;
+    let unit = axis.unit.clone();
+    ui.add_space(8.0);
+    egui::Grid::new(("axis-settings", &axis.name))
+        .num_columns(3)
+        .spacing([12.0, 8.0])
+        .striped(true)
+        .show(ui, |ui| {
+            for (label, value, suffix, description) in [
+                (
+                    "最高速度",
+                    &mut axis.speed_per_second,
+                    unit.as_str(),
+                    "スティック最大入力時の機体速度です。低速操作ではこの20%になります。",
+                ),
+                (
+                    "移動範囲の下限",
+                    &mut axis.minimum,
+                    unit.as_str(),
+                    "原点設定後に通常操縦で移動できる最小座標です。",
+                ),
+                (
+                    "移動範囲の上限",
+                    &mut axis.maximum,
+                    unit.as_str(),
+                    "原点設定後に通常操縦で移動できる最大座標です。",
+                ),
+                (
+                    "原点位置",
+                    &mut axis.origin_position,
+                    unit.as_str(),
+                    "「この位置を原点として設定」を押した位置に割り当てる座標です。",
+                ),
+                (
+                    "モータ換算係数",
+                    &mut axis.native_per_unit,
+                    "motor/unit",
+                    "機体座標1単位を、モータ側の位置単位へ変換する倍率です。",
+                ),
+            ] {
+                ui.label(label).on_hover_text(description);
+                edited |= ui
+                    .add(
+                        egui::DragValue::new(value)
+                            .speed(0.1)
+                            .suffix(format!(" {suffix}")),
+                    )
+                    .on_hover_text(description)
+                    .changed();
+                ui.label("ⓘ").on_hover_text(description);
+                ui.end_row();
+            }
+        });
+    edited
 }
