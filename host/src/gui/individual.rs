@@ -74,7 +74,7 @@ impl BridgeApp {
                             let response = ui.add_enabled(can_output, egui::Button::new("押している間だけ出力").min_size(egui::vec2(200.0, 40.0)));
                             self.tests.requested = can_output && response.is_pointer_button_down_on();
                         } else if ui.add_enabled(can_output, egui::Button::new("指定位置へ移動・保持")).clicked() {
-                            self.request(Request { value: Some(self.tests.value), ..Request::new("test_output") });
+                            self.request(Request { value: Some(self.tests.value), flag: Some(true), ..Request::new("test_output") });
                         }
                         if ui.button("出力解除").clicked() { self.dispatch(Action::Stop); }
                     });
@@ -109,9 +109,15 @@ impl BridgeApp {
                 self.message = reply.message;
                 self.message_error = true;
             }
-        } else if self.tests.held && status.test_active {
-            self.operation("test_off");
         }
-        self.tests.held = held;
+        if !held && self.tests.held && status.test_active {
+            self.operation("stop");
+        }
+        // 停止やエラーで出力が切れても、物理的に離すまでは再試行を許さない。
+        self.tests.held |= held;
+        if self.tests.held && !ctx.input(|input| input.pointer.primary_down()) {
+            self.operation("test_off");
+            self.tests.held = false;
+        }
     }
 }

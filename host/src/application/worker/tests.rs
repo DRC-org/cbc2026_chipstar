@@ -650,3 +650,48 @@ fn recovery_during_emergency_does_not_release_the_latch() {
     assert!(!status.outputs_active && !status.running);
     assert!(status.error.is_empty());
 }
+
+#[test]
+fn individual_fault_blocks_held_requests_until_explicit_release() {
+    let mut runtime = screen_runtime();
+    select_test(&mut runtime, "cctl:0", "velocity");
+    let output = Request {
+        value: Some(0.01),
+        ..Request::new("test_output")
+    };
+    runtime.request(&output, true).unwrap();
+    runtime.tick().unwrap();
+    assert!(runtime.test.active);
+    runtime.fault("対象モータの応答切れ".into());
+    for _ in 0..4 {
+        assert!(runtime.request(&output, true).is_err());
+        runtime.tick().unwrap();
+        assert!(!runtime.test.active);
+        assert_ne!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Run);
+    }
+    runtime.request(&Request::new("test_off"), true).unwrap();
+    runtime.request(&output, true).unwrap();
+    runtime.tick().unwrap();
+    assert!(runtime.test.active);
+}
+
+#[test]
+fn explicit_position_update_preserves_output_and_can_restart_after_a_fault() {
+    let mut runtime = screen_runtime();
+    select_test(&mut runtime, "cctl:0", "position");
+    let output = Request {
+        value: Some(0.01),
+        flag: Some(true),
+        ..Request::new("test_output")
+    };
+    runtime.request(&output, true).unwrap();
+    runtime.tick().unwrap();
+    let started = runtime.test.started;
+    runtime.request(&output, true).unwrap();
+    assert_eq!(runtime.test.started, started);
+    runtime.fault("test fault".into());
+    assert!(runtime.test.restart_blocked);
+    runtime.request(&output, true).unwrap();
+    assert!(runtime.test.active);
+    assert!(!runtime.test.restart_blocked);
+}

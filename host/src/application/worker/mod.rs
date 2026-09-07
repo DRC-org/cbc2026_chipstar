@@ -111,6 +111,7 @@ impl Runtime {
     }
     fn stop(&mut self, cut: bool) -> Result<()> {
         let cut = cut || self.test.enabled;
+        self.test.restart_blocked |= self.test.active;
         self.test.active = false;
         self.test.renewed = None;
         self.test.started = None;

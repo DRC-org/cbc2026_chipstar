@@ -6,6 +6,7 @@ pub(super) struct TestControl {
     pub enabled: bool,
     pub selected: Option<(Target, Kind)>,
     pub active: bool,
+    pub restart_blocked: bool,
     pub renewed: Option<Instant>,
     pub started: Option<Instant>,
     pub confirmed: bool,
@@ -97,6 +98,7 @@ impl Runtime {
             "test_mode" => {
                 let enabled = req.flag.context("モードが必要です")?;
                 self.stop(true)?;
+                self.test.restart_blocked = false;
                 self.test.enabled = enabled;
                 self.test.selected = None;
             }
@@ -108,10 +110,15 @@ impl Runtime {
                 let kind = Kind::parse(req.text.as_deref().context("方式が必要です")?)?;
                 target.limits(kind, &self.cfg.machine)?;
                 self.stop(true)?;
+                self.test.restart_blocked = false;
                 self.test.selected = Some((target, kind));
                 self.test.last_poll = None;
             }
-            "test_off" => self.stop(true)?,
+            "test_off" => {
+                let result = self.stop(true);
+                self.test.restart_blocked = false;
+                result?;
+            }
             "test_output" => {
                 if !self.test.enabled || self.emergency {
                     bail!("個別テストを開始できません");
@@ -120,6 +127,10 @@ impl Runtime {
                     bail!("接続と設定反映を確認してください");
                 }
                 let (target, kind) = self.test.selected.context("対象を選択してください")?;
+                let deliberate_position = !kind.momentary() && req.flag == Some(true);
+                if self.test.restart_blocked && !deliberate_position {
+                    bail!("出力停止済みです。ボタンを離してから押し直してください");
+                }
                 let value = req.value.context("指令値が必要です")?;
                 target.validate(kind, value, &self.cfg.machine)?;
                 if matches!(target, Target::Cctl(_)) {
@@ -142,6 +153,9 @@ impl Runtime {
                         .is_some_and(|seen| seen.elapsed() < Duration::from_secs(2))
                 {
                     bail!("対象基板の応答がありません");
+                }
+                if deliberate_position {
+                    self.test.restart_blocked = false;
                 }
                 if !self.test.active {
                     self.stop(true)?;
