@@ -50,7 +50,23 @@ TEST_CASE("3要素FIFOが空けば連続8フレームを欠落なく受け付け
  for(int n=0;n<8;++n) CHECK(bus.sendStd(0x200+n,data,8));
  CHECK(accepted.size()==8);CHECK(bus.txFailures()==0);
 }
-TEST_CASE("停止中のDMには位置指令を送らず状態を照会する") {
+TEST_CASE("DM保存はSAFEかつ新しい無効応答がある場合だけ4バイトで送信する") {
+ resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ CHECK_FALSE(controller.storeDmParameters());
+ domain::CanFrame frame;frame.id=10;frame.length=8;frame.data[0]=9;
+ controller.dispatchRx(frame);accepted.clear();
+ REQUIRE(controller.storeDmParameters());REQUIRE(accepted.size()==1);
+ CHECK(accepted[0].id==0x7FF);CHECK(accepted[0].length==4);
+ CHECK(accepted[0].data[0]==9);CHECK(accepted[0].data[2]==0xAA);
+ tick+=1001;CHECK_FALSE(controller.storeDmParameters());
+ frame.data[0]=0x19;controller.dispatchRx(frame);CHECK_FALSE(controller.storeDmParameters());
+ frame.data[0]=9;controller.dispatchRx(frame);
+ REQUIRE(controller.setMode(domain::RunMode::Stop));CHECK_FALSE(controller.storeDmParameters());
+ REQUIRE(controller.setMode(domain::RunMode::Safe));
+ REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::DmCanId),8));
+ CHECK_FALSE(controller.storeDmParameters());
+}
+TEST_CASE("停止中のDMには位置指令を送らず無効化を再送する") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
  REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::DmCanId),17));
  for(auto mode : {domain::RunMode::Safe,domain::RunMode::Stop}) {
@@ -58,9 +74,9 @@ TEST_CASE("停止中のDMには位置指令を送らず状態を照会する") {
   bool queried=false;
   for(const auto& frame:accepted) {
    CHECK_FALSE((!frame.extended && frame.id==0x111));
-   if(!frame.extended && frame.id==0x7FF && frame.length==8) {
-    CHECK(frame.data[0]==17);CHECK(frame.data[1]==0);
-    CHECK(frame.data[2]==0xCC);CHECK(frame.data[3]==0);queried=true;
+   if(!frame.extended && frame.id==17 && frame.length==8) {
+    for(int i=0;i<7;++i) CHECK(frame.data[i]==0xFF);
+    CHECK(frame.data[7]==0xFD);queried=true;
    }
   }
   CHECK(queried);

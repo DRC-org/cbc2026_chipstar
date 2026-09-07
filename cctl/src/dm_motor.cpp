@@ -26,12 +26,6 @@ bool DmMotor::enable() { return sendSpecialCommand(codec::SPECIAL_ENABLE); }
 bool DmMotor::disable() { return sendSpecialCommand(codec::SPECIAL_DISABLE); }
 bool DmMotor::setZero() { return sendSpecialCommand(codec::SPECIAL_ZERO); }
 
-bool DmMotor::requestFeedback() {
-  const uint8_t data[8] = {static_cast<uint8_t>(can_id_),
-                         static_cast<uint8_t>(can_id_ >> 8), 0xCC, 0};
-  return bus_.sendStd(codec::CONFIG_ID, data, sizeof(data));
-}
-
 bool DmMotor::sendPositionVelocity(float pos_rad, float vel_limit) {
   uint8_t data[8] = {};
   codec::encodePositionVelocity(pos_rad, vel_limit, data);
@@ -65,7 +59,9 @@ bool DmMotor::requestRegister(uint8_t rid) {
 }
 
 bool DmMotor::storeParameters() {
-  return sendConfig(codec::CONFIG_STORE, 0, 0);
+  const uint8_t data[4] = {static_cast<uint8_t>(can_id_),
+                         static_cast<uint8_t>(can_id_ >> 8), codec::CONFIG_STORE, 0};
+  return bus_.sendStd(codec::CONFIG_ID, data, sizeof(data));
 }
 
 void DmMotor::onFeedback(const uint8_t data[8]) {
@@ -79,6 +75,8 @@ void DmMotor::onFeedback(const uint8_t data[8]) {
   }
 
   feedback_ = codec::decodeFeedback(data, range_);
+  has_feedback_ = true;
+  last_feedback_ms_ = HAL_GetTick();
 }
 
 float DmMotor::lastRegisterFloat() const {

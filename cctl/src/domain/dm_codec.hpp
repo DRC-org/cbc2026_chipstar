@@ -23,7 +23,7 @@ constexpr uint16_t VELOCITY_CMD_BASE = 0x200;
 constexpr uint16_t CONFIG_ID = 0x7FF;
 constexpr uint8_t CONFIG_READ = 0x33;
 constexpr uint8_t CONFIG_WRITE = 0x55;
-// ⚠ STOREはV1.1のマニュアルに記載がない。DM系共通の保存コマンドに基づく。
+// V1.1のCAN設定コマンド「Storing Parameters」。保存要求と応答は4バイト。
 constexpr uint8_t CONFIG_STORE = 0xAA;
 
 // 特殊コマンド（D0..D6 = 0xFF, D7 = コード）。MITのID（= CAN_ID）へ送る。

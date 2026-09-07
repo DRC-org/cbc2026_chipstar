@@ -222,6 +222,9 @@ void applyCommand(const domain::Command& command) {
             if (controller.mode() != domain::RunMode::Safe) sendText("ERR code=BUSY");
             else if (!controller.readDmRegister(command.param_id)) sendText("ERR code=CAN_TX");
             break;
+        case domain::CommandKind::DmStore:
+            if (!controller.storeDmParameters()) sendText("ERR code=DMSTORE_REJECTED");
+            break;
         case domain::CommandKind::DmRegWrite:
             if (controller.mode() != domain::RunMode::Safe) sendText("ERR code=BUSY");
             else if (!controller.writeDmRegister(command.param_id, command.raw_value)) {
@@ -345,6 +348,13 @@ extern "C" void loop(void) {
         } else {
             ++motor_standard_count;
             motor_last_standard = frame.id;
+            if (frame.length == 4 && frame.id == controller.parameters().getU16(domain::ParamId::DmMstId) &&
+                (frame.data[0] | (static_cast<uint16_t>(frame.data[1]) << 8)) ==
+                    controller.parameters().getU16(domain::ParamId::DmCanId) &&
+                frame.data[2] == domain::dm::CONFIG_STORE && frame.data[3] == 1) {
+                sendText("DMSTORE result=stored");
+                continue;
+            }
             static uint32_t last_dm_raw_ms = 0;
             if (frame.length == 8 && frame.id == controller.parameters().getU16(domain::ParamId::DmMstId) &&
                 HAL_GetTick() - last_dm_raw_ms >= 100) {

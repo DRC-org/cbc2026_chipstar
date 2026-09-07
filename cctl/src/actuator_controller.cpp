@@ -333,13 +333,13 @@ void ActuatorController::update() {
     last_m3508_ms_ = now;
     c620_group_.send();
   }
-  // 無効なDMには位置指令を送らず、状態照会で実測値を更新する。
+  // 無効なDMには停止を再送する。DM3520は停止指令にも位置・状態を返す。
   if (now - last_dm_ms_ >= parameters_.getMs(domain::ParamId::DmPeriodMs)) {
     last_dm_ms_ = now;
     if (slotActive(domain::slot_bit::SLOT2)) {
       slot2_.sendPositionVelocity(targets_[2], parameters_.get(domain::ParamId::DmPosVelLimit));
     } else {
-      slot2_.requestFeedback();
+      slot2_.disable();
     }
   }
   // 読取り専用の診断。モータのモード・目標・出力状態は変更しない。
@@ -439,6 +439,11 @@ void ActuatorController::applyParameter(uint8_t id) {
 bool ActuatorController::readDmRegister(uint8_t rid) {
   if (mode_ != domain::RunMode::Safe) return false;
   return slot2_.requestRegister(rid);
+}
+
+bool ActuatorController::storeDmParameters() {
+  if (mode_ != domain::RunMode::Safe || !slot2_.disabledRecently()) return false;
+  return slot2_.storeParameters();
 }
 
 bool ActuatorController::writeDmRegister(uint8_t rid, uint32_t raw) {

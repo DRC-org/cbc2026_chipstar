@@ -110,6 +110,8 @@ TEST_CASE("パラメータの不正な指定を拒否する") {
 }
 
 TEST_CASE("DMドライバのレジスタ指令を解釈する") {
+    CHECK(parse("DMSTORE").kind == CommandKind::DmStore);
+    CHECK(parse("DMSTORE 1").kind == CommandKind::None);
     const Command read = parse("DMREG 10");
     CHECK(read.kind == CommandKind::DmRegRead);
     CHECK(read.param_id == 10);

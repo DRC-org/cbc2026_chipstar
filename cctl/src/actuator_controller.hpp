@@ -51,6 +51,7 @@ class ActuatorController {
   }
   uint8_t el05State() const { return slot0_.state(); }
   bool readDmRegister(uint8_t rid);
+  bool storeDmParameters();
   bool writeDmRegister(uint8_t rid, uint32_t raw);
   bool takeDmRegisterReply(uint8_t& rid, uint32_t& raw);
   const domain::Parameters& parameters() const { return parameters_; }

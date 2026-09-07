@@ -23,6 +23,7 @@ enum class CommandKind : uint8_t {
     ParamGet,
     DmRegRead,
     DmRegWrite,
+    DmStore,
     CanStat,
     // モータ側の設定を入れ直す。モータが電源を入れ直すと制御モードを失う。
     Reinit,

@@ -23,7 +23,6 @@ class DmMotor {
   bool enable();
   bool disable();
   bool setZero();
-  bool requestFeedback();
 
   // ---- 指令 -------------------------------------------------------------
   // Position-Velocity モード: 目標位置[rad] と速度上限[rad/s]。
@@ -53,6 +52,9 @@ class DmMotor {
   float velocity() const { return feedback_.velocity_rad_s; }
   float torque() const { return feedback_.torque_nm; }
   uint8_t errorState() const { return feedback_.error; }
+  bool disabledRecently() const {
+    return has_feedback_ && HAL_GetTick() - last_feedback_ms_ <= 1000 && feedback_.error == 0;
+  }
   // ドライバ上側 MOS の温度[degC]。連続運転の監視に使う。
   uint8_t mosTemperature() const { return feedback_.mos_temperature_c; }
   // モータ内部コイルの温度[degC]。
@@ -63,6 +65,7 @@ class DmMotor {
     range_ = domain::dm::Range{p_max, v_max, t_max};
   }
   void setIds(uint16_t can_id, uint16_t mst_id) {
+    if (can_id_ != can_id || mst_id_ != mst_id) has_feedback_ = false;
     can_id_ = can_id;
     mst_id_ = mst_id;
   }
@@ -84,6 +87,8 @@ class DmMotor {
   domain::dm::Range range_;
 
   domain::dm::Feedback feedback_ = {};
+  bool has_feedback_ = false;
+  uint32_t last_feedback_ms_ = 0;
 
   bool has_register_reply_ = false;
   uint8_t last_register_id_ = 0;
