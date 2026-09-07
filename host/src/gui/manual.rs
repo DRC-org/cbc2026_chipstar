@@ -5,7 +5,7 @@ impl BridgeApp {
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("操作方法").strong());
+                ui.label(RichText::new("操縦入力を選択").strong());
                 ui.add_enabled_ui(
                     !status.emergency && !status.test_mode && !status.ai_active && !status.running,
                     |ui| {
@@ -26,11 +26,9 @@ impl BridgeApp {
             });
             if status.screen_control {
                 ui.label(
-                    RichText::new(
-                        "運転再開後、ボタンを押している間だけ動きます。離すと停止・保持します。",
-                    )
-                    .size(12.0)
-                    .color(MUTED),
+                    RichText::new("下のボタンを押している間だけ動き、離すとその位置で保持します。")
+                        .size(12.0)
+                        .color(MUTED),
                 );
                 let can_jog = status.running
                     && !status.emergency
@@ -61,11 +59,24 @@ impl BridgeApp {
                 );
             } else {
                 ui.label(
-                    RichText::new("操作方法の切替は停止中に行えます。")
-                        .size(12.0)
-                        .color(MUTED),
+                    RichText::new(if status.gamepad.is_empty() {
+                        "DualSenseが接続されていません。入力の切替は停止中に行えます。"
+                    } else {
+                        "左スティック：r・θ　右スティック：z・EE回転　十字キー：畳み・把持"
+                    })
+                    .size(12.0)
+                    .color(MUTED),
                 );
+                ui.horizontal_wrapped(|ui| {
+                    keycap(ui, "L1");
+                    ui.label("低速20%");
+                    keycap(ui, "Options");
+                    ui.label("運転再開");
+                    keycap(ui, "PS");
+                    ui.label("停止");
+                });
             }
+            self.homing_controls(ui, status);
         });
     }
 

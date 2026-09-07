@@ -5,7 +5,7 @@ impl BridgeApp {
         let status = self.shared.status_snapshot();
         let config = self.shared.config();
         ui.horizontal(|ui| {
-            ui.label(RichText::new("アーム").size(20.0).strong());
+            ui.label(RichText::new("機体を操縦").size(20.0).strong());
             if status.slow {
                 chip(ui, "低速 20%", ACCENT);
             }
@@ -18,13 +18,24 @@ impl BridgeApp {
                 .size(12.0)
                 .color(MUTED),
             );
+            if ui.small_button("アーム設定を開く").clicked() {
+                self.tune_view = tune::TuneView::Axes;
+                self.switch_screen(Screen::Tune);
+            }
         });
+        let mut test_slot = None;
         ui.columns(3, |columns| {
             for (i, axis) in status.origins.iter().enumerate() {
                 let ui = &mut columns[i % 3];
+                let slot = config
+                    .machine
+                    .axes
+                    .iter()
+                    .find(|profile| profile.name == axis.name)
+                    .map(|profile| profile.slot);
                 panel().show(ui, |ui| {
                     ui.set_width(ui.available_width());
-                    ui.set_min_height(116.0);
+                    ui.set_min_height(104.0);
                     ui.horizontal(|ui| {
                         ui.label(
                             RichText::new(if axis.name == "theta" {
@@ -45,6 +56,16 @@ impl BridgeApp {
                             .size(12.0)
                             .color(MUTED),
                         );
+                        ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                            if slot.is_some()
+                                && ui
+                                    .small_button("単体テスト")
+                                    .on_hover_text("この軸を選択した状態で診断画面を開きます")
+                                    .clicked()
+                            {
+                                test_slot = slot;
+                            }
+                        });
                     });
                     ui.horizontal(|ui| {
                         ui.label(
@@ -94,49 +115,64 @@ impl BridgeApp {
                         ui.add_space(4.0);
                     }
                     if axis.at_limit == Some(true) {
-                        ui.colored_label(WARNING, "リミット到達");
+                        ui.colored_label(WARNING, "端点スイッチ作動中");
                     }
                 });
             }
         });
-        ui.add_space(12.0);
-        self.manual_controls(ui, &status);
-        self.operate_ee(ui, &status);
-        ui.add_space(12.0);
-        panel().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(RichText::new("操縦ガイド").strong());
-                ui.label(
-                    RichText::new(if status.gamepad.is_empty() {
-                        "DualSense 未接続"
-                    } else {
-                        &status.gamepad
-                    })
-                    .size(12.0)
-                    .color(MUTED),
-                );
-            });
-            ui.horizontal_wrapped(|ui| {
-                keycap(ui, "左スティック / 右上下");
-                ui.label(RichText::new("r・θ / z").size(12.0).color(MUTED));
-                keycap(ui, "右左右 / 十字上下 / 十字左右");
-                ui.label(
-                    RichText::new("EE回転 / 畳み / 把持3本")
-                        .size(12.0)
-                        .color(MUTED),
-                );
-                keycap(ui, "L1");
-                ui.label(RichText::new("低速20%").size(12.0).color(MUTED));
-                keycap(ui, "Create 1秒");
-                ui.label(
-                    RichText::new("停止中・姿勢確認済みでホーミング")
-                        .size(12.0)
-                        .color(MUTED),
-                );
-                keycap(ui, "Options / PS");
-                ui.label(RichText::new("再開 / 停止").size(12.0).color(MUTED));
-            });
+        if let Some(slot) = test_slot {
+            self.select_cctl_test(slot);
+        }
+        ui.add_space(8.0);
+        ui.columns(2, |columns| {
+            self.manual_controls(&mut columns[0], &status);
+            self.operate_ee(&mut columns[1], &status);
         });
+    }
+
+    pub(super) fn homing_controls(&mut self, ui: &mut egui::Ui, status: &Status) {
+        ui.separator();
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("r・z原点").strong());
+            if let Some(label) = &status.homing {
+                chip(ui, label, ACCENT);
+                if ui.button("中断").clicked() {
+                    self.dispatch(Action::Stop);
+                }
+                return;
+            }
+            ui.checkbox(
+                &mut self.homing_confirmed,
+                "姿勢・経路を確認済み",
+            )
+            .on_hover_text(
+                "EEがシューティングボックスの反対側を向き、z下降・r前進の全経路に干渉がないことを確認してください",
+            );
+            let can_start = self.homing_confirmed
+                && status.connected
+                && status.configured
+                && !status.running
+                && !status.outputs_active
+                && !status.test_mode
+                && !status.ai_active
+                && !status.emergency;
+            if ui
+                .add_enabled(can_start, egui::Button::new("自動設定を開始"))
+                .on_hover_text("zを下端へ移動した後、rを前端へ移動して原点座標を設定します")
+                .clicked()
+            {
+                self.homing_confirmed = false;
+                self.request(Request {
+                    flag: Some(true),
+                    value: Some(self.homing_timeout),
+                    ..Request::new("home")
+                });
+            }
+        });
+        ui.label(
+            RichText::new("z下端 → r前端。DualSenseでは停止中にCreateを1秒長押し。")
+                .size(12.0)
+                .color(MUTED),
+        );
     }
 }

@@ -22,6 +22,25 @@ impl Default for TestPanel {
     }
 }
 impl BridgeApp {
+    pub(super) fn select_cctl_test(&mut self, slot: u8) {
+        self.end_test_on_tab_change();
+        self.screen = Screen::Diagnose;
+        self.diagnosis_view = diagnose::DiagnosisView::Tests;
+        self.tests.board = "cctl";
+        self.tests.id = slot;
+        self.tests.kind = Kind::Velocity;
+        self.tests.value = 0.0;
+        self.request(Request {
+            flag: Some(true),
+            ..Request::new("test_mode")
+        });
+        self.request(Request {
+            axis: Some(format!("cctl:{slot}")),
+            text: Some("velocity".into()),
+            ..Request::new("test_select")
+        });
+    }
+
     pub(super) fn select_ee_test(&mut self, target: Target, value: f32) {
         self.end_test_on_tab_change();
         self.screen = Screen::Diagnose;

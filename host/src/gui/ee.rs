@@ -2,35 +2,103 @@ use super::*;
 use crate::machine::{PwmServoProfile, SerialServoProfile, SerialSvmdProfile, ee};
 impl BridgeApp {
     pub(super) fn operate_ee(&mut self, ui: &mut egui::Ui, status: &Status) {
-        ui.add_space(12.0);
-        panel().show(ui,|ui| {
-            ui.set_width(ui.available_width());ui.heading("EE");
-            let axes=ee::axes(&self.shared.config().machine);
-            let can=status.running&&!status.test_mode&&!status.sts.active&&!status.sts.busy&&!status.ai_active&&!status.emergency;
-            let mut command=std::collections::BTreeMap::new();
-            for (name,label) in ee::ROLES {
-                ui.horizontal_wrapped(|ui| {
-                    ui.label(label);
-                    if let Some(axis)=axes.iter().find(|a|a.name==name) {
-                        let value=self.ee_values.entry(name.into()).or_insert(axis.initial);
-                        *value=value.clamp(axis.min,axis.max);
-                        ui.add(egui::DragValue::new(value).range(axis.min..=axis.max).speed(1.0).suffix(format!(" {}",axis.unit())));
-                        let selected=*value;
-                        if ui.add_enabled(can&&axis.enabled,egui::Button::new("移動・保持")).clicked() {command.insert(name.to_string(),selected);}
-                        if ui.add_enabled(!status.ai_active&&!status.emergency,egui::Button::new("単体テスト")).clicked() {self.select_ee_test(axis.target,selected);}
-                        if let Some(target)=status.ee_targets.get(name) {ui.label(format!("送信指令 {target:.0}"));}
-                        if !axis.enabled {ui.colored_label(WARNING,"通常出力未許可");}
-                    } else {ui.colored_label(MUTED,"未割当 · 2 調整 → EE設定");}
+        panel().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("EEを操作").strong());
+                if ui.small_button("設定を開く").clicked() {
+                    self.tune_view = tune::TuneView::Ee;
+                    self.switch_screen(Screen::Tune);
+                }
+            });
+            let axes = ee::axes(&self.shared.config().machine);
+            let can = status.running
+                && !status.test_mode
+                && !status.sts.active
+                && !status.sts.busy
+                && !status.ai_active
+                && !status.emergency;
+            let mut command = std::collections::BTreeMap::new();
+            egui::Grid::new("operate-ee")
+                .num_columns(5)
+                .spacing([8.0, 6.0])
+                .striped(true)
+                .show(ui, |ui| {
+                    for (name, label) in ee::ROLES {
+                        ui.label(label);
+                        if let Some(axis) = axes.iter().find(|a| a.name == name) {
+                            let value = self.ee_values.entry(name.into()).or_insert(axis.initial);
+                            *value = value.clamp(axis.min, axis.max);
+                            ui.add(
+                                egui::DragValue::new(value)
+                                    .range(axis.min..=axis.max)
+                                    .speed(1.0)
+                                    .suffix(format!(" {}", axis.unit()))
+                                    .min_decimals(0),
+                            );
+                            let selected = *value;
+                            if ui
+                                .add_enabled(can && axis.enabled, egui::Button::new("移動"))
+                                .on_hover_text("指定位置へ移動し、その位置を保持します")
+                                .clicked()
+                            {
+                                command.insert(name.to_string(), selected);
+                            }
+                            if ui
+                                .add_enabled(
+                                    !status.ai_active && !status.emergency,
+                                    egui::Button::new("テスト"),
+                                )
+                                .clicked()
+                            {
+                                self.select_ee_test(axis.target, selected);
+                            }
+                            if let Some(target) = status.ee_targets.get(name) {
+                                ui.label(format!("指令 {target:.0}"));
+                            } else if !axis.enabled {
+                                ui.colored_label(WARNING, "出力未許可");
+                            } else {
+                                ui.label("");
+                            }
+                        } else {
+                            ui.label("—");
+                            ui.label("未割当");
+                            ui.label("");
+                            ui.label("");
+                        }
+                        ui.end_row();
+                    }
                 });
+            let grips: Vec<_> = axes
+                .iter()
+                .filter(|a| a.name.starts_with("ee_grip_"))
+                .collect();
+            if ui
+                .add_enabled(
+                    can && grips.len() == 3 && grips.iter().all(|a| a.enabled),
+                    egui::Button::new("把持3本をまとめて移動"),
+                )
+                .on_hover_text("把持1〜3を、各行に表示された指令値へ移動します")
+                .clicked()
+            {
+                for axis in grips {
+                    command.insert(axis.name.clone(), self.ee_values[&axis.name]);
+                }
             }
-            let grips:Vec<_>=axes.iter().filter(|a|a.name.starts_with("ee_grip_")).collect();
-            if ui.add_enabled(can&&grips.len()==3&&grips.iter().all(|a|a.enabled),egui::Button::new("把持3本を上記の指令値へ移動")).clicked() {
-                for axis in grips {command.insert(axis.name.clone(),self.ee_values[&axis.name]);}
-            }
-            ui.label(RichText::new("把持3本は個別の設定値を順に送信します。PWMの位置は指令値で、実測フィードバックはありません。EE回転は減速比未確定のためサーボ軸カウントで指定します。").size(12.0).color(MUTED));
+            ui.label(
+                RichText::new("PWMサーボには位置センサがないため、表示値は指令値です。")
+                    .size(12.0)
+                    .color(MUTED),
+            );
             if !command.is_empty() {
-                #[derive(serde::Serialize)] struct Input {targets:std::collections::BTreeMap<String,f32>}
-                self.request(Request{text:Some(toml::to_string(&Input{targets:command}).unwrap()),..Request::new("ee")});
+                #[derive(serde::Serialize)]
+                struct Input {
+                    targets: std::collections::BTreeMap<String, f32>,
+                }
+                self.request(Request {
+                    text: Some(toml::to_string(&Input { targets: command }).unwrap()),
+                    ..Request::new("ee")
+                });
             }
         });
     }
