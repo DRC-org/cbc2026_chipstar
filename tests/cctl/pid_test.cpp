@@ -78,3 +78,17 @@ TEST_CASE("出力制限を実行時に変えられる") {
     CHECK(pid.outLimit() == doctest::Approx(50.0f));
     CHECK(pid.update(100.0f, 0.0f, 0.01f) == doctest::Approx(50.0f));
 }
+
+#include "device_config.hpp"
+TEST_CASE("速度PIDの既定値はミリ秒基準サンプルと等価な秒基準係数") {
+    domain::Pid pid(config::m3508::VEL_KP, config::m3508::VEL_KI,
+                    config::m3508::VEL_KD, 1000.0f);
+    float integral = 0, previous = 0;
+    for (int n=1; n<=100; ++n) {
+        const float error=n*0.1f;
+        integral += 0.0005f*error;
+        const float expected=0.7f*error+integral+50.0f*(error-previous);
+        CHECK(pid.update(error,0,0.001f)==doctest::Approx(expected).epsilon(0.0001));
+        previous=error;
+    }
+}

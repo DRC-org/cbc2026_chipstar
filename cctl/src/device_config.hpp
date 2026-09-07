@@ -42,8 +42,8 @@ constexpr float POS_KI = 0.0f;
 constexpr float POS_KD = 0.0f;
 constexpr float MAX_RPM = 4000.0f;
 constexpr float VEL_KP = 0.7f;
-constexpr float VEL_KI = 0.0005f;
-constexpr float VEL_KD = 50.0f;
+constexpr float VEL_KI = 0.5f;
+constexpr float VEL_KD = 0.05f;
 constexpr float MAX_CURRENT_MA = 5000.0f;
 }  // namespace m3508
 
