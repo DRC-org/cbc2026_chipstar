@@ -187,3 +187,18 @@ TEST_CASE("clear で書かれなかった台は 0 電流になる") {
         CHECK(frame.data()[i] == 0);
     }
 }
+
+TEST_CASE("C620の発見は有効なIDと直近の応答だけを含む") {
+    domain::c620::Discovery discovery;
+    CHECK(discovery.mask(0) == 0);
+    discovery.observe(0x200, 0);
+    discovery.observe(0x209, 0);
+    CHECK(discovery.mask(0) == 0);
+    discovery.observe(0x201, 0);
+    discovery.observe(0x208, 250);
+    CHECK(discovery.mask(500) == 129);
+    CHECK(discovery.mask(501) == 128);
+    CHECK(discovery.mask(751) == 0);
+    discovery.observe(0x203, 0xFFFFFFF0u);
+    CHECK(discovery.mask(10) == 4);
+}

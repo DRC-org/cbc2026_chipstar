@@ -39,6 +39,7 @@ bool protocol_ready = false;
 bool peripheral_bus_ready = false;
 bool motor_bus_ready = false;
 domain::DigitalInputs inputs(7);
+domain::c620::Discovery c620_discovery;
 
 void sampleInputs() {
     const uint8_t raw = (HAL_GPIO_ReadPin(SW1_GPIO_Port, SW1_Pin) == GPIO_PIN_RESET ? 1 : 0) |
@@ -166,7 +167,14 @@ void applyCommand(const domain::Command& command) {
             break;
         case domain::CommandKind::Jog:
             if (!controller.setJog(command.slot, command.target)) {
-                sendText("ERR code=JOG_REJECTED");
+                char text[128];
+                std::snprintf(text, sizeof(text),
+                              "ERR code=JOG_REJECTED slot=%u mode=%u enabled=%u stale=%u",
+                              static_cast<unsigned>(command.slot),
+                              static_cast<unsigned>(controller.mode()),
+                              static_cast<unsigned>(controller.enabledSlots()),
+                              static_cast<unsigned>(controller.staleSlots()));
+                sendText(text);
             }
             break;
         case domain::CommandKind::CanTx:
@@ -295,7 +303,10 @@ extern "C" void setup(void) {
 extern "C" void loop(void) {
     sampleInputs();
     domain::CanFrame frame;
-    while (motor_bus.receive(frame)) controller.dispatchRx(frame);
+    while (motor_bus.receive(frame)) {
+        if (!frame.extended && frame.length == 8) c620_discovery.observe(frame.id, HAL_GetTick());
+        controller.dispatchRx(frame);
+    }
     while (peripheral_bus.receive(frame)) sendCanFrame(frame);
 
     domain::Command command;
@@ -326,6 +337,17 @@ extern "C" void loop(void) {
         ui.showStatus(controller.target(0), controller.target(1), controller.target(2),
                       static_cast<uint8_t>(controller.errorBits(0) | controller.errorBits(1) |
                                            controller.errorBits(2)));
+    }
+
+    static uint32_t last_discovery_ms = 0;
+    if (now - last_discovery_ms >= 1000) {
+        last_discovery_ms = now;
+        char text[64];
+        std::snprintf(text, sizeof(text), "C620_SCAN mask=%u configured_id=%u",
+                      static_cast<unsigned>(c620_discovery.mask(now)),
+                      static_cast<unsigned>(controller.parameters().getU8(domain::ParamId::C620EscId)));
+        sendText(text);
+        sendCanStat(1, motor_bus, motor_bus_ready);
     }
 
     uint16_t el05_index = 0;

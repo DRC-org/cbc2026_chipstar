@@ -7,6 +7,28 @@
 // HAL には依存しないので、ホスト側で単体テストできる。
 namespace domain::c620 {
 
+// 直近500msのフィードバックからESC IDを観測する。指令は送信しない。
+class Discovery {
+ public:
+    void observe(uint16_t id, uint32_t now) {
+        if (id < 0x201 || id > 0x208) return;
+        const auto index = id - 0x201;
+        last_[index] = now;
+        seen_ |= static_cast<uint8_t>(1U << index);
+    }
+    uint8_t mask(uint32_t now) {
+        uint8_t result = 0;
+        for (unsigned i = 0; i < 8; ++i)
+            if ((seen_ & (1U << i)) && now - last_[i] <= 500)
+                result |= static_cast<uint8_t>(1U << i);
+        seen_ = result;
+        return result;
+    }
+ private:
+    uint32_t last_[8] = {};
+    uint8_t seen_ = 0;
+};
+
 // C620 の角度分解能。生角度は 0..8191 で 1 回転する。
 constexpr int32_t COUNTS_PER_REV = 8192;
 
