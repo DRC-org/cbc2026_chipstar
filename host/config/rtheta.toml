@@ -13,16 +13,16 @@ m3508_vel_kp = 7.0
 m3508_vel_ki = 0.5
 m3508_vel_kd = 0.05
 el05_loc_kp = 30.0
-# DM本体のPMAXも256に設定・保存する。通信の位置表現範囲であり可動域ではない。
-dm_p_max = 256.0
+# DM本体のPMAXも2048に設定・保存する。通信の位置表現範囲であり可動域ではない。
+dm_p_max = 2048.0
 dm_v_max = 200.0
 dm_t_max = 10.0
 slot0_min = -12.5
 slot0_max = 12.5
 slot1_min = -26000.0
 slot1_max = 26000.0
-slot2_min = -256.0
-slot2_max = 256.0
+slot2_min = -2048.0
+slot2_max = 2048.0
 c620_esc_id = 1.0
 dm_can_id = 9.0
 dm_mst_id = 17.0
@@ -88,7 +88,9 @@ input_axis = 3
 input_sign = 1.0
 # 重力負荷があるので低速から始める。実機で詰める。
 speed_per_second = 5.0
-native_per_unit = 0.08726646
+# 電気角と仮定した校正用換算。出力軸rad/mm × 極対数7 × 減速比19.203。
+# 実移動との一致を確認してから速度上限を調整する。
+native_per_unit = 11.730445
 minimum = 0.0
 maximum = 75.0
 initial = 0.0
