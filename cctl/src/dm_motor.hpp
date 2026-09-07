@@ -23,6 +23,7 @@ class DmMotor {
   bool enable();
   bool disable();
   bool setZero();
+  bool requestFeedback();
 
   // ---- 指令 -------------------------------------------------------------
   // Position-Velocity モード: 目標位置[rad] と速度上限[rad/s]。

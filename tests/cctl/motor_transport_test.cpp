@@ -50,6 +50,22 @@ TEST_CASE("3要素FIFOが空けば連続8フレームを欠落なく受け付け
  for(int n=0;n<8;++n) CHECK(bus.sendStd(0x200+n,data,8));
  CHECK(accepted.size()==8);CHECK(bus.txFailures()==0);
 }
+TEST_CASE("停止中のDMには位置指令を送らず状態を照会する") {
+ resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::DmCanId),17));
+ for(auto mode : {domain::RunMode::Safe,domain::RunMode::Stop}) {
+  REQUIRE(controller.setMode(mode));accepted.clear();tick+=20;controller.update();
+  bool queried=false;
+  for(const auto& frame:accepted) {
+   CHECK_FALSE((!frame.extended && frame.id==0x111));
+   if(!frame.extended && frame.id==0x7FF && frame.length==8) {
+    CHECK(frame.data[0]==17);CHECK(frame.data[1]==0);
+    CHECK(frame.data[2]==0xCC);CHECK(frame.data[3]==0);queried=true;
+   }
+  }
+  CHECK(queried);
+ }
+}
 TEST_CASE("FIFOが空かなくても送信待ちは有限で未送信指令を取消できる") {
  resetBus();CanBus bus(&handle);uint8_t data[8]={};stuck=true;
  for(int n=0;n<3;++n) REQUIRE(bus.sendStd(0x200+n,data,8));
