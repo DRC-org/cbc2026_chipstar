@@ -60,7 +60,21 @@ impl Settings {
         if !value.is_finite()
             || (value - expected.value).abs() > 0.0001_f32.max(expected.value.abs() * 0.00001)
         {
-            bail!("設定の応答値がPCと不一致です: {key:?}");
+            let names: &[&str] = match key.board {
+                ParameterBoard::Cctl => &PARAMETER_NAMES,
+                ParameterBoard::Svmd => &svmd::PARAMETER_NAMES,
+                ParameterBoard::Dcmd => &dcmd::PARAMETER_NAMES,
+                ParameterBoard::SerialSvmd => &serial_svmd::PARAMETER_NAMES,
+            };
+            let name = names.get(usize::from(key.id)).copied().unwrap_or("unknown");
+            bail!(
+                "設定の応答値がPCと不一致です: {:?} / {} (ID {})、送信値 {}、応答値 {}",
+                key.board,
+                name,
+                key.id,
+                expected.value,
+                value
+            );
         }
         self.pending.pop_front();
         self.sent = None;
@@ -116,6 +130,29 @@ pub fn parameter_plan(profile: &MachineProfile) -> Vec<ParameterValue> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[test]
+    fn small_gain_requires_precise_reply_and_reports_both_values() {
+        let mut profile = MachineProfile::embedded().unwrap();
+        profile.parameters.clear();
+        profile.parameters.insert("m3508_vel_ki".into(), 0.0005);
+        let mut sync = Settings::new(&profile);
+        assert_eq!(sync.poll_command().unwrap().unwrap(), "PARAM 5 0.00050");
+        let error = sync.receive("PARAM 5 0.001").unwrap_err().to_string();
+        for detail in [
+            "Cctl",
+            "m3508_vel_ki",
+            "ID 5",
+            "送信値 0.0005",
+            "応答値 0.001",
+        ] {
+            assert!(error.contains(detail), "{error}");
+        }
+        assert_eq!(sync.confirmed, 0);
+        assert!(!sync.ready());
+        sync.receive("PARAM 5 0.00050").unwrap();
+        assert!(sync.ready());
+    }
+
     #[test]
     fn unrelated_ack_cannot_confirm_a_setting() {
         let profile = MachineProfile::parse("protocol_version=1\n[parameters]\nel05_limit_spd=1.0\n[[axes]]\nname='r'\nunit='mm'\nslot=0\nspeed_per_second=1.0\nnative_per_unit=1.0\nminimum=0.0\nmaximum=10.0\ninitial=0.0").unwrap();
