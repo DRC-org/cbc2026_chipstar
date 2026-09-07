@@ -136,3 +136,10 @@ cargo clippy --all-targets -- -D warnings
 
 初期OFF、独立切替、自動OFF、入力範囲、CAN符号化、ENC復号、読取りの巡回、
 Watchdogテスト中の無送信と再始動抑止を検証する。実機の電気的な検証は含まない。
+
+## 操縦GUIからの個別テスト
+
+`host`の「3 診断 → 個別テスト」から、cctlの各モータ、PWMサーボ、STS3215、DCモータを
+個別に操作できる。通常操縦と排他で、同じUSB接続を使用する。詳細は
+[host操作ガイド](host_operation.md#個別テスト)を参照。
+単体接続用の`fw_test`は独立した通信所有者なので、同じポートを開いたhostと併用しない。

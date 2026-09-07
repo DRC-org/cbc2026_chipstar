@@ -31,7 +31,7 @@ FWの`domain/`は指令解釈・制御計算・状態管理を担い、`app.cpp`
 | [transport](../host/src/transport/mod.rs) | USBシリアル、模擬接続、プロファイルの読込・保存 |
 | [input](../host/src/input/mod.rs) | 入力スナップショットとDualSenseの読み取り |
 | [interface](../host/src/interface/mod.rs) | Unixソケットの接続受付、長さ付きTOMLの送受信 |
-| [gui](../host/src/gui/mod.rs) | 画面共通状態と遷移。操縦・調整・診断・文書は各画面のモジュールで描画。`manual.rs`は画面ジョグ、`parameter_help.rs`は調整値の説明、`documents.rs`はMarkdown表示を担当。`shortcuts.rs`でVim系の画面移動を含むキーを解釈し、ボタンと共通の操作入口へ渡す |
+| [gui](../host/src/gui/mod.rs) | 画面共通状態と遷移。操縦・調整・診断・文書は各画面のモジュールで描画。`manual.rs`は画面ジョグ、`parameter_help.rs`は調整値の説明、`documents.rs`はMarkdown表示を担当。`individual.rs`は個別テスト画面、`controls.rs`は全ページ共通の状態・緊停・コマンド入力を担当。`shortcuts.rs`のコマンド一覧に名前・説明・操作を登録し、Vim系の画面移動を含むキーを解釈し、ボタンと共通の操作入口へ渡す |
 | [diagnostics](../host/src/diagnostics/mod.rs) | 通常hostとは独立して使うFW保守セッションと接続準備 |
 
 機体モデルはGUI、ソケット、ファイルシステムを参照しない。基板プロトコルは機体モデルや
@@ -121,3 +121,14 @@ cargo build --locked --offline --manifest-path host/Cargo.toml --bins
 `host/tests/simulated_host.rs`は実行ファイルを起動し、実際のソケットで操作権・停止復帰・
 一時適用と保存を検証する。模擬接続は衝突や実際の制動距離を再現しないため、機構の動作確認は
 [立ち上げ手順](bringup.md)に従って実機で行う。
+
+## 緊停と個別テスト
+
+`Shared`は緊停要求を優先受付し、未実行要求を取り消す。原子的な通知フラグをワーカーが
+コントローラ入力の処理前と要求実行の間で確認する。ワーカーの緊停状態はAIの操作権を破棄し、
+通常運転・個別テスト出力・操作権再取得を禁止する。解除要求はGUIからのみ受け付け、出力停止を維持する。
+
+`worker/test_control.rs`が個別テストの選択対象・出力・入力期限・基板応答を管理する。
+`diagnostics/individual.rs`は対象と方式の検証、指令値の範囲、既存プロトコルによる指令生成を担当する。
+通信は通常操縦と同じワーカーの`Link`を使用する。ページ遷移は出力状態を所有せず、位置保持を取り消さない。
+速度・DC出力はGUIの押下更新が150ms途切れるとワーカーが解除する。
