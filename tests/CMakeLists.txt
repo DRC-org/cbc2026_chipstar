@@ -79,3 +79,21 @@ add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     ${REPO_ROOT}/cctl/src/domain/pid.cpp
     ${REPO_ROOT}/cctl/src/domain/delta_timer.cpp
 )
+
+# 実ドライバと制御器を3要素FIFOのHAL代替で検証。実機にはアクセスしない。
+add_firmware_tests(motor_transport_tests ${REPO_ROOT}/cctl/src
+    cctl/motor_transport_test.cpp
+    ${REPO_ROOT}/cctl/src/can_bus.cpp
+    ${REPO_ROOT}/cctl/src/actuator_controller.cpp
+    ${REPO_ROOT}/cctl/src/el05_motor.cpp
+    ${REPO_ROOT}/cctl/src/dm_motor.cpp
+    ${REPO_ROOT}/cctl/src/m3508_motor.cpp
+    ${REPO_ROOT}/cctl/src/c620_group.cpp
+    ${REPO_ROOT}/cctl/src/domain/el05_codec.cpp
+    ${REPO_ROOT}/cctl/src/domain/dm_codec.cpp
+    ${REPO_ROOT}/cctl/src/domain/c620_codec.cpp
+    ${REPO_ROOT}/cctl/src/domain/parameters.cpp
+    ${REPO_ROOT}/cctl/src/domain/pid.cpp
+    ${REPO_ROOT}/cctl/src/domain/delta_timer.cpp
+)
+target_include_directories(motor_transport_tests BEFORE PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/cctl/fakes)

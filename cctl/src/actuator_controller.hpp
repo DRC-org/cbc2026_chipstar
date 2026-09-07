@@ -22,9 +22,9 @@ class ActuatorController {
   void dispatchRx(const domain::CanFrame& frame);
   void update();
 
-  void setMode(domain::RunMode mode);
+  bool setMode(domain::RunMode mode);
   domain::RunMode mode() const { return mode_; }
-  void setSlotsEnabled(uint8_t slots, bool enabled);
+  bool setSlotsEnabled(uint8_t slots, bool enabled);
   uint8_t enabledSlots() const { return enabled_slots_; }
   void home(uint8_t slots);
 
@@ -62,7 +62,12 @@ class ActuatorController {
   uint8_t staleSlots() const { return feedback_.stale(); }
 
  private:
-  void applySlotStates();
+  bool applySlotStates();
+  void stopAfterTxFailure();
+  bool retry_stop_ = false;
+  bool cancel_before_stop_ = false;
+  uint8_t stop_pending_ = 0;
+  CanBus& bus_;
   bool slotActive(uint8_t bit) const;
 
   void applyParameter(uint8_t id);

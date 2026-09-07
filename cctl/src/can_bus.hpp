@@ -13,6 +13,8 @@ class CanBus {
 
   // グローバルフィルタを FIFO0 受理に設定し、バスを開始する。
   bool begin();
+  uint32_t txFailures() const { return tx_failures_; }
+  bool discardPending();
 
   // プロトコル状態とエラーカウンタ。実機でのCAN診断に使う。
   uint32_t protocolStatus() const { return hcan_->Instance->PSR; }
@@ -42,4 +44,5 @@ class CanBus {
   bool send(uint32_t id, uint32_t id_type, const uint8_t* data, uint8_t len);
 
   FDCAN_HandleTypeDef* hcan_;
+  uint32_t tx_failures_ = 0;
 };

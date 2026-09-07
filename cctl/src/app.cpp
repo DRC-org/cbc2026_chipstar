@@ -121,13 +121,14 @@ void sendCanStat(uint8_t bus, const CanBus& can, bool started) {
     const uint32_t ecr = can.errorCounters();
     char text[112];
     std::snprintf(text, sizeof(text),
-                  "CANSTAT bus=%u started=%u busoff=%u lec=%lu tec=%lu rec=%lu cel=%lu",
+                  "CANSTAT bus=%u started=%u busoff=%u lec=%lu tec=%lu rec=%lu cel=%lu tx_failed=%lu",
                   static_cast<unsigned>(bus), static_cast<unsigned>(started ? 1 : 0),
                   static_cast<unsigned>((psr & FDCAN_PSR_BO) ? 1 : 0),
                   static_cast<unsigned long>(psr & 0x7),
                   static_cast<unsigned long>(ecr & 0xFF),
                   static_cast<unsigned long>((ecr >> 8) & 0x7F),
-                  static_cast<unsigned long>((ecr >> 16) & 0xFF));
+                  static_cast<unsigned long>((ecr >> 16) & 0xFF),
+                  static_cast<unsigned long>(can.txFailures()));
     sendText(text);
 }
 
@@ -150,19 +151,21 @@ void applyCommand(const domain::Command& command) {
             }
             break;
         case domain::CommandKind::Stop:
-            controller.setMode(domain::RunMode::Stop);
+            if (!controller.setMode(domain::RunMode::Stop)) sendText("ERR code=CAN_TX");
             break;
         case domain::CommandKind::Run:
-            if (protocol_ready) controller.setMode(domain::RunMode::Run);
+            if (protocol_ready) {
+                if (!controller.setMode(domain::RunMode::Run)) sendText("ERR code=CAN_TX");
+            }
             else sendText("ERR code=NOT_READY");
             break;
         case domain::CommandKind::Safe:
-            controller.setMode(domain::RunMode::Safe);
+            if (!controller.setMode(domain::RunMode::Safe)) sendText("ERR code=CAN_TX");
             break;
         case domain::CommandKind::Heartbeat:
             break;
         case domain::CommandKind::Enable:
-            controller.setSlotsEnabled(command.mask, command.value);
+            if (!controller.setSlotsEnabled(command.mask, command.value)) sendText("ERR code=CAN_TX");
             break;
         case domain::CommandKind::Home:
             controller.home(command.mask);
@@ -194,9 +197,11 @@ void applyCommand(const domain::Command& command) {
                 sendText("ERR code=CAN_TX");
             }
             break;
-        case domain::CommandKind::ParamSet:
+        case domain::CommandKind::ParamSet: {
+            const uint32_t failures = motor_bus.txFailures();
             if (!controller.setParameter(command.param_id, command.target)) {
-                sendText(domain::requiresSafe(command.param_id) &&
+                if (motor_bus.txFailures() != failures) sendText("ERR code=CAN_TX");
+                else sendText(domain::requiresSafe(command.param_id) &&
                                  controller.mode() != domain::RunMode::Safe
                              ? "ERR code=BUSY"
                              : "ERR code=OUT_OF_RANGE");
@@ -204,6 +209,7 @@ void applyCommand(const domain::Command& command) {
                 sendParameter(command.param_id);
             }
             break;
+        }
         case domain::CommandKind::ParamGet:
             if (command.param_id >= domain::PARAM_COUNT) sendText("ERR code=OUT_OF_RANGE");
             else sendParameter(command.param_id);
@@ -220,14 +226,20 @@ void applyCommand(const domain::Command& command) {
                 sendText("ERR code=CAN_TX");
             }
             break;
-        case domain::CommandKind::Reinit:
-            if (!controller.reinitialize(command.mask)) sendText("ERR code=BUSY");
+        case domain::CommandKind::Reinit: {
+            const bool safe = controller.mode() == domain::RunMode::Safe;
+            if (!controller.reinitialize(command.mask)) sendText(safe ? "ERR code=CAN_TX" : "ERR code=BUSY");
             else sendText("OK");
             break;
-        case domain::CommandKind::ParamDefault:
-            if (!controller.resetParameters()) sendText("ERR code=BUSY");
+        }
+        case domain::CommandKind::ParamDefault: {
+            const uint32_t failures = motor_bus.txFailures();
+            if (!controller.resetParameters()) {
+                sendText(motor_bus.txFailures() != failures ? "ERR code=CAN_TX" : "ERR code=BUSY");
+            }
             else sendText("OK");
             break;
+        }
         case domain::CommandKind::CanStat:
             sendCanStat(1, motor_bus, motor_bus_ready);
             sendCanStat(2, peripheral_bus, peripheral_bus_ready);

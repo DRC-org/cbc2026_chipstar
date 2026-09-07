@@ -25,6 +25,23 @@ bool CanBus::begin() {
   return HAL_FDCAN_Start(hcan_) == HAL_OK;
 }
 
+bool CanBus::discardPending() {
+  const uint32_t pending = hcan_->Instance->TXBRP;
+  if (pending == 0) return true;
+  const uint32_t start = HAL_GetTick();
+  if (HAL_FDCAN_AbortTxRequest(hcan_, pending) != HAL_OK) {
+    ++tx_failures_;
+    return false;
+  }
+  while ((hcan_->Instance->TXBRP & pending) != 0) {
+    if (HAL_GetTick() - start >= 2) {
+      ++tx_failures_;
+      return false;
+    }
+  }
+  return true;
+}
+
 bool CanBus::send(uint32_t id, uint32_t id_type, const uint8_t* data, uint8_t len) {
   FDCAN_TxHeaderTypeDef tx_header = {};
   tx_header.Identifier = id;
@@ -37,7 +54,19 @@ bool CanBus::send(uint32_t id, uint32_t id_type, const uint8_t* data, uint8_t le
   tx_header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
   tx_header.MessageMarker = 0;
 
-  return HAL_FDCAN_AddMessageToTxFifoQ(hcan_, &tx_header, const_cast<uint8_t*>(data)) == HAL_OK;
+  // 同時に複数モータへ指令すると3要素のFIFOが埋まる。待機は最大2ms。
+  const uint32_t start = HAL_GetTick();
+  while (HAL_FDCAN_GetTxFifoFreeLevel(hcan_) == 0) {
+    if (HAL_GetTick() - start >= 2) {
+      ++tx_failures_;
+      return false;
+    }
+  }
+  if (HAL_FDCAN_AddMessageToTxFifoQ(hcan_, &tx_header, data) != HAL_OK) {
+    ++tx_failures_;
+    return false;
+  }
+  return true;
 }
 
 bool CanBus::sendStd(uint16_t id, const uint8_t* data, uint8_t len) {

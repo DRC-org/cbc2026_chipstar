@@ -8,7 +8,7 @@
 #include <cmath>
 
 ActuatorController::ActuatorController(CanBus& bus)
-    : slot0_(bus, config::can_id::EL05_MOTOR_ID, config::can_id::EL05_HOST_ID),
+    : bus_(bus), slot0_(bus, config::can_id::EL05_MOTOR_ID, config::can_id::EL05_HOST_ID),
       slot1_(bus, config::can_id::C620_ESC_ID, config::can_id::C620_COMMAND,
              config::m3508::POS_KP, config::m3508::POS_KI, config::m3508::POS_KD,
              config::m3508::MAX_RPM, config::m3508::VEL_KP, config::m3508::VEL_KI,
@@ -67,21 +67,32 @@ void ActuatorController::flushParameters() {
 bool ActuatorController::resetParameters() {
   if (mode_ != domain::RunMode::Safe) return false;
   parameters_.reset();
+  const uint32_t failures = bus_.txFailures();
   applyAllParameters();
+  if (bus_.txFailures() != failures) {
+    stopAfterTxFailure();
+    return false;
+  }
   param_dirty_ = false;
   return param_store::clear();
 }
 
 bool ActuatorController::reinitialize(uint8_t slots) {
   if (mode_ != domain::RunMode::Safe) return false;
+  const uint32_t failures = bus_.txFailures();
   for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
     if ((slots & (1U << slot)) != 0) initMotor(slot);
+  }
+  if (bus_.txFailures() != failures) {
+    stopAfterTxFailure();
+    return false;
   }
   feedback_.reset(HAL_GetTick());
   return true;
 }
 
 void ActuatorController::begin() {
+  const uint32_t failures = bus_.txFailures();
   // 実機で詰めた値は保存されている。モータへ書き込む前に取り込む。
   param_store::load(parameters_);
   applyAllParameters();
@@ -98,6 +109,7 @@ void ActuatorController::begin() {
   last_dm_ms_ = now;
   last_el05_ms_ = now;
   feedback_.reset(now);
+  if (bus_.txFailures() != failures) stopAfterTxFailure();
 }
 
 bool ActuatorController::setTarget(uint8_t slot, float value) {
@@ -211,30 +223,56 @@ bool ActuatorController::slotActive(uint8_t bit) const {
   return mode_ == domain::RunMode::Run && (enabled_slots_ & bit) != 0;
 }
 
-void ActuatorController::applySlotStates() {
-  slot1_.setEnabled(slotActive(domain::slot_bit::SLOT1));
-  if (slotActive(domain::slot_bit::SLOT0)) slot0_.enable();
-  else slot0_.disable(false);
-  if (slotActive(domain::slot_bit::SLOT2)) slot2_.enable();
-  else slot2_.disable();
+void ActuatorController::stopAfterTxFailure() {
+  mode_ = domain::RunMode::Stop;
+  enabled_slots_ = 0;
+  slot1_.setEnabled(false);
+  for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) jog_[slot].reset(measured(slot));
+  cancel_before_stop_ = !bus_.discardPending();
+  stop_pending_ = domain::slot_bit::ALL;
+  retry_stop_ = true;
 }
 
-void ActuatorController::setMode(domain::RunMode mode) {
-  if (mode_ == mode) return;
+bool ActuatorController::applySlotStates() {
+  const bool el05 = slotActive(domain::slot_bit::SLOT0) ? slot0_.enable() : slot0_.disable(false);
+  const bool dm = slotActive(domain::slot_bit::SLOT2) ? slot2_.enable() : slot2_.disable();
+  if (!el05 || !dm) {
+    stopAfterTxFailure();
+    return false;
+  }
+  slot1_.setEnabled(slotActive(domain::slot_bit::SLOT1));
+  return true;
+}
+
+bool ActuatorController::setMode(domain::RunMode mode) {
+  if (retry_stop_) {
+    if (mode != domain::RunMode::Run) mode_ = mode;
+    return false;
+  }
+  if (mode_ == mode) return true;
+  if (mode != domain::RunMode::Run && !bus_.discardPending()) {
+    stopAfterTxFailure();
+    return false;
+  }
   for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
     jog_[slot].reset(measured(slot));
     targets_[slot] = measured(slot);
   }
   slot1_.setTargetMotorDeg(targets_[1]);
   mode_ = mode;
-  applySlotStates();
+  return applySlotStates();
 }
 
-void ActuatorController::setSlotsEnabled(uint8_t slots, bool enabled) {
+bool ActuatorController::setSlotsEnabled(uint8_t slots, bool enabled) {
+  if (retry_stop_) return false;
+  if (!enabled && !bus_.discardPending()) {
+    stopAfterTxFailure();
+    return false;
+  }
   const uint8_t masked = slots & domain::slot_bit::ALL;
   enabled_slots_ = enabled ? static_cast<uint8_t>(enabled_slots_ | masked)
                            : static_cast<uint8_t>(enabled_slots_ & ~masked);
-  applySlotStates();
+  return applySlotStates();
 }
 
 void ActuatorController::home(uint8_t slots) {
@@ -248,6 +286,23 @@ void ActuatorController::home(uint8_t slots) {
 }
 
 void ActuatorController::update() {
+  if (retry_stop_) {
+    // 一度受け付けた停止フレームは取り消さず、未受付分だけを再送する。
+    if (cancel_before_stop_) {
+      cancel_before_stop_ = !bus_.discardPending();
+      if (cancel_before_stop_) return;
+    }
+    if ((stop_pending_ & 1) && slot0_.disable(false)) stop_pending_ &= ~1U;
+    if ((stop_pending_ & 2) && c620_group_.send()) stop_pending_ &= ~2U;
+    if ((stop_pending_ & 4) && slot2_.disable()) stop_pending_ &= ~4U;
+    retry_stop_ = stop_pending_ != 0;
+    // 無効状態の応答監視と周期時計は進め、復旧直後の一斉送信を避ける。
+    const uint32_t now = HAL_GetTick();
+    checkFeedback(now);
+    last_jog_ms_ = last_m3508_ms_ = last_dm_ms_ = last_el05_ms_ = now;
+    return;
+  }
+  const uint32_t failures = bus_.txFailures();
   checkFeedback(HAL_GetTick());
   const uint32_t now = HAL_GetTick();
 
@@ -302,14 +357,22 @@ void ActuatorController::update() {
     last_el05_ms_ = now;
     slot0_.setLocRef(targets_[0]);
   }
+  if (bus_.txFailures() != failures) stopAfterTxFailure();
 }
 
 bool ActuatorController::setParameter(uint8_t id, float value) {
   if (domain::requiresSafe(id) && mode_ != domain::RunMode::Safe) return false;
   if (!domain::Parameters::valid(id, value)) return false;
   if (parameters_.get(id) == value) return true;
+  const float previous = parameters_.get(id);
   if (!parameters_.set(id, value)) return false;
+  const uint32_t failures = bus_.txFailures();
   applyParameter(id);
+  if (bus_.txFailures() != failures) {
+    parameters_.set(id, previous);
+    stopAfterTxFailure();
+    return false;
+  }
   param_dirty_ = true;
   param_dirty_ms_ = HAL_GetTick();
   return true;
