@@ -345,6 +345,16 @@ extern "C" void loop(void) {
         } else {
             ++motor_standard_count;
             motor_last_standard = frame.id;
+            static uint32_t last_dm_raw_ms = 0;
+            if (frame.length == 8 && frame.id == controller.parameters().getU16(domain::ParamId::DmMstId) &&
+                HAL_GetTick() - last_dm_raw_ms >= 100) {
+                last_dm_raw_ms = HAL_GetTick();
+                char raw[100];
+                std::snprintf(raw, sizeof(raw), "DM_RX id=%lu data=%02X%02X%02X%02X%02X%02X%02X%02X",
+                    static_cast<unsigned long>(frame.id), frame.data[0], frame.data[1], frame.data[2], frame.data[3],
+                    frame.data[4], frame.data[5], frame.data[6], frame.data[7]);
+                sendText(raw);
+            }
             if (frame.length == 8 && frame.data[2] == domain::dm::CONFIG_READ &&
                 frame.data[3] == domain::dm::reg::ESC_ID) {
                 const uint16_t id = frame.data[0] | (static_cast<uint16_t>(frame.data[1]) << 8);
