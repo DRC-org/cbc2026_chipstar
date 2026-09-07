@@ -101,7 +101,7 @@ void sendText(const char* text) {
 void sendParameter(uint8_t id) {
     char text[64];
     char value[32];
-    domain::formatFixed3(controller.parameters().get(id), value, sizeof(value));
+    domain::formatFixed5(controller.parameters().get(id), value, sizeof(value));
     std::snprintf(text, sizeof(text), "PARAM %u %s", static_cast<unsigned>(id), value);
     sendText(text);
 }

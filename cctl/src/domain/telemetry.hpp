@@ -22,6 +22,8 @@ struct Telemetry {
 
 constexpr std::size_t TELEMETRY_LINE_CAPACITY = 144;
 
+// PARAM応答はhostの指令と同じ小数5桁で返す。STATEの表示精度とは分離する。
+std::size_t formatFixed5(float value, char* out, std::size_t capacity);
 std::size_t formatFixed3(float value, char* out, std::size_t capacity);
 std::size_t formatTelemetry(const Telemetry& telemetry, char* out, std::size_t capacity);
 

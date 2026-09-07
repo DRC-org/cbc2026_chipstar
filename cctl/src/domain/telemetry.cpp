@@ -45,6 +45,24 @@ std::size_t formatFixed3(float value, char* out, std::size_t capacity) {
     return static_cast<std::size_t>(written);
 }
 
+std::size_t formatFixed5(float value, char* out, std::size_t capacity) {
+    if (out == nullptr || capacity == 0) return 0;
+    if (!(value > -FIXED3_LIMIT && value < FIXED3_LIMIT)) {
+        if (capacity < 4) return 0;
+        std::memcpy(out, "nan", 4);
+        return 3;
+    }
+    const bool negative = value < 0.0f;
+    // 1e6の設定値も扱うため、倍率を掛ける前にdoubleへ昇格する。
+    const double magnitude = negative ? -static_cast<double>(value) : value;
+    const int64_t scaled = static_cast<int64_t>(magnitude * 100000.0 + 0.5);
+    const int written = std::snprintf(out, capacity, "%s%ld.%05ld", negative ? "-" : "",
+                                     static_cast<long>(scaled / 100000),
+                                     static_cast<long>(scaled % 100000));
+    if (written < 0 || static_cast<std::size_t>(written) >= capacity) return 0;
+    return static_cast<std::size_t>(written);
+}
+
 std::size_t formatTelemetry(const Telemetry& telemetry, char* out, std::size_t capacity) {
     if (out == nullptr || capacity == 0) return 0;
     std::size_t length = 0;

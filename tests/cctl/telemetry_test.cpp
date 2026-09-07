@@ -4,6 +4,7 @@
 
 #include <limits>
 #include <string>
+#include <utility>
 
 using domain::RunMode;
 using domain::Telemetry;
@@ -77,4 +78,26 @@ TEST_CASE("最大構成が規定容量に収まる") {
     telemetry.stale_slots = 7;
     telemetry.buses = 3;
     CHECK(!line(telemetry).empty());
+}
+
+TEST_CASE("設定応答は小さいゲインと大きい上限値を小数5桁で返す") {
+    for (const auto& item : {std::pair<float, const char*>{0.0005f, "0.00050"},
+                            {0.00001f, "0.00001"}, {-0.0005f, "-0.00050"},
+                            {1000000.0f, "1000000.00000"}, {0.0f, "0.00000"}}) {
+        char buffer[32] = {};
+        const auto length = domain::formatFixed5(item.first, buffer, sizeof(buffer));
+        CHECK(std::string(buffer, length) == item.second);
+    }
+}
+
+TEST_CASE("設定応答の不正値と容量不足を処理する") {
+    char buffer[32] = {};
+    for (float value : {std::numeric_limits<float>::quiet_NaN(),
+                        std::numeric_limits<float>::infinity(), 2000000.0f}) {
+        CHECK(domain::formatFixed5(value, buffer, sizeof(buffer)) == 3);
+        CHECK(std::string(buffer) == "nan");
+    }
+    CHECK(domain::formatFixed5(0.0005f, buffer, 7) == 0);
+    CHECK(domain::formatFixed5(0.0005f, buffer, 8) == 7);
+    CHECK(domain::formatFixed5(0.0005f, nullptr, 0) == 0);
 }
