@@ -2,7 +2,6 @@
 
 #include "c620_group.hpp"
 #include "can_bus.hpp"
-#include "dm_motor.hpp"
 #include "domain/can_frame.hpp"
 #include "domain/run_state.hpp"
 #include "domain/feedback_watch.hpp"
@@ -45,11 +44,12 @@ class ActuatorController {
   // 変更されたパラメータを不揮発へ書き戻す。毎周期呼んでよい。
   void flushParameters();
 
-  // DMドライバのレジスタ。SAFE中だけ受理する。
+  // EL05の非同期レジスタ応答。
   bool takeEl05ParameterReply(uint16_t& index, uint32_t& raw) {
     return slot0_.takeParamReply(index, raw);
   }
   uint8_t el05State() const { return slot0_.state(); }
+  // 旧DM構成のAPI。現構成では常に拒否する。
   bool readDmRegister(uint8_t rid);
   bool storeDmParameters();
   bool writeDmRegister(uint8_t rid, uint32_t raw);
@@ -61,9 +61,9 @@ class ActuatorController {
   uint8_t errorBits(uint8_t slot) const;
   // フィードバックが途絶えたslotのbit mask。
   uint8_t staleSlots() const { return feedback_.stale(); }
-  int16_t c620CommandMilliAmp() const { return slot1_.lastCommandMilliAmp(); }
-  int32_t c620CurrentMilliAmp() const { return slot1_.currentMilliAmp(); }
-  int16_t c620Rpm() const { return slot1_.rpm(); }
+  int16_t c620CommandMilliAmp(uint8_t slot = 1) const { return (slot == 2 ? slot2_ : slot1_).lastCommandMilliAmp(); }
+  int32_t c620CurrentMilliAmp(uint8_t slot = 1) const { return (slot == 2 ? slot2_ : slot1_).currentMilliAmp(); }
+  int16_t c620Rpm(uint8_t slot = 1) const { return (slot == 2 ? slot2_ : slot1_).rpm(); }
 
  private:
   bool applySlotStates();
@@ -84,8 +84,11 @@ class ActuatorController {
   bool param_dirty_ = false;
   El05Motor slot0_;
   M3508Motor slot1_;
-  DmMotor slot2_;
+  M3508Motor slot2_;
   C620Group c620_group_;
+  C620Group c620_group_high_;
+  bool sendC620();
+  void rebuildC620Groups();
   float targets_[domain::SLOT_COUNT] = {};
   domain::Jog jog_[domain::SLOT_COUNT];
   uint32_t last_jog_ms_ = 0;
@@ -93,7 +96,6 @@ class ActuatorController {
   uint8_t enabled_slots_ = 0;
   domain::FeedbackWatch feedback_;
   uint32_t last_m3508_ms_ = 0;
-  uint32_t last_dm_ms_ = 0;
   uint32_t last_el05_ms_ = 0;
   uint32_t last_el05_diagnostic_ms_ = 0;
   uint8_t el05_diagnostic_index_ = 0;

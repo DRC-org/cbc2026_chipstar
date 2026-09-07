@@ -142,10 +142,10 @@ void applyCommand(const domain::Command& command) {
                 sendText("ERR code=BAD_VERSION");
                 break;
             } else {
-                char text[96];
+                char text[128];
                 std::snprintf(text, sizeof(text),
                               "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=%lu "
-                              "params=%s jog=1",
+                              "params=%s jog=1 motors=el05,m3508,m3508",
                               static_cast<unsigned long>(
                                   controller.parameters().getMs(domain::ParamId::WatchdogMs)),
                               param_store::present() ? "stored" : "default");
@@ -216,20 +216,10 @@ void applyCommand(const domain::Command& command) {
             if (command.param_id >= domain::PARAM_COUNT) sendText("ERR code=OUT_OF_RANGE");
             else sendParameter(command.param_id);
             break;
-        // モード違反とCAN送信失敗を分ける。混ぜると
-        // 「SAFEにし忘れ」と「モータが繋がっていない」を切り分けられない。
         case domain::CommandKind::DmRegRead:
-            if (controller.mode() != domain::RunMode::Safe) sendText("ERR code=BUSY");
-            else if (!controller.readDmRegister(command.param_id)) sendText("ERR code=CAN_TX");
-            break;
         case domain::CommandKind::DmStore:
-            if (!controller.storeDmParameters()) sendText("ERR code=DMSTORE_REJECTED");
-            break;
         case domain::CommandKind::DmRegWrite:
-            if (controller.mode() != domain::RunMode::Safe) sendText("ERR code=BUSY");
-            else if (!controller.writeDmRegister(command.param_id, command.raw_value)) {
-                sendText("ERR code=CAN_TX");
-            }
+            sendText("ERR code=UNSUPPORTED");
             break;
         case domain::CommandKind::Reinit: {
             const bool safe = controller.mode() == domain::RunMode::Safe;
@@ -348,23 +338,6 @@ extern "C" void loop(void) {
         } else {
             ++motor_standard_count;
             motor_last_standard = frame.id;
-            if (frame.length == 4 && frame.id == controller.parameters().getU16(domain::ParamId::DmMstId) &&
-                (frame.data[0] | (static_cast<uint16_t>(frame.data[1]) << 8)) ==
-                    controller.parameters().getU16(domain::ParamId::DmCanId) &&
-                frame.data[2] == domain::dm::CONFIG_STORE && frame.data[3] == 1) {
-                sendText("DMSTORE result=stored");
-                continue;
-            }
-            static uint32_t last_dm_raw_ms = 0;
-            if (frame.length == 8 && frame.id == controller.parameters().getU16(domain::ParamId::DmMstId) &&
-                HAL_GetTick() - last_dm_raw_ms >= 100) {
-                last_dm_raw_ms = HAL_GetTick();
-                char raw[100];
-                std::snprintf(raw, sizeof(raw), "DM_RX id=%lu data=%02X%02X%02X%02X%02X%02X%02X%02X",
-                    static_cast<unsigned long>(frame.id), frame.data[0], frame.data[1], frame.data[2], frame.data[3],
-                    frame.data[4], frame.data[5], frame.data[6], frame.data[7]);
-                sendText(raw);
-            }
             if (frame.length == 8 && frame.data[2] == domain::dm::CONFIG_READ &&
                 frame.data[3] == domain::dm::reg::ESC_ID) {
                 const uint16_t id = frame.data[0] | (static_cast<uint16_t>(frame.data[1]) << 8);
@@ -424,20 +397,24 @@ extern "C" void loop(void) {
     if (now - last_current_diagnostic_ms >= 100) {
         last_current_diagnostic_ms = now;
         char text[96];
-        std::snprintf(text, sizeof(text), "C620_DIAG cmd_ma=%d actual_ma=%ld rpm=%d",
-            static_cast<int>(controller.c620CommandMilliAmp()),
-            static_cast<long>(controller.c620CurrentMilliAmp()),
-            static_cast<int>(controller.c620Rpm()));
-        sendText(text);
+        for (uint8_t slot : {uint8_t{1}, uint8_t{2}}) {
+            std::snprintf(text, sizeof(text), "C620_DIAG slot=%u cmd_ma=%d actual_ma=%ld rpm=%d",
+                static_cast<unsigned>(slot),
+                static_cast<int>(controller.c620CommandMilliAmp(slot)),
+                static_cast<long>(controller.c620CurrentMilliAmp(slot)),
+                static_cast<int>(controller.c620Rpm(slot)));
+            sendText(text);
+        }
     }
 
     static uint32_t last_discovery_ms = 0;
     if (now - last_discovery_ms >= 1000) {
         last_discovery_ms = now;
         char text[64];
-        std::snprintf(text, sizeof(text), "C620_SCAN mask=%u configured_id=%u",
+        std::snprintf(text, sizeof(text), "C620_SCAN mask=%u configured_id=%u slot2_id=%u",
                       static_cast<unsigned>(c620_discovery.mask(now)),
-                      static_cast<unsigned>(controller.parameters().getU8(domain::ParamId::C620EscId)));
+                      static_cast<unsigned>(controller.parameters().getU8(domain::ParamId::C620EscId)),
+                      static_cast<unsigned>(controller.parameters().getU8(domain::ParamId::C620Slot2EscId)));
         sendText(text);
         sendCanStat(1, motor_bus, motor_bus_ready);
         char rx_text[128];

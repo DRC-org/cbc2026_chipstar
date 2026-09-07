@@ -7,7 +7,7 @@
 
 #include <cstdint>
 
-// θ軸: M3508 + C620。C620 は電流指令のみ受け付けるため、位置制御は本クラスで
+// M3508 + C620。C620 は電流指令のみ受け付けるため、位置制御は本クラスで
 // 位置PID→速度PID の 2 段カスケードにより電流指令を生成する。
 // C620 の角度(0..8191)から多回転角を積算し、モータ多回転角[deg]を追従させる。
 // フレームの符号化・復号と多回転の積算は domain::c620 が担う。
@@ -50,9 +50,15 @@ class M3508Motor {
     max_rpm_ = value;
     pos_pid_.setOutLimit(value);
   }
-  void setMaxCurrentMilliAmp(float value) { max_current_ma_ = value; }
+  void setMaxCurrentMilliAmp(float value) { max_current_ma_ = value; vel_pid_.setOutLimit(value); }
   // 宛先の差し替えはSAFE中だけ行う。
-  void setEscId(uint8_t esc_id) { esc_id_ = esc_id; }
+  void setEscId(uint8_t esc_id) {
+    if (esc_id_ == esc_id) return;
+    esc_id_ = esc_id;
+    resetOrigin();
+    last_feedback_ = {};
+    target_motor_deg_ = 0;
+  }
 
   // PID を通さず電流[mA]を直接指令する。ゲイン調整前の素の確認に使う。
   void setDirectCurrent(float milli_amp);

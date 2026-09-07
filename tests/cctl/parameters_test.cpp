@@ -63,3 +63,17 @@ TEST_CASE("通信IDの変更だけSAFEを要求する") {
     CHECK_FALSE(domain::requiresSafe(id(ParamId::M3508PosKp)));
     CHECK_FALSE(domain::requiresSafe(id(ParamId::WatchdogMs)));
 }
+
+TEST_CASE("2台のESC IDを入れ替えた保存値は一括復元し不正値では部分更新しない") {
+    Parameters p;
+    float values[domain::PARAM_COUNT];
+    for (uint8_t i=0;i<domain::PARAM_COUNT;++i) values[i]=p.get(i);
+    values[id(ParamId::C620EscId)]=2;
+    values[id(ParamId::C620Slot2EscId)]=1;
+    REQUIRE(p.restore(values,domain::PARAM_COUNT));
+    CHECK(p.get(ParamId::C620EscId)==2);
+    CHECK(p.get(ParamId::C620Slot2EscId)==1);
+    values[id(ParamId::C620Slot2EscId)]=2;
+    CHECK_FALSE(p.restore(values,domain::PARAM_COUNT));
+    CHECK(p.get(ParamId::C620Slot2EscId)==1);
+}

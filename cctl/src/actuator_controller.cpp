@@ -3,7 +3,6 @@
 #include "param_store.hpp"
 
 #include "device_config.hpp"
-#include "domain/dm_codec.hpp"
 
 #include <cmath>
 
@@ -13,10 +12,25 @@ ActuatorController::ActuatorController(CanBus& bus)
              config::m3508::POS_KP, config::m3508::POS_KI, config::m3508::POS_KD,
              config::m3508::MAX_RPM, config::m3508::VEL_KP, config::m3508::VEL_KI,
              config::m3508::VEL_KD, config::m3508::MAX_CURRENT_MA),
-      slot2_(bus, config::can_id::DM_CAN_ID, config::can_id::DM_MST_ID,
-             config::dm::P_MAX, config::dm::V_MAX, config::dm::T_MAX),
-      c620_group_(bus, domain::c620::groupCommandId(config::can_id::C620_ESC_ID)) {
-  c620_group_.add(slot1_);
+      slot2_(bus, 2, config::can_id::C620_COMMAND,
+             8.0f, 0.0f, 0.0f, 500.0f, 7.0f, 0.5f, 0.05f, 1000.0f),
+      c620_group_(bus, domain::c620::COMMAND_ID_1_TO_4),
+      c620_group_high_(bus, domain::c620::COMMAND_ID_5_TO_8) {
+  rebuildC620Groups();
+}
+
+void ActuatorController::rebuildC620Groups() {
+  c620_group_.reset(domain::c620::COMMAND_ID_1_TO_4);
+  c620_group_high_.reset(domain::c620::COMMAND_ID_5_TO_8);
+  for (auto* motor : {&slot1_, &slot2_}) {
+    (motor->escId() <= 4 ? c620_group_ : c620_group_high_).add(*motor);
+  }
+}
+
+bool ActuatorController::sendC620() {
+  const bool low = c620_group_.size() == 0 || c620_group_.send();
+  const bool high = c620_group_high_.size() == 0 || c620_group_high_.send();
+  return low && high;
 }
 
 // モータ側の設定を書き込む。電源投入直後は応答が遅いので間を空ける。
@@ -42,10 +56,7 @@ void ActuatorController::initMotor(uint8_t slot) {
       slot1_.setTargetMotorDeg(slot1_.motorDeg());
       break;
     default:
-      slot2_.disable();
-      HAL_Delay(50);
-      slot2_.setControlMode(DmMotor::ControlMode::PositionVelocity);
-      HAL_Delay(50);
+      slot2_.setTargetMotorDeg(slot2_.motorDeg());
       break;
   }
   targets_[slot] = measured(slot);
@@ -106,7 +117,6 @@ void ActuatorController::begin() {
 
   const uint32_t now = HAL_GetTick();
   last_m3508_ms_ = now;
-  last_dm_ms_ = now;
   last_el05_ms_ = now;
   feedback_.reset(now);
   if (bus_.txFailures() != failures) stopAfterTxFailure();
@@ -139,6 +149,7 @@ bool ActuatorController::setTarget(uint8_t slot, float value) {
       }
       jog_[2].reset(measured(2));
       targets_[2] = value;
+      slot2_.setTargetMotorDeg(value);
       return true;
     default:
       return false;
@@ -151,7 +162,7 @@ bool ActuatorController::setJog(uint8_t slot, float velocity) {
   const float caps[] = {
       parameters_.get(domain::ParamId::El05LimitSpd),
       parameters_.get(domain::ParamId::M3508MaxRpm) * 6.0f,
-      parameters_.get(domain::ParamId::DmPosVelLimit)};
+      parameters_.get(domain::ParamId::M3508Slot2MaxRpm) * 6.0f};
   jog_[slot].command(std::clamp(velocity, -caps[slot], caps[slot]), measured(slot));
   return true;
 }
@@ -164,7 +175,7 @@ float ActuatorController::measured(uint8_t slot) const {
   switch (slot) {
     case 0: return slot0_.position();
     case 1: return slot1_.motorDeg();
-    case 2: return slot2_.position();
+    case 2: return slot2_.motorDeg();
     default: return 0.0f;
   }
 }
@@ -182,17 +193,15 @@ uint8_t ActuatorController::errorBits(uint8_t slot) const {
       return static_cast<uint8_t>((hot ? domain::error_bit::OVER_TEMPERATURE : 0) | stale);
     }
     default: {
-      // DMのERRは列挙値で、bit maskではない。そのまま載せると
-      // 「過負荷(0x0E)」と他コードのbitが混ざって見えるため、
-      // 異常かどうかだけを上位bitで示し、生の値は下位に残す。
-      const uint8_t code = slot2_.errorState();
-      const uint8_t fault = domain::dm::error_code::isFault(code) ? 0x10 : 0;
-      return static_cast<uint8_t>(code | fault | stale);
+      const bool hot = slot2_.temperature() >=
+                       parameters_.get(domain::ParamId::M3508Slot2MaxTemperatureC);
+      return static_cast<uint8_t>((hot ? domain::error_bit::OVER_TEMPERATURE : 0) | stale);
     }
   }
 }
 
 void ActuatorController::dispatchRx(const domain::CanFrame& frame) {
+  if (frame.length != 8) return;
   const uint32_t now = HAL_GetTick();
   if (frame.extended) {
     if (slot0_.onFeedback(frame.id, frame.data)) feedback_.markSeen(0, now);
@@ -200,7 +209,7 @@ void ActuatorController::dispatchRx(const domain::CanFrame& frame) {
     slot1_.onFeedback(static_cast<uint16_t>(frame.id), frame.data);
     feedback_.markSeen(1, now);
   } else if (frame.id == slot2_.feedbackId()) {
-    slot2_.onFeedback(frame.data);
+    slot2_.onFeedback(static_cast<uint16_t>(frame.id), frame.data);
     feedback_.markSeen(2, now);
   }
 }
@@ -227,6 +236,7 @@ void ActuatorController::stopAfterTxFailure() {
   mode_ = domain::RunMode::Stop;
   enabled_slots_ = 0;
   slot1_.setEnabled(false);
+  slot2_.setEnabled(false);
   for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) jog_[slot].reset(measured(slot));
   cancel_before_stop_ = !bus_.discardPending();
   stop_pending_ = domain::slot_bit::ALL;
@@ -236,19 +246,19 @@ void ActuatorController::stopAfterTxFailure() {
 bool ActuatorController::applySlotStates() {
   // トルク解除中に手で動かした位置を、有効化より先にモータへ渡す。
   // 有効化後の周期送信を待つと、モータ内に残った古い目標へ動き出す。
-  if ((slotActive(domain::slot_bit::SLOT0) && !slot0_.setLocRef(targets_[0])) ||
-      (slotActive(domain::slot_bit::SLOT2) &&
-       !slot2_.sendPositionVelocity(targets_[2], parameters_.get(domain::ParamId::DmPosVelLimit)))) {
+  if (slotActive(domain::slot_bit::SLOT0) && !slot0_.setLocRef(targets_[0])) {
     stopAfterTxFailure();
     return false;
   }
   const bool el05 = slotActive(domain::slot_bit::SLOT0) ? slot0_.enable() : slot0_.disable(false);
-  const bool dm = slotActive(domain::slot_bit::SLOT2) ? slot2_.enable() : slot2_.disable();
-  if (!el05 || !dm) {
+  slot1_.setTargetMotorDeg(targets_[1]);
+  slot2_.setTargetMotorDeg(targets_[2]);
+  slot1_.setEnabled(slotActive(domain::slot_bit::SLOT1));
+  slot2_.setEnabled(slotActive(domain::slot_bit::SLOT2));
+  if (!el05 || !sendC620()) {
     stopAfterTxFailure();
     return false;
   }
-  slot1_.setEnabled(slotActive(domain::slot_bit::SLOT1));
   return true;
 }
 
@@ -267,6 +277,7 @@ bool ActuatorController::setMode(domain::RunMode mode) {
     targets_[slot] = measured(slot);
   }
   slot1_.setTargetMotorDeg(targets_[1]);
+  slot2_.setTargetMotorDeg(targets_[2]);
   mode_ = mode;
   return applySlotStates();
 }
@@ -278,6 +289,14 @@ bool ActuatorController::setSlotsEnabled(uint8_t slots, bool enabled) {
     return false;
   }
   const uint8_t masked = slots & domain::slot_bit::ALL;
+  if (enabled) {
+    for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
+      if ((masked & ~enabled_slots_ & (1U << slot)) != 0) {
+        targets_[slot] = measured(slot);
+        jog_[slot].reset(measured(slot));
+      }
+    }
+  }
   enabled_slots_ = enabled ? static_cast<uint8_t>(enabled_slots_ | masked)
                            : static_cast<uint8_t>(enabled_slots_ & ~masked);
   return applySlotStates();
@@ -287,7 +306,7 @@ void ActuatorController::home(uint8_t slots) {
   setMode(domain::RunMode::Safe);
   if ((slots & domain::slot_bit::SLOT0) != 0) slot0_.setZero();
   if ((slots & domain::slot_bit::SLOT1) != 0) slot1_.resetOrigin();
-  if ((slots & domain::slot_bit::SLOT2) != 0) slot2_.setZero();
+  if ((slots & domain::slot_bit::SLOT2) != 0) slot2_.resetOrigin();
   for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
     if ((slots & (1U << slot)) != 0) setTarget(slot, 0.0f);
   }
@@ -301,13 +320,13 @@ void ActuatorController::update() {
       if (cancel_before_stop_) return;
     }
     if ((stop_pending_ & 1) && slot0_.disable(false)) stop_pending_ &= ~1U;
-    if ((stop_pending_ & 2) && c620_group_.send()) stop_pending_ &= ~2U;
-    if ((stop_pending_ & 4) && slot2_.disable()) stop_pending_ &= ~4U;
+    if ((stop_pending_ & 2) && (c620_group_.size() == 0 || c620_group_.send())) stop_pending_ &= ~2U;
+    if ((stop_pending_ & 4) && (c620_group_high_.size() == 0 || c620_group_high_.send())) stop_pending_ &= ~4U;
     retry_stop_ = stop_pending_ != 0;
     // 無効状態の応答監視と周期時計は進め、復旧直後の一斉送信を避ける。
     const uint32_t now = HAL_GetTick();
     checkFeedback(now);
-    last_jog_ms_ = last_m3508_ms_ = last_dm_ms_ = last_el05_ms_ = now;
+    last_jog_ms_ = last_m3508_ms_ = last_el05_ms_ = now;
     return;
   }
   const uint32_t failures = bus_.txFailures();
@@ -325,6 +344,7 @@ void ActuatorController::update() {
           parameters_.get(static_cast<domain::ParamId>(min_id)),
           parameters_.get(static_cast<domain::ParamId>(min_id + 1)));
       if (slot == 1) slot1_.setTargetMotorDeg(targets_[slot]);
+      if (slot == 2) slot2_.setTargetMotorDeg(targets_[slot]);
     }
   }
 
@@ -335,20 +355,12 @@ void ActuatorController::update() {
     if (slotActive(static_cast<uint8_t>(1U << slot))) continue;
     targets_[slot] = measured(slot);
     if (slot == 1) slot1_.setTargetMotorDeg(targets_[1]);
+    if (slot == 2) slot2_.setTargetMotorDeg(targets_[2]);
   }
 
   if (now - last_m3508_ms_ >= parameters_.getMs(domain::ParamId::M3508PeriodMs)) {
     last_m3508_ms_ = now;
-    c620_group_.send();
-  }
-  // 無効なDMには停止を再送する。DM3520は停止指令にも位置・状態を返す。
-  if (now - last_dm_ms_ >= parameters_.getMs(domain::ParamId::DmPeriodMs)) {
-    last_dm_ms_ = now;
-    if (slotActive(domain::slot_bit::SLOT2)) {
-      slot2_.sendPositionVelocity(targets_[2], parameters_.get(domain::ParamId::DmPosVelLimit));
-    } else {
-      slot2_.disable();
-    }
+    sendC620();
   }
   // 読取り専用の診断。モータのモード・目標・出力状態は変更しない。
   if (now - last_el05_diagnostic_ms_ >= 250) {
@@ -371,6 +383,8 @@ void ActuatorController::update() {
 }
 
 bool ActuatorController::setParameter(uint8_t id, float value) {
+  // 旧DM用プロファイルを成功扱いにしてRUNへ進ませない。
+  if ((id >= 11 && id <= 14) || id == 22 || id == 23 || id == 27) return false;
   if (domain::requiresSafe(id) && mode_ != domain::RunMode::Safe) return false;
   if (!domain::Parameters::valid(id, value)) return false;
   if (parameters_.get(id) == value) return true;
@@ -419,20 +433,27 @@ void ActuatorController::applyParameter(uint8_t id) {
       slot0_.writeParamFloat(domain::el05::param::LIMIT_CUR,
                              parameters_.get(ParamId::El05LimitCur));
       break;
-    case ParamId::DmPMax:
-    case ParamId::DmVMax:
-    case ParamId::DmTMax:
-      slot2_.setRange(parameters_.get(ParamId::DmPMax), parameters_.get(ParamId::DmVMax),
-                      parameters_.get(ParamId::DmTMax));
+    case ParamId::M3508Slot2PosKp:
+    case ParamId::M3508Slot2PosKi:
+    case ParamId::M3508Slot2PosKd:
+    case ParamId::M3508Slot2VelKp:
+    case ParamId::M3508Slot2VelKi:
+    case ParamId::M3508Slot2VelKd:
+      slot2_.setGains(parameters_.get(ParamId::M3508Slot2PosKp), parameters_.get(ParamId::M3508Slot2PosKi),
+                      parameters_.get(ParamId::M3508Slot2PosKd), parameters_.get(ParamId::M3508Slot2VelKp),
+                      parameters_.get(ParamId::M3508Slot2VelKi), parameters_.get(ParamId::M3508Slot2VelKd));
+      break;
+    case ParamId::M3508Slot2MaxRpm:
+      slot2_.setMaxRpm(parameters_.get(ParamId::M3508Slot2MaxRpm));
+      break;
+    case ParamId::M3508Slot2MaxCurrentMa:
+      slot2_.setMaxCurrentMilliAmp(parameters_.get(ParamId::M3508Slot2MaxCurrentMa));
       break;
     case ParamId::C620EscId:
+    case ParamId::C620Slot2EscId:
       slot1_.setEscId(parameters_.getU8(ParamId::C620EscId));
-      c620_group_.reset(domain::c620::groupCommandId(slot1_.escId()));
-      c620_group_.add(slot1_);
-      break;
-    case ParamId::DmCanId:
-    case ParamId::DmMstId:
-      slot2_.setIds(parameters_.getU16(ParamId::DmCanId), parameters_.getU16(ParamId::DmMstId));
+      slot2_.setEscId(parameters_.getU8(ParamId::C620Slot2EscId));
+      rebuildC620Groups();
       break;
     case ParamId::El05MotorId:
     case ParamId::El05HostId:
@@ -444,25 +465,8 @@ void ActuatorController::applyParameter(uint8_t id) {
   }
 }
 
-bool ActuatorController::readDmRegister(uint8_t rid) {
-  if (mode_ != domain::RunMode::Safe) return false;
-  return slot2_.requestRegister(rid);
-}
-
-bool ActuatorController::storeDmParameters() {
-  if (mode_ != domain::RunMode::Safe || !slot2_.disabledRecently()) return false;
-  return slot2_.storeParameters();
-}
-
-bool ActuatorController::writeDmRegister(uint8_t rid, uint32_t raw) {
-  if (mode_ != domain::RunMode::Safe) return false;
-  return slot2_.writeRegister(rid, raw);
-}
-
-bool ActuatorController::takeDmRegisterReply(uint8_t& rid, uint32_t& raw) {
-  if (!slot2_.hasRegisterReply()) return false;
-  rid = slot2_.lastRegisterId();
-  raw = slot2_.lastRegisterRaw();
-  slot2_.clearRegisterReply();
-  return true;
-}
+// この構成にはDMを接続しない。旧コマンドでCANへ書き込まない。
+bool ActuatorController::readDmRegister(uint8_t) { return false; }
+bool ActuatorController::storeDmParameters() { return false; }
+bool ActuatorController::writeDmRegister(uint8_t, uint32_t) { return false; }
+bool ActuatorController::takeDmRegisterReply(uint8_t&, uint32_t&) { return false; }

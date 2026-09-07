@@ -50,36 +50,25 @@ TEST_CASE("3要素FIFOが空けば連続8フレームを欠落なく受け付け
  for(int n=0;n<8;++n) CHECK(bus.sendStd(0x200+n,data,8));
  CHECK(accepted.size()==8);CHECK(bus.txFailures()==0);
 }
-TEST_CASE("DM保存はSAFEかつ新しい無効応答がある場合だけ4バイトで送信する") {
- resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+TEST_CASE("DM用コマンドと旧パラメータはCANへ送信せず拒否する") {
+ resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();accepted.clear();
  CHECK_FALSE(controller.storeDmParameters());
- domain::CanFrame frame;frame.id=10;frame.length=8;frame.data[0]=9;
- controller.dispatchRx(frame);accepted.clear();
- REQUIRE(controller.storeDmParameters());REQUIRE(accepted.size()==1);
- CHECK(accepted[0].id==0x7FF);CHECK(accepted[0].length==4);
- CHECK(accepted[0].data[0]==9);CHECK(accepted[0].data[2]==0xAA);
- tick+=1001;CHECK_FALSE(controller.storeDmParameters());
- frame.data[0]=0x19;controller.dispatchRx(frame);CHECK_FALSE(controller.storeDmParameters());
- frame.data[0]=9;controller.dispatchRx(frame);
- REQUIRE(controller.setMode(domain::RunMode::Stop));CHECK_FALSE(controller.storeDmParameters());
- REQUIRE(controller.setMode(domain::RunMode::Safe));
- REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::DmCanId),8));
- CHECK_FALSE(controller.storeDmParameters());
+ CHECK_FALSE(controller.readDmRegister(80));
+ CHECK_FALSE(controller.writeDmRegister(21,0));
+ CHECK_FALSE(controller.setParameter(11,2048));
+ CHECK(accepted.empty());
 }
-TEST_CASE("停止中のDMには位置指令を送らず無効化を再送する") {
+TEST_CASE("停止中は両C620へ同じフレームでゼロ電流を送る") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
- REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::DmCanId),17));
  for(auto mode : {domain::RunMode::Safe,domain::RunMode::Stop}) {
   REQUIRE(controller.setMode(mode));accepted.clear();tick+=20;controller.update();
-  bool queried=false;
-  for(const auto& frame:accepted) {
-   CHECK_FALSE((!frame.extended && frame.id==0x111));
-   if(!frame.extended && frame.id==17 && frame.length==8) {
-    for(int i=0;i<7;++i) CHECK(frame.data[i]==0xFF);
-    CHECK(frame.data[7]==0xFD);queried=true;
-   }
+  bool sent=false;
+  for(const auto& frame:accepted) if(!frame.extended) {
+   CHECK(frame.id==0x200);
+   for(auto byte:frame.data) CHECK(byte==0);
+   sent=true;
   }
-  CHECK(queried);
+  CHECK(sent);
  }
 }
 TEST_CASE("FIFOが空かなくても送信待ちは有限で未送信指令を取消できる") {
@@ -103,44 +92,79 @@ TEST_CASE("Enable送信失敗はRUNと全軸の出力許可を取り消し復旧
  REQUIRE(controller.setSlotsEnabled(1,true));REQUIRE(controller.setMode(domain::RunMode::Run));
  CHECK(controller.enabledSlots()==1);
 }
-TEST_CASE("開始シーケンスはEL05とDMのEnableを送信する") {
- resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();accepted.clear();
- REQUIRE(controller.setMode(domain::RunMode::Stop));
- REQUIRE(controller.setSlotsEnabled(7,false));REQUIRE(controller.setSlotsEnabled(5,true));
- REQUIRE(controller.setMode(domain::RunMode::Run));
- bool el05=false,dm=false;
- for(const auto& f:accepted) {
-  el05|=f.extended&&domain::el05::commType(f.id)==3;
-  dm|=!f.extended&&f.id==9&&f.data[7]==0xFC;
- }
- CHECK(el05);CHECK(dm);
-}
-TEST_CASE("DM再開は手動移動後の現在位置をEnableより先に送る") {
- resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
- REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::DmPMax),256.0f));
- REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::Slot2Min),-256.0f));
- REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::Slot2Max),256.0f));
- domain::CanFrame frame;frame.id=10;frame.length=8;
- frame.data[0]=9;frame.data[1]=0x11;frame.data[2]=0x1D;
+namespace {
+void feedback(ActuatorController& controller, uint8_t esc, uint16_t angle, uint8_t temperature=25) {
+ domain::CanFrame frame;frame.id=0x200+esc;frame.length=8;
+ frame.data[0]=angle>>8;frame.data[1]=angle;frame.data[6]=temperature;
  controller.dispatchRx(frame);
- const float position=controller.measured(2);
- REQUIRE(position < -221.0f);
- REQUIRE(position > -222.0f);
- REQUIRE(controller.setSlotsEnabled(4,true));accepted.clear();
- REQUIRE(controller.setMode(domain::RunMode::Run));
- bool primed=false,enabled=false;
- for(const auto& f:accepted) {
-  if(!f.extended&&f.id==0x109) {
-   float sent;std::memcpy(&sent,f.data,4);CHECK(sent==position);primed=true;
-  }
-  if(!f.extended&&f.id==9&&f.data[7]==0xFC) {CHECK(primed);enabled=true;}
+}
+int16_t current(const domain::CanFrame& frame, unsigned index) {
+ return static_cast<int16_t>((frame.data[index*2]<<8)|frame.data[index*2+1]);
+}
+}
+TEST_CASE("2台の目標は独立し1フレームに逆向きの電流を載せる") {
+ resetBus();CanBus bus(&handle);ActuatorController c(bus);c.begin();
+ feedback(c,1,1000);feedback(c,2,2000);
+ REQUIRE(c.setSlotsEnabled(6,true));REQUIRE(c.setMode(domain::RunMode::Run));
+ REQUIRE(c.setTarget(1,100));REQUIRE(c.setTarget(2,-100));
+ accepted.clear();tick+=10;c.update();
+ unsigned frames=0;
+ for(const auto& frame:accepted) if(!frame.extended&&frame.id==0x200) {
+  ++frames;CHECK(current(frame,0)>0);CHECK(current(frame,1)<0);
+  CHECK(current(frame,2)==0);CHECK(current(frame,3)==0);
  }
- CHECK(enabled);
- REQUIRE(controller.setMode(domain::RunMode::Stop));
- accepted.clear();fail_identifier=0x109;
- CHECK_FALSE(controller.setMode(domain::RunMode::Run));
- for(const auto& f:accepted) CHECK_FALSE((!f.extended&&f.id==9&&f.data[7]==0xFC));
- CHECK(controller.enabledSlots()==0);
+ CHECK(frames==1);
+ REQUIRE(c.setSlotsEnabled(4,false));
+ CHECK(current(accepted.back(),0)>0);CHECK(current(accepted.back(),1)==0);
+}
+TEST_CASE("C620再開では停止中に手動移動した両軸の現在位置を保持する") {
+ resetBus();CanBus bus(&handle);ActuatorController c(bus);c.begin();
+ feedback(c,1,1000);feedback(c,2,2000);
+ REQUIRE(c.setSlotsEnabled(6,true));REQUIRE(c.setMode(domain::RunMode::Run));
+ REQUIRE(c.setTarget(1,100));REQUIRE(c.setTarget(2,200));
+ REQUIRE(c.setMode(domain::RunMode::Stop));
+ feedback(c,1,1500);feedback(c,2,3000);
+ REQUIRE(c.measured(2)>40);
+ accepted.clear();REQUIRE(c.setMode(domain::RunMode::Run));
+ CHECK(c.target(1)==c.measured(1));CHECK(c.target(2)==c.measured(2));
+ for(const auto& frame:accepted) if(!frame.extended) {
+  CHECK(current(frame,0)==0);CHECK(current(frame,1)==0);
+ }
+ REQUIRE(c.setSlotsEnabled(4,false));feedback(c,2,3500);
+ REQUIRE(c.setSlotsEnabled(4,true));
+ CHECK(c.target(2)==c.measured(2));
+ CHECK(current(accepted.back(),1)==0);
+}
+TEST_CASE("2台目の電流上限と過熱判定と応答喪失は独立する") {
+ resetBus();CanBus bus(&handle);ActuatorController c(bus);c.begin();
+ REQUIRE(c.setParameter(static_cast<uint8_t>(domain::ParamId::M3508Slot2MaxCurrentMa),100));
+ feedback(c,1,1000);feedback(c,2,2000,90);
+ CHECK(c.errorBits(1)==0);CHECK(c.errorBits(2)==domain::error_bit::OVER_TEMPERATURE);
+ feedback(c,2,2000);
+ REQUIRE(c.setSlotsEnabled(6,true));REQUIRE(c.setMode(domain::RunMode::Run));
+ REQUIRE(c.setTarget(1,1000));REQUIRE(c.setTarget(2,1000));tick+=10;c.update();
+ CHECK(c.c620CommandMilliAmp(2)<=100);CHECK(c.c620CommandMilliAmp(1)>100);
+ REQUIRE(c.setParameter(static_cast<uint8_t>(domain::ParamId::M3508Slot2MaxCurrentMa),800));
+ tick+=10;c.update();CHECK(c.c620CommandMilliAmp(2)>100);CHECK(c.c620CommandMilliAmp(2)<=800);
+ tick+=250;feedback(c,1,1000);c.update();
+ CHECK((c.enabledSlots()&2)!=0);CHECK((c.enabledSlots()&4)==0);
+ CHECK((c.errorBits(2)&domain::error_bit::FEEDBACK_LOST)!=0);
+ CHECK(c.c620CommandMilliAmp(2)==0);
+}
+TEST_CASE("ESC IDは重複と小数を拒否し別グループにも同時送信できる") {
+ resetBus();CanBus bus(&handle);ActuatorController c(bus);c.begin();
+ const auto id=static_cast<uint8_t>(domain::ParamId::C620Slot2EscId);
+ CHECK_FALSE(c.setParameter(id,1));CHECK_FALSE(c.setParameter(id,2.5));
+ REQUIRE(c.setParameter(id,5));feedback(c,1,1000);feedback(c,5,2000);
+ REQUIRE(c.setSlotsEnabled(6,true));REQUIRE(c.setMode(domain::RunMode::Run));
+ REQUIRE(c.setTarget(1,100));REQUIRE(c.setTarget(2,100));accepted.clear();tick+=10;c.update();
+ unsigned mask=0;
+ for(const auto& frame:accepted) if(!frame.extended) {
+  if(frame.id==0x200) mask|=1;
+  if(frame.id==0x1FF) mask|=2;
+  CHECK(current(frame,0)>0);
+ }
+ CHECK(mask==3);CHECK_FALSE(c.setParameter(id,6));
 }
 TEST_CASE("EL05速度上限はPP用のVEL_MAXへ書く") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();accepted.clear();
@@ -183,14 +207,15 @@ TEST_CASE("停止再送は既に受付済みの停止フレームを取消も重
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
  REQUIRE(controller.setSlotsEnabled(7,true));
  fail_enqueue=true;CHECK_FALSE(controller.setMode(domain::RunMode::Run));
- fail_enqueue=false;fail_identifier=9;accepted.clear();
+ fail_enqueue=false;fail_identifier=0x200;accepted.clear();
  controller.update();
- REQUIRE(accepted.size()==2);
+ REQUIRE(accepted.size()==1);
  const auto cancels=cancel_calls;
  fail_identifier=0xFFFFFFFF;
  controller.update();
- CHECK(cancel_calls==cancels);REQUIRE(accepted.size()==3);
- CHECK(accepted.back().id==9);CHECK(accepted.back().data[7]==0xFD);
+ CHECK(cancel_calls==cancels);REQUIRE(accepted.size()==2);
+ CHECK(accepted.back().id==0x200);
+ for(auto byte:accepted.back().data) CHECK(byte==0);
  CHECK(controller.mode()==domain::RunMode::Stop);CHECK(controller.enabledSlots()==0);
 }
 TEST_CASE("同じRUNの再要求ではEnableを再送しない") {

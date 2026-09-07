@@ -19,8 +19,8 @@ constexpr float SLOT0_MIN = -12.5f;     // EL05出力位置 [rad]
 constexpr float SLOT0_MAX = 12.5f;
 constexpr float SLOT1_MIN = -26000.0f;  // M3508モータ多回転角 [deg]
 constexpr float SLOT1_MAX = 26000.0f;
-constexpr float SLOT2_MIN = -12.5f;     // DM出力位置 [rad]
-constexpr float SLOT2_MAX = 12.5f;
+constexpr float SLOT2_MIN = -26000.0f;  // M3508モータ多回転角 [deg]
+constexpr float SLOT2_MAX = 26000.0f;
 }  // namespace limit
 
 namespace dm {

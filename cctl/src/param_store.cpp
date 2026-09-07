@@ -61,10 +61,7 @@ bool present_ = false;
 bool load(domain::Parameters& parameters) {
     const Record& saved = record();
     if (!valid(saved)) return false;
-    for (uint32_t id = 0; id < saved.count; ++id) {
-        // 壊れた値は捨てて既定値のままにする。全体を捨てるより復帰しやすい。
-        parameters.set(static_cast<uint8_t>(id), saved.values[id]);
-    }
+    if (!parameters.restore(saved.values, saved.count)) return false;
     present_ = true;
     return true;
 }

@@ -8,8 +8,8 @@ namespace domain {
 // hostが実行時に変更できる基板パラメータ。
 //
 // FWを書き直さずに実機調整を終えられるようにするため、調整対象になる値は
-// すべてここへ集める。値はRAMだけに保持し、電源投入で既定値へ戻る。
-// 古い設定のまま動き出すことと、頻繁なFlash書き換えを避けるためである。
+// すべてここへ集める。保存はparam_storeがSAFE中にまとめて行い、
+// hostは接続時に機体設定を適用して読戻しを確認する。
 enum class ParamId : uint8_t {
     // M3508 + C620 のカスケードPID
     M3508PosKp = 0,
@@ -52,6 +52,17 @@ enum class ParamId : uint8_t {
     FeedbackTimeoutMs,
     // M3508の過熱と判断する温度 [degC]
     M3508MaxTemperatureC,
+    // 2台目のM3508。旧DMのIDは予約として維持する。
+    M3508Slot2PosKp,
+    M3508Slot2PosKi,
+    M3508Slot2PosKd,
+    M3508Slot2MaxRpm,
+    M3508Slot2VelKp,
+    M3508Slot2VelKi,
+    M3508Slot2VelKd,
+    M3508Slot2MaxCurrentMa,
+    C620Slot2EscId,
+    M3508Slot2MaxTemperatureC,
     Count,
 };
 
@@ -70,6 +81,7 @@ class Parameters {
 
     // 範囲外なら false を返し、値を変更しない。
     bool set(uint8_t id, float value);
+    bool restore(const float* values, std::size_t count);
 
     float get(ParamId id) const { return values_[static_cast<std::size_t>(id)]; }
     float get(uint8_t id) const { return values_[id]; }

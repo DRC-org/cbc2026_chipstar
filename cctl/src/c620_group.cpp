@@ -8,6 +8,9 @@ bool C620Group::add(M3508Motor& motor) {
     return false;
   }
 
+  for (std::size_t i = 0; i < count_; ++i) {
+    if (motors_[i]->escId() == motor.escId()) return false;
+  }
   motors_[count_++] = &motor;
   return true;
 }
