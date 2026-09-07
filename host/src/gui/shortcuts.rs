@@ -6,6 +6,7 @@ use eframe::egui::{Event, Key, Modifiers};
 pub(super) enum Action {
     Stop,
     Run,
+    Recover,
     Emergency(bool),
     Escape,
     Command,
@@ -24,6 +25,11 @@ pub(super) struct CommandSpec {
     pub action: Action,
 }
 pub(super) const COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        name: "recover",
+        description: "出力停止のまま設定とエラーを再確認",
+        action: Action::Recover,
+    },
     CommandSpec {
         name: "run",
         description: "運転再開",
@@ -250,6 +256,8 @@ mod tests {
     fn command_registry_accepts_only_complete_known_commands() {
         assert_eq!(command(" w "), Some(Action::Save));
         assert_eq!(command("run"), Some(Action::Run));
+        assert_eq!(command("recover"), Some(Action::Recover));
+        assert_eq!(command("recover anything"), None);
         assert_eq!(command("run anything"), None);
         assert_eq!(command("!rm"), None);
     }

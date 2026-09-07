@@ -84,6 +84,24 @@ impl Runtime {
         }
         match req.action.as_str() {
             "heartbeat" => {}
+            "recover" => {
+                if self.drive.running() || self.drive.awaiting().is_some() || self.test.active {
+                    bail!("出力を停止してから再確認してください");
+                }
+                if !self.fresh() || self.device.is_none() {
+                    bail!("基板との通信復旧を待ってから再確認してください");
+                }
+                self.stop(true)?;
+                self.send("SAFE")?;
+                self.settings = Settings::new(&self.cfg.machine);
+                self.setup = true;
+                self.setup_error = false;
+                self.error.clear();
+                self.reason = "出力停止を維持して設定を再確認中".into();
+                return Ok(Reply::data(
+                    "設定を再送・照合します。運転は再開しません".into(),
+                ));
+            }
             "manual_control" => {
                 if self.drive.running() || self.drive.awaiting().is_some() {
                     bail!("停止してから操作方法を変更してください");

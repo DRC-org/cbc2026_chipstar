@@ -186,6 +186,7 @@ impl BridgeApp {
                 self.operation("stop");
             }
             Action::Run if !self.stop_requested && Self::can_run(&status) => self.operation("run"),
+            Action::Recover => self.operation("recover"),
             Action::Screen(screen) => self.switch_screen(screen),
             Action::Tab(direction) => {
                 let screens = [
@@ -346,8 +347,20 @@ impl eframe::App for BridgeApp {
                 self.global_state(ui, &status);
                 self.page_navigation(ui);
                 self.command_line(ui);
-                if !status.error.is_empty() {
-                    ui.colored_label(DANGER, &status.error);
+                if !status.error.is_empty() || self.message_error || (status.connected && !status.configured) {
+                    ui.horizontal_wrapped(|ui| {
+                        if !status.error.is_empty() {
+                            ui.colored_label(DANGER, &status.error);
+                        }
+                        if ui.add_enabled(
+                            status.connected && !status.emergency && !status.ai_active
+                                && !status.running && !status.outputs_active,
+                            egui::Button::new("復旧・再確認"),
+                        ).on_hover_text("出力停止のまま設定を再送・照合します。緊停やモータ異常は解除しません")
+                            .clicked() {
+                            self.operation("recover");
+                        }
+                    });
                     ui.add_space(6.0);
                 }
                 let page = self.screen as usize;

@@ -162,6 +162,7 @@ impl Runtime {
                 }
                 if !self.test.active {
                     self.stop(true)?;
+                    self.error.clear();
                     // 送信途中の失敗でも後続の周期で停止するため、送信前に出力中とする。
                     self.test.active = true;
                     self.test.started = Some(Instant::now());

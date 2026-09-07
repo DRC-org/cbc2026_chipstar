@@ -759,3 +759,62 @@ fn leaving_test_while_disconnected_still_ends_local_test_mode() {
     assert!(!runtime.test.enabled && !runtime.test.active);
     assert!(runtime.test.selected.is_none());
 }
+
+#[test]
+fn recovery_retries_failed_settings_without_restarting_output() {
+    let mut runtime = screen_runtime();
+    select_test(&mut runtime, "cctl:1", "velocity");
+    runtime.settings = Settings::new(&runtime.cfg.machine);
+    runtime.send("JOG 1 1").unwrap();
+    runtime.receive().unwrap();
+    assert!(runtime.setup_error);
+    runtime.publish();
+    assert!(!runtime.shared.status_snapshot().test_ready);
+    runtime.request(&Request::new("recover"), true).unwrap();
+    assert!(!runtime.settings.ready());
+    for _ in 0..40 {
+        runtime.tick().unwrap();
+    }
+    runtime.publish();
+    let status = runtime.shared.status_snapshot();
+    assert!(status.configured && status.test_ready);
+    assert!(status.error.is_empty());
+    assert!(!status.outputs_active && !status.running && !status.test_active);
+    assert_ne!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Run);
+}
+
+#[test]
+fn recovery_preserves_motor_faults_and_emergency_latch() {
+    let mut runtime = screen_runtime();
+    runtime.telemetry.as_mut().unwrap().stale_slots = 1;
+    runtime.telemetry.as_mut().unwrap().error_bits[0] = 0x80;
+    runtime.request(&Request::new("recover"), true).unwrap();
+    assert_eq!(runtime.telemetry.as_ref().unwrap().stale_slots, 1);
+    assert_eq!(runtime.telemetry.as_ref().unwrap().error_bits[0], 0x80);
+    assert!(runtime.ready().is_err());
+    runtime.engage_emergency().unwrap();
+    assert!(runtime.request(&Request::new("recover"), true).is_err());
+    assert!(runtime.emergency);
+}
+
+#[test]
+fn recovery_does_not_unlock_a_faulted_held_test_request() {
+    let mut runtime = screen_runtime();
+    select_test(&mut runtime, "cctl:1", "velocity");
+    let output = Request {
+        value: Some(1.0),
+        ..Request::new("test_output")
+    };
+    runtime.request(&output, true).unwrap();
+    runtime.tick().unwrap();
+    assert!(runtime.request(&Request::new("recover"), true).is_err());
+    runtime.fault("ERR code=CAN_TX".into());
+    runtime.request(&Request::new("recover"), true).unwrap();
+    for _ in 0..40 {
+        runtime.tick().unwrap();
+    }
+    assert!(runtime.request(&output, true).is_err());
+    runtime.request(&Request::new("test_off"), true).unwrap();
+    runtime.request(&output, true).unwrap();
+    assert!(runtime.error.is_empty());
+}

@@ -533,6 +533,7 @@ impl Runtime {
             s.test_active = self.test.active;
             s.test_ready = !self.emergency
                 && self.fresh()
+                && self.setup
                 && self.settings.ready()
                 && !self.setup_error
                 && self.test.selected.is_some_and(|(target, _)| {
