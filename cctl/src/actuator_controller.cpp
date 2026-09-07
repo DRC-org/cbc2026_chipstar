@@ -234,6 +234,14 @@ void ActuatorController::stopAfterTxFailure() {
 }
 
 bool ActuatorController::applySlotStates() {
+  // トルク解除中に手で動かした位置を、有効化より先にモータへ渡す。
+  // 有効化後の周期送信を待つと、モータ内に残った古い目標へ動き出す。
+  if ((slotActive(domain::slot_bit::SLOT0) && !slot0_.setLocRef(targets_[0])) ||
+      (slotActive(domain::slot_bit::SLOT2) &&
+       !slot2_.sendPositionVelocity(targets_[2], parameters_.get(domain::ParamId::DmPosVelLimit)))) {
+    stopAfterTxFailure();
+    return false;
+  }
   const bool el05 = slotActive(domain::slot_bit::SLOT0) ? slot0_.enable() : slot0_.disable(false);
   const bool dm = slotActive(domain::slot_bit::SLOT2) ? slot2_.enable() : slot2_.disable();
   if (!el05 || !dm) {

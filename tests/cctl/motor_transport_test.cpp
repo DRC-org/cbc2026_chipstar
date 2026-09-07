@@ -115,6 +115,33 @@ TEST_CASE("開始シーケンスはEL05とDMのEnableを送信する") {
  }
  CHECK(el05);CHECK(dm);
 }
+TEST_CASE("DM再開は手動移動後の現在位置をEnableより先に送る") {
+ resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::DmPMax),256.0f));
+ REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::Slot2Min),-256.0f));
+ REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::Slot2Max),256.0f));
+ domain::CanFrame frame;frame.id=10;frame.length=8;
+ frame.data[0]=9;frame.data[1]=0x11;frame.data[2]=0x1D;
+ controller.dispatchRx(frame);
+ const float position=controller.measured(2);
+ REQUIRE(position < -221.0f);
+ REQUIRE(position > -222.0f);
+ REQUIRE(controller.setSlotsEnabled(4,true));accepted.clear();
+ REQUIRE(controller.setMode(domain::RunMode::Run));
+ bool primed=false,enabled=false;
+ for(const auto& f:accepted) {
+  if(!f.extended&&f.id==0x109) {
+   float sent;std::memcpy(&sent,f.data,4);CHECK(sent==position);primed=true;
+  }
+  if(!f.extended&&f.id==9&&f.data[7]==0xFC) {CHECK(primed);enabled=true;}
+ }
+ CHECK(enabled);
+ REQUIRE(controller.setMode(domain::RunMode::Stop));
+ accepted.clear();fail_identifier=0x109;
+ CHECK_FALSE(controller.setMode(domain::RunMode::Run));
+ for(const auto& f:accepted) CHECK_FALSE((!f.extended&&f.id==9&&f.data[7]==0xFC));
+ CHECK(controller.enabledSlots()==0);
+}
 TEST_CASE("EL05速度上限はPP用のVEL_MAXへ書く") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();accepted.clear();
  REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::El05LimitSpd),0.75f));
