@@ -111,7 +111,7 @@ fn operator_ownership_expiring_input_and_disconnect_do_not_resume() {
         host.call(Request {
             token: Some(token.clone()),
             axis: Some("r".into()),
-            value: Some(0.5),
+            value: Some(-0.5),
             ..Request::new("input")
         })
         .ok

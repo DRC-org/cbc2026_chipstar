@@ -69,8 +69,11 @@ fn converts_manual_velocity_to_native_units() {
     machine.set_soft_limits(false);
     let mut input = neutral_input();
     input.axes[1] = 0.5;
+    input.axes[0] = 0.5;
     let lines = machine.jog_lines(&input, &telemetry_with(0, [0.0; 3]), false);
-    assert_eq!(lines[0], "JOG 0 0.20000");
+    assert_eq!(lines[0], "JOG 0 -0.20000");
+    let theta_velocity: f32 = lines[1].split_whitespace().last().unwrap().parse().unwrap();
+    assert!((theta_velocity + 660.1103).abs() < 0.001);
     assert_eq!(lines[2], "JOG 2 0.00000");
 }
 
@@ -82,10 +85,12 @@ fn deadzone_nonfinite_input_and_low_speed_are_bounded() {
     let mut input = neutral_input();
     for value in [0.05, f32::NAN, f32::INFINITY] {
         input.axes[1] = value;
-        assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 0.00000");
+        let lines = machine.jog_lines(&input, &t, false);
+        let velocity: f32 = lines[0].split_whitespace().last().unwrap().parse().unwrap();
+        assert_eq!(velocity, 0.0);
     }
     input.axes[1] = 2.0;
-    assert_eq!(machine.jog_lines(&input, &t, true)[0], "JOG 0 0.08000");
+    assert_eq!(machine.jog_lines(&input, &t, true)[0], "JOG 0 -0.08000");
 }
 
 /// SW1が閉じた状態（B接点の平常時）のテレメトリ。
@@ -346,7 +351,8 @@ fn axis_without_a_switch_is_captured_only_by_hand() {
     assert_eq!(states[theta].position, 0.0);
     // 採用直後は指令も実測に一致し、軸は動かない。
     let lines = machine.jog_lines(&neutral_input(), &telemetry, false);
-    assert_eq!(lines[1], "JOG 1 0.00000");
+    let velocity: f32 = lines[1].split_whitespace().last().unwrap().parse().unwrap();
+    assert_eq!(velocity, 0.0);
 }
 
 #[test]

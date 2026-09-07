@@ -22,7 +22,7 @@ fn frozen_feedback_does_not_accumulate_a_manual_position_target() {
     machine.observe(&t);
     assert!(machine.capture_origin(0, Some(&t)));
     let mut input = ControllerState::default();
-    input.axes[1] = 0.5;
+    input.axes[1] = -0.5;
     for _ in 0..1000 {
         machine.observe(&t);
         assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 0.20000");
@@ -30,7 +30,9 @@ fn frozen_feedback_does_not_accumulate_a_manual_position_target() {
     assert_eq!(machine.origin_states(Some(&t))[0].position, 0.0);
     assert_eq!(machine.jog_lines(&input, &t, true)[0], "JOG 0 0.04000");
     input.axes[1] = 0.0;
-    assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 0.00000");
+    let lines = machine.jog_lines(&input, &t, false);
+    let velocity: f32 = lines[0].split_whitespace().last().unwrap().parse().unwrap();
+    assert_eq!(velocity, 0.0);
 }
 #[test]
 fn displayed_position_uses_the_captured_offset() {
