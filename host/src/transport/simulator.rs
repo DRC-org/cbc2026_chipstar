@@ -24,6 +24,8 @@ pub struct Simulator {
     rx: VecDeque<String>,
     disconnected: bool,
     reject: bool,
+    delay_run: bool,
+    pending_run: Option<Instant>,
 }
 impl Simulator {
     pub(super) fn fault(&mut self, fault: &str) -> Result<()> {
@@ -45,11 +47,13 @@ impl Simulator {
                 self.disconnected = false;
                 self.mode = "SAFE";
                 self.enabled = 0;
+                self.pending_run = None;
                 self.started = Instant::now();
                 self.parameters.clear();
             }
             "reject" => self.reject = true,
-            _ => bail!("disconnect / reconnect / reject を指定してください"),
+            "delay_run" => self.delay_run = true,
+            _ => bail!("disconnect / reconnect / reject / delay_run を指定してください"),
         }
         Ok(())
     }
@@ -74,6 +78,8 @@ impl Simulator {
             rx: VecDeque::new(),
             disconnected: false,
             reject: false,
+            delay_run: false,
+            pending_run: None,
         }
     }
     pub(super) fn write(&mut self, line: &str) -> Result<()> {
@@ -96,11 +102,17 @@ impl Simulator {
                 self.mode = if line == "STOP" { "STOP" } else { "SAFE" };
                 self.velocity = [0.0; 3];
                 self.targets = [None; 3];
+                self.pending_run = None;
             }
             ["RUN"] => {
-                self.mode = "RUN";
-                self.velocity = [0.0; 3];
-                self.contact = Instant::now();
+                if self.delay_run {
+                    self.delay_run = false;
+                    self.pending_run = Some(Instant::now() + std::time::Duration::from_millis(250));
+                } else {
+                    self.mode = "RUN";
+                    self.velocity = [0.0; 3];
+                    self.contact = Instant::now();
+                }
             }
             ["ENABLE", mask, flag] => {
                 let mask: u8 = mask.parse()?;
@@ -259,6 +271,15 @@ impl Simulator {
         self.tick = Instant::now();
         if self.disconnected {
             return Vec::new();
+        }
+        if self
+            .pending_run
+            .is_some_and(|deadline| Instant::now() >= deadline)
+        {
+            self.pending_run = None;
+            self.mode = "RUN";
+            self.velocity = [0.0; 3];
+            self.contact = Instant::now();
         }
         if self.contact.elapsed().as_millis() > 250 && self.mode == "RUN" {
             self.mode = "STOP";

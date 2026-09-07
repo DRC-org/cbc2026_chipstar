@@ -229,7 +229,7 @@ GUIとAPIは同じ操作受付を使う。AI操作中の通常操縦は停止し
 | `save` | `--token [--text 保存先パス]` | 適用中の機体設定を保存。保存先省略時は現在の設定ファイル |
 | `connection` | `--token --file connection.toml` | `serial_device`と`baud_rate`、任意の`simulate`を指定して再接続 |
 | `reinit` | `--token --axis` | モータの制御モードを再設定、原点無効化 |
-| `fault` | `--token --text disconnect/reconnect/reject` | 模擬接続の障害注入 |
+| `fault` | `--token --text disconnect/reconnect/reject/delay_run` | 模擬接続の障害注入。`delay_run`はRUN応答待ち中の停止テスト用 |
 
 APIは同じOSユーザだけが接続できるUnixソケット。既定は
 `$XDG_RUNTIME_DIR/catchrobo-host.sock`、未設定時は`$HOME/.cache/catchrobo/host.sock`。
@@ -248,4 +248,5 @@ ctest --test-dir tests/build --output-on-failure
 ```
 
 結合テストは別プロセスの模擬hostへ実際のソケットで接続し、操作権、入力期限切れ、
-停止、再接続、原点の再確認、一時適用と保存、基板の拒否を確認する。
+停止・保持と全出力停止、RUN応答待ち中の停止、再接続、原点の再確認、異常復旧、
+運転中の設定変更拒否、一時適用と保存を確認する。

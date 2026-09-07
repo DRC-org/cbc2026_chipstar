@@ -119,6 +119,8 @@ impl Runtime {
     }
     fn stop(&mut self, cut: bool) -> Result<()> {
         let cut = cut
+            // RUN送信後、応答前は保持対象が確定していない。JOG 0ではなくSTOPで競合を閉じる。
+            || self.drive.awaiting().is_some()
             || self.test.enabled
             || self.sts.active
             || !self.ee.targets.is_empty()
