@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum TuneView {
     Axes,
+    Pid,
     Parameters,
     File,
 }
@@ -85,6 +86,7 @@ impl BridgeApp {
     pub(super) fn tune(&mut self, ui: &mut egui::Ui) {
         let edited = match self.tune_view {
             TuneView::Axes => self.tune_axes(ui),
+            TuneView::Pid => self.tune_pid(ui),
             TuneView::Parameters => self.tune_parameters(ui),
             TuneView::File => {
                 self.tune_file(ui);

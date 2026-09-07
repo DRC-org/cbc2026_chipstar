@@ -515,6 +515,7 @@ pub fn install_japanese_font(ctx: &egui::Context) {
 }
 mod diagnose;
 mod operate;
+mod pid;
 mod shortcuts;
 mod tune;
 

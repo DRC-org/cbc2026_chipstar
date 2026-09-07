@@ -142,6 +142,7 @@ impl BridgeApp {
             Screen::Tune => {
                 for (view, label) in [
                     (tune::TuneView::Axes, "軸・原点"),
+                    (tune::TuneView::Pid, "PID調整"),
                     (tune::TuneView::Parameters, "基板パラメータ"),
                     (tune::TuneView::File, "設定ファイル"),
                 ] {
