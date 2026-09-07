@@ -88,6 +88,10 @@ impl Control {
     pub fn busy(&self) -> bool {
         self.pending.is_some() || !self.queue.is_empty() || self.wait_until.is_some()
     }
+    pub fn elapsed_ms(&self) -> u64 {
+        self.epoch
+            .map_or(0, |epoch| epoch.elapsed().as_millis() as u64)
+    }
 }
 
 impl Runtime {
@@ -353,14 +357,6 @@ impl Runtime {
         if !self.sts.interested {
             return Ok(());
         }
-        self.shared.update_status(|s| {
-            s.sts.elapsed_ms = self
-                .sts
-                .epoch
-                .map_or(0, |epoch| epoch.elapsed().as_millis() as u64);
-            s.sts.active = self.sts.active;
-            s.sts.busy = self.sts.busy();
-        });
         if !self.fresh() {
             self.sts.cancel();
             return Ok(());

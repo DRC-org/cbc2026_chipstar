@@ -638,6 +638,9 @@ impl Runtime {
                 .selected
                 .map(|(_, kind)| kind.key().into())
                 .unwrap_or_default();
+            s.sts.elapsed_ms = self.sts.elapsed_ms();
+            s.sts.active = self.sts.active;
+            s.sts.busy = self.sts.busy();
             s.emergency = self.emergency;
             s.outputs_active = self.homing.is_some()
                 || !self.ee.targets.is_empty()
