@@ -54,6 +54,7 @@ struct Runtime {
     test: test_control::TestControl,
     sts: sts_control::Control,
     ee: ee_control::Control,
+    homing: Option<homing::Homing>,
     authority: Authority,
     manual_input: ControllerState,
     screen_control: bool,
@@ -86,6 +87,7 @@ impl Runtime {
             test: test_control::TestControl::default(),
             sts: sts_control::Control::default(),
             ee: ee_control::Control::default(),
+            homing: None,
             authority: Authority::default(),
             manual_input: ControllerState::default(),
             gamepad_name: String::new(),
@@ -114,7 +116,12 @@ impl Runtime {
         self.screen_input_times = [None; 6];
     }
     fn stop(&mut self, cut: bool) -> Result<()> {
-        let cut = cut || self.test.enabled || self.sts.active || !self.ee.targets.is_empty();
+        let cut = cut
+            || self.test.enabled
+            || self.sts.active
+            || !self.ee.targets.is_empty()
+            || self.homing.is_some();
+        self.homing = None;
         self.ee = ee_control::Control::default();
         self.sts.cancel();
         self.test.restart_blocked |= self.test.active;
@@ -243,6 +250,7 @@ impl Runtime {
         Ok(())
     }
     fn start(&mut self) -> Result<()> {
+        anyhow::ensure!(self.homing.is_none(), "ホーミングを停止してください");
         anyhow::ensure!(!self.sts.active, "STS操作を停止してください");
         if self.emergency {
             bail!("ソフト緊停中です");
@@ -553,6 +561,9 @@ impl Runtime {
             self.reason = "通信復旧。原点を確認して再開してください".into();
         }
         self.tick_test(now)?;
+        if let Err(error) = self.tick_homing(now) {
+            self.fault(error.to_string());
+        }
         if let Err(error) = self.tick_ee(now) {
             self.fault(error.to_string());
         }
@@ -584,6 +595,7 @@ impl Runtime {
         self.shared.update_status(|s| {
             s.test_mode = self.test.enabled;
             s.ee_targets = self.ee.targets.clone();
+            s.homing = self.homing.as_ref().map(|h| h.label.clone());
             s.test_active = self.test.active;
             s.test_ready = !self.emergency
                 && self.fresh()
@@ -609,7 +621,8 @@ impl Runtime {
                 .map(|(_, kind)| kind.key().into())
                 .unwrap_or_default();
             s.emergency = self.emergency;
-            s.outputs_active = !self.ee.targets.is_empty()
+            s.outputs_active = self.homing.is_some()
+                || !self.ee.targets.is_empty()
                 || self.sts.active
                 || self.test.active
                 || self.drive.awaiting().is_some()
@@ -621,6 +634,8 @@ impl Runtime {
                 "ソフト緊停中"
             } else if !self.fresh() {
                 "接続断 / 状態不明"
+            } else if self.homing.is_some() {
+                "r・zホーミング中"
             } else if self.test.active {
                 "個別テスト出力中"
             } else if self.drive.running() {
@@ -651,7 +666,9 @@ impl Runtime {
                 .as_ref()
                 .map(|t| t.mode.label().to_owned())
                 .unwrap_or_default();
-            s.reason = if !self.drive.running() && self.drive.awaiting().is_none() {
+            s.reason = if let Some(homing) = &self.homing {
+                homing.label.clone()
+            } else if !self.drive.running() && self.drive.awaiting().is_none() {
                 self.ready()
                     .err()
                     .map(|e| e.to_string())
@@ -779,6 +796,7 @@ pub fn run(shared: Arc<Shared>) {
 }
 
 mod ee_control;
+mod homing;
 mod requests;
 mod sts_control;
 mod test_control;

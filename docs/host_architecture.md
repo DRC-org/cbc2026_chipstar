@@ -104,7 +104,8 @@ GUIとAPIで同じ入口を使う。画面にCANフレームの生成や操作�
 
 基板の指令追加は`protocol/`と対応FWで扱う。模擬応答は`transport/simulator.rs`に置き、
 実機と同じworkerの経路で検証する。通常操縦はrθzのJOGと、明示的に開始したEEのサーボ指令を生成する。
-周辺サーボのプロファイル定義だけで駆動を開始しない。[EE操作](ee_operation.md)を参照。
+周辺サーボのプロファイル定義だけで駆動を開始しない。[EE操作](ee_operation.md)と
+[r・zホーミング](homing.md)を参照。
 
 ## 検証
 

@@ -102,6 +102,21 @@ impl BridgeApp {
 
     fn tune_axes(&mut self, ui: &mut egui::Ui) -> bool {
         let status = self.shared.status_snapshot();
+        panel().show(ui, |ui| {
+            ui.heading("r・z自動ホーミング");
+            ui.label("z下端 → r前端の順に低速移動。θとEEには動作指令を送りません。完了後も停止を維持します。");
+            if let Some(label) = &status.homing {
+                ui.colored_label(ACCENT, label);
+                if ui.button("ホーミング中断").clicked() { self.dispatch(Action::Stop); }
+            } else {
+                ui.horizontal(|ui| { ui.label("各軸の制限時間"); ui.add(egui::DragValue::new(&mut self.homing_timeout).range(10.0..=1800.0).suffix("秒")); });
+                ui.checkbox(&mut self.homing_confirmed, "EEがシューティングボックスの反対側を向き、z下降・r前進の全経路で干渉しないことを確認した");
+                if ui.add_enabled(self.homing_confirmed && status.connected && status.configured && !status.running && !status.outputs_active && !status.test_mode && !status.ai_active && !status.emergency, egui::Button::new("確認した姿勢でホーミング開始")).clicked() {
+                    self.homing_confirmed = false;
+                    self.request(Request { flag: Some(true), value: Some(self.homing_timeout), ..Request::new("home") });
+                }
+            }
+        });
         let mut edited = false;
         section(
             ui,

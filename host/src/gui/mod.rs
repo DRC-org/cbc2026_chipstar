@@ -56,6 +56,8 @@ pub struct BridgeApp {
     tests: individual::TestPanel,
     sts_ui: sts::StsPanel,
     pid_plot: pid_plot::Panel,
+    homing_confirmed: bool,
+    homing_timeout: f32,
     ee_values: std::collections::BTreeMap<String, f32>,
     connection: crate::application::app_state::Connection,
 }
@@ -99,6 +101,8 @@ impl BridgeApp {
             tests: individual::TestPanel::default(),
             sts_ui: sts::StsPanel::default(),
             pid_plot: pid_plot::Panel::default(),
+            homing_confirmed: false,
+            homing_timeout: 180.0,
             ee_values: std::collections::BTreeMap::new(),
         }
     }
@@ -127,6 +131,7 @@ impl BridgeApp {
     }
     fn can_apply(&self, status: &Status) -> bool {
         !status.emergency
+            && status.homing.is_none()
             && !status.sts.active
             && !status.sts.busy
             && !status.test_active
@@ -137,6 +142,7 @@ impl BridgeApp {
     }
     fn can_save(&self, status: &Status) -> bool {
         !status.emergency
+            && status.homing.is_none()
             && !status.sts.active
             && !status.sts.busy
             && !status.test_active
@@ -146,6 +152,7 @@ impl BridgeApp {
     }
     fn can_run(status: &Status) -> bool {
         !status.emergency
+            && status.homing.is_none()
             && !status.sts.active
             && !status.sts.busy
             && !status.test_mode

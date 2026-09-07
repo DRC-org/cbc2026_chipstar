@@ -29,7 +29,7 @@ pub struct AxisLimit {
 
 impl AxisLimit {
     /// リミットに到達しているか。接点が閉じているとき `contacts` のbitが1。
-    pub(super) fn reached(&self, contacts: u8) -> bool {
+    pub fn reached(&self, contacts: u8) -> bool {
         let closed = contacts & (1 << self.input) != 0;
         closed != self.normally_closed
     }

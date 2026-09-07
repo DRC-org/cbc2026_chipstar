@@ -61,6 +61,14 @@ impl Runtime {
             req.action == "stop",
             Instant::now(),
         )?;
+        if self.homing.is_some()
+            && !matches!(
+                req.action.as_str(),
+                "stop" | "cut" | "safe" | "heartbeat" | "release" | "fault"
+            )
+        {
+            bail!("ホーミングを停止してから操作してください");
+        }
         if req.action == "sts" {
             return self.sts_request(req);
         }
@@ -94,6 +102,13 @@ impl Runtime {
             bail!("個別テストの出力を停止してから操作してください");
         }
         match req.action.as_str() {
+            "home" => {
+                return self.begin_homing(
+                    manual,
+                    req.flag == Some(true),
+                    req.value.unwrap_or(180.0),
+                );
+            }
             "ee" => return self.ee_request(req),
             "heartbeat" => {}
             "recover" => {
