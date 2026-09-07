@@ -22,6 +22,7 @@ impl BridgeApp {
         ui.label(RichText::new("位置と速度のゲインは別の制御ループです。一度に変更する項目を絞り、振動・追従・発熱を確認してください。").size(12.0).color(MUTED));
         let applied = self.shared.config().machine;
         let status = self.shared.status_snapshot();
+        self.pid_response(ui);
         let axes: Vec<_> = self
             .edit
             .axes

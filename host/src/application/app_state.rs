@@ -77,6 +77,7 @@ pub struct Pending {
 }
 
 pub struct Shared {
+    pub response_history: Mutex<super::response_history::History>,
     config: Mutex<BridgeConfig>,
     status: Mutex<Status>,
     pending: Mutex<VecDeque<Pending>>,
@@ -86,6 +87,7 @@ pub struct Shared {
 impl Shared {
     pub fn new(config: BridgeConfig) -> Self {
         Self {
+            response_history: Mutex::new(super::response_history::History::default()),
             status: Mutex::new(Status {
                 simulated: config.simulate,
                 saved: true,

@@ -55,6 +55,7 @@ pub struct BridgeApp {
     command_text: String,
     tests: individual::TestPanel,
     sts_ui: sts::StsPanel,
+    pid_plot: pid_plot::Panel,
     connection: crate::application::app_state::Connection,
 }
 impl BridgeApp {
@@ -96,6 +97,7 @@ impl BridgeApp {
             command_text: String::new(),
             tests: individual::TestPanel::default(),
             sts_ui: sts::StsPanel::default(),
+            pid_plot: pid_plot::Panel::default(),
         }
     }
     fn request(&mut self, request: Request) {
@@ -522,6 +524,7 @@ pub fn install_japanese_font(ctx: &egui::Context) {
 mod diagnose;
 mod operate;
 mod pid;
+mod pid_plot;
 mod shortcuts;
 mod sts;
 mod tune;

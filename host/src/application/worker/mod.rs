@@ -447,6 +447,11 @@ impl Runtime {
                         self.reason = "運転中".into();
                     }
                 }
+                self.shared.response_history.lock().unwrap().record(
+                    &t,
+                    &self.cfg.machine,
+                    &self.machine.origin_states(Some(&t)),
+                );
                 self.telemetry = Some(t);
             }
         }
