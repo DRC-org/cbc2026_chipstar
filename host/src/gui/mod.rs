@@ -387,7 +387,7 @@ impl eframe::App for BridgeApp {
                         if ui.add_enabled(
                             status.connected && !status.emergency && !status.ai_active
                                 && !status.running && !status.outputs_active,
-                            egui::Button::new("復旧・再確認"),
+                            egui::Button::new("設定を再送して確認"),
                         ).on_hover_text("出力停止のまま設定を再送・照合します。緊停やモータ異常は解除しません")
                             .clicked() {
                             self.operation("recover");
@@ -501,12 +501,10 @@ fn keycap(ui: &mut egui::Ui, text: &str) {
         });
 }
 fn section(ui: &mut egui::Ui, title: &str, description: &str) {
-    ui.horizontal_wrapped(|ui| {
-        ui.label(RichText::new(title).size(20.0).strong());
-        if !description.is_empty() {
-            ui.label(RichText::new(description).size(13.0).color(MUTED));
-        }
-    });
+    ui.label(RichText::new(title).size(20.0).strong());
+    if !description.is_empty() {
+        ui.label(RichText::new(description).size(13.0).color(MUTED));
+    }
     ui.add_space(8.0);
 }
 pub fn install_japanese_font(ctx: &egui::Context) {

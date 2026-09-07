@@ -1,4 +1,63 @@
 //! 基板の公開パラメータの説明。ID・意味はdevice_protocol.mdとFW定義に対応する。
+pub(super) fn label(name: &str) -> Option<&'static str> {
+    Some(match name {
+        "m3508_pos_kp" => "θ 位置Pゲイン",
+        "m3508_pos_ki" => "θ 位置Iゲイン",
+        "m3508_pos_kd" => "θ 位置Dゲイン",
+        "m3508_vel_kp" => "θ 速度Pゲイン",
+        "m3508_vel_ki" => "θ 速度Iゲイン",
+        "m3508_vel_kd" => "θ 速度Dゲイン",
+        "m3508_max_rpm" => "θ モータ速度上限",
+        "m3508_max_current_ma" => "θ 電流指令上限",
+        "m3508_max_temperature_c" => "θ 過熱判定温度",
+        "m3508_slot2_pos_kp" => "z 位置Pゲイン",
+        "m3508_slot2_pos_ki" => "z 位置Iゲイン",
+        "m3508_slot2_pos_kd" => "z 位置Dゲイン",
+        "m3508_slot2_vel_kp" => "z 速度Pゲイン",
+        "m3508_slot2_vel_ki" => "z 速度Iゲイン",
+        "m3508_slot2_vel_kd" => "z 速度Dゲイン",
+        "m3508_slot2_max_rpm" => "z モータ速度上限",
+        "m3508_slot2_max_current_ma" => "z 電流指令上限",
+        "m3508_slot2_max_temperature_c" => "z 過熱判定温度",
+        "el05_loc_kp" => "r モータ内部位置Pゲイン",
+        "el05_limit_spd" => "r モータ内部速度上限",
+        "el05_limit_cur" => "r モータ内部電流上限",
+        "slot0_min" => "r モータ絶対位置の下限",
+        "slot0_max" => "r モータ絶対位置の上限",
+        "slot1_min" => "θ モータ累積角度の下限",
+        "slot1_max" => "θ モータ累積角度の上限",
+        "slot2_min" => "z モータ累積角度の下限",
+        "slot2_max" => "z モータ累積角度の上限",
+        "c620_esc_id" => "θ C620 ID",
+        "c620_slot2_esc_id" => "z C620 ID",
+        "el05_motor_id" => "r モータID",
+        "el05_host_id" => "r host ID",
+        "m3508_period_ms" => "M3508制御周期",
+        "el05_period_ms" => "EL05指令周期",
+        "telemetry_period_ms" => "cctl状態通知周期",
+        "watchdog_ms" => "通信監視時間",
+        "feedback_timeout_ms" => "モータ応答待ち時間",
+        "dm_p_max" => "DM位置の符号化範囲",
+        "dm_v_max" => "DM速度の符号化範囲",
+        "dm_t_max" => "DMトルクの符号化範囲",
+        "dm_pos_vel_limit" => "DM位置指令の速度上限",
+        "dm_can_id" => "DM指令先CAN ID",
+        "dm_mst_id" => "DM応答先CAN ID",
+        "dm_period_ms" => "DM指令周期",
+        "min_pulse_us" => "PWMパルス幅の下限",
+        "max_pulse_us" => "PWMパルス幅の上限",
+        "max_duty" => "DCモータ出力上限",
+        "ramp_interval_ms" => "DCモータ出力の更新間隔",
+        "ramp_step" => "DCモータ出力の変化量",
+        "reverse_brake_ms" => "DCモータ反転前の停止時間",
+        "pwm_frequency_hz" => "DCモータPWM周波数",
+        "servo_baud" => "STS3215通信速度",
+        "servo_timeout_ms" => "STS3215応答待ち時間",
+        "wait_for_write_status" => "STS3215書込み応答の確認方法",
+        _ => return None,
+    })
+}
+
 pub(super) fn help(name: &str) -> Option<(&'static str, &'static str)> {
     if let Some(suffix) = name.strip_prefix("m3508_slot2_") {
         return help(&format!("m3508_{suffix}"));
@@ -167,6 +226,7 @@ mod tests {
         ];
         for name in tables.into_iter().flatten() {
             assert!(super::help(name).is_some(), "説明がありません: {name}");
+            assert!(super::label(name).is_some(), "表示名がありません: {name}");
         }
     }
 }

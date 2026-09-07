@@ -156,7 +156,7 @@ impl BridgeApp {
             })
         } else if status.origin_adjustment {
             Some("原点調整中：低速固定で、機体座標の可動域制限を解除しています。")
-        } else if !status.running && !status.reason.is_empty() {
+        } else if !status.running && !status.reason.is_empty() && status.reason != status.error {
             Some(status.reason.as_str())
         } else {
             None

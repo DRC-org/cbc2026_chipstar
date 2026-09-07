@@ -243,12 +243,12 @@ impl BridgeApp {
         let mut edited = false;
         section(
             ui,
-            "基板の動作条件を調整",
-            "各基板へ送る制限値と通信周期を変更します。",
+            "基板へ送る制限値と通信設定を調整",
+            "変更する値の説明を確認し、画面上部の「適用」で機体へ反映します。",
         );
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            egui::CollapsingHeader::new("基板の調整値")
+            egui::CollapsingHeader::new("基板別の設定値")
                 .default_open(true)
                 .show(ui, |ui| {
                     for (board, parameters) in [
@@ -270,7 +270,9 @@ impl BridgeApp {
                                 for (name, value) in parameters {
                                     let (unit, description) = parameter_help::help(name)
                                         .unwrap_or(("", "この項目の説明は未登録です"));
-                                    ui.label(name).on_hover_text(description);
+                                    let label = parameter_help::label(name).unwrap_or(name);
+                                    ui.label(label)
+                                        .on_hover_text(format!("設定キー：{name}\n{description}"));
                                     edited |= ui
                                         .add(egui::DragValue::new(value).speed(0.01).suffix(
                                             if unit.is_empty() {
@@ -292,7 +294,11 @@ impl BridgeApp {
     }
 
     fn tune_file(&mut self, ui: &mut egui::Ui) {
-        section(ui, "設定ファイル", "読込・保存先と全設定の編集");
+        section(
+            ui,
+            "設定ファイルを直接確認・編集",
+            "通常の調整項目にない値を含め、機体設定全体を扱います。",
+        );
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
@@ -316,7 +322,7 @@ impl BridgeApp {
             });
             let path = self.shared.config().profile_path.display().to_string();
             ui.label(RichText::new(format!("適用中の設定ファイル  {path}")).size(12.0).color(MUTED));
-            egui::CollapsingHeader::new("全設定を編集 · TOML")
+            egui::CollapsingHeader::new("機体設定の全項目（TOML形式）")
                 .default_open(true)
                 .show(ui, |ui| {
                     if ui.add(
