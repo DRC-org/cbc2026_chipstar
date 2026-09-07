@@ -143,6 +143,28 @@ slotが`feedback_timeout_ms`を超えて応答しないと、FWはそのslotを�
 このbitを立てる。hostとの通信が生きていてもモータ側のCANが抜けたことを検出する
 ための経路で、復帰にはhostからの再有効化を要する。
 
+### EL05の読取り診断
+
+CCTLは250msごとに1項目、12項目を約3秒で巡回してEL05の実設定と状態を読み出す。
+成功した応答だけを次の形式で送る。hostの「診断 → 通信ログ」で
+`EL05_PARAM` に絞り込むと確認できる。
+
+```text
+EL05_PARAM index=7005 raw=00000001 state=0 fault=0
+```
+
+`index` と `raw` は16進数。index 7005（run_mode）の値はrawの下位8bit、
+その他はrawの32bitをIEEE 754 floatとして解釈する。
+run_modeは1=位置PP、2=速度、5=位置CSP。
+`state` は直近のモータフィードバックのbit23..22（0=リセット、1=校正、2=運転）。
+`fault` はEL05の異常bitにCCTLの応答途絶bitを加えた値。
+CCTLのRUNとモータ自身の運転状態は別に確認する。
+
+読取り対象はrun_mode、limit_spd、limit_cur、loc_kp、loc_ref、mechPos、
+mechVel、iqf、VBUS、spd_kp、spd_ki、limit_torque。
+診断読取りは目標や出力状態を変更せず、位置フィードバックの鮮度も更新しない。
+応答が来ない項目は出力されないため、古いログを現在値として扱わない。
+
 ## 実行時パラメータ
 
 FWを書き直さずに実機調整を終えられるよう、調整対象の定数はhostから変更できる。
