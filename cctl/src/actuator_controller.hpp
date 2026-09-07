@@ -60,6 +60,9 @@ class ActuatorController {
   uint8_t errorBits(uint8_t slot) const;
   // フィードバックが途絶えたslotのbit mask。
   uint8_t staleSlots() const { return feedback_.stale(); }
+  int16_t c620CommandMilliAmp() const { return slot1_.lastCommandMilliAmp(); }
+  int32_t c620CurrentMilliAmp() const { return slot1_.currentMilliAmp(); }
+  int16_t c620Rpm() const { return slot1_.rpm(); }
 
  private:
   bool applySlotStates();

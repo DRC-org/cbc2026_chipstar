@@ -60,6 +60,7 @@ class M3508Motor {
 
   float motorDeg() const { return angle_.degrees(); }
   int16_t rpm() const { return last_feedback_.rpm; }
+  int16_t lastCommandMilliAmp() const { return last_command_ma_; }
   bool hasFeedback() const { return angle_.hasReference(); }
 
   // ESC が返す実トルク電流[mA]。
@@ -89,4 +90,5 @@ class M3508Motor {
   // 設定されている間は PID を迂回して直接この電流を出す。
   bool direct_current_ = false;
   float direct_current_ma_ = 0.0f;
+  int16_t last_command_ma_ = 0;
 };

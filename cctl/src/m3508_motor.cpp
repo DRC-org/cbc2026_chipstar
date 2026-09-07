@@ -81,5 +81,6 @@ int16_t M3508Motor::computeCurrentMilliAmp() {
 }
 
 int16_t M3508Motor::commandRaw() {
-  return domain::c620::currentToRaw(computeCurrentMilliAmp());
+  last_command_ma_ = computeCurrentMilliAmp();
+  return domain::c620::currentToRaw(last_command_ma_);
 }

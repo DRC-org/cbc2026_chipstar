@@ -392,6 +392,17 @@ extern "C" void loop(void) {
                                            controller.errorBits(2)));
     }
 
+    static uint32_t last_current_diagnostic_ms = 0;
+    if (now - last_current_diagnostic_ms >= 100) {
+        last_current_diagnostic_ms = now;
+        char text[96];
+        std::snprintf(text, sizeof(text), "C620_DIAG cmd_ma=%d actual_ma=%ld rpm=%d",
+            static_cast<int>(controller.c620CommandMilliAmp()),
+            static_cast<long>(controller.c620CurrentMilliAmp()),
+            static_cast<int>(controller.c620Rpm()));
+        sendText(text);
+    }
+
     static uint32_t last_discovery_ms = 0;
     if (now - last_discovery_ms >= 1000) {
         last_discovery_ms = now;
