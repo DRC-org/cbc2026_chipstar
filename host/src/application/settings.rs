@@ -182,11 +182,11 @@ mod tests {
 
     #[test]
     fn sends_can_board_parameters_through_the_gateway() {
-        let source = format!(
-            "{}\n[dcmd_parameters]\nmax_duty = 1000.0\n\n[serial_svmd_parameters]\nservo_baud = 1000000.0\n",
-            include_str!("../../config/rtheta.toml")
-        );
-        let profile = MachineProfile::parse(&source).unwrap();
+        let mut profile = MachineProfile::embedded().unwrap();
+        profile.dcmd_parameters.insert("max_duty".into(), 1000.0);
+        profile
+            .serial_svmd_parameters
+            .insert("servo_baud".into(), 1000000.0);
         let lines = parameter_plan(&profile)
             .iter()
             .map(ParameterValue::command)

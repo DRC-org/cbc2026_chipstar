@@ -384,10 +384,19 @@ fn rejects_a_limit_on_a_contact_the_board_does_not_have() {
 
 #[test]
 fn accepts_but_does_not_drive_pwm_servo_from_host_profile() {
-    let source = format!(
-        "{EMBEDDED_PROFILE}\n[[pwm_servos]]\nname = \"gripper\"\nchannel = 1\ninput_axis = 3\ninput_sign = -1.0\nspeed_us_per_second = 1000.0\nminimum_us = 900\nmaximum_us = 2100\ninitial_us = 1500\nenabled = true\n"
-    );
-    let profile = MachineProfile::parse(&source).unwrap();
+    let mut profile = MachineProfile::embedded().unwrap();
+    profile.pwm_servos = vec![PwmServoProfile {
+        name: "gripper".into(),
+        channel: 1,
+        input_axis: Some(3),
+        input_sign: -1.0,
+        speed_us_per_second: 1000.0,
+        minimum_us: 900,
+        maximum_us: 2100,
+        initial_us: 1500,
+        enabled: true,
+    }];
+    profile.validate().unwrap();
     assert!(profile.requires_can_bus_2());
     let mut machine = MachineController::new(profile);
     let t = telemetry_with(0, [0.0; 3]);

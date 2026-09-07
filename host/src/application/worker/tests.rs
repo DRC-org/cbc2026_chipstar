@@ -79,11 +79,18 @@ fn ai_control_excludes_manual_changes_and_expires_without_resuming() {
 }
 
 pub(super) fn screen_runtime() -> Runtime {
+    let mut profile = MachineProfile::embedded().unwrap();
+    profile.pwm_servos.clear();
+    profile.serial_svmd = None;
+    profile.dc_motors.clear();
+    profile.svmd_parameters.clear();
+    profile.serial_svmd_parameters.clear();
+    profile.dcmd_parameters.clear();
     let shared = Arc::new(Shared::new(BridgeConfig {
         serial_device: "unused".into(),
         baud_rate: 115200,
         rate_hz: 20.0,
-        machine: MachineProfile::embedded().unwrap(),
+        machine: profile,
         profile_path: "/dev/null".into(),
         simulate: true,
     }));
