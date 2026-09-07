@@ -137,15 +137,19 @@ impl Runtime {
                 let value = req.value.context("指令値が必要です")?;
                 target.validate(kind, value, &self.cfg.machine)?;
                 if matches!(target, Target::Cctl(_)) {
+                    if !self
+                        .device
+                        .as_ref()
+                        .is_some_and(|d| d.motor_layout == "el05,m3508,m3508")
+                    {
+                        bail!("M3508×2台対応のcctl FWが必要です");
+                    }
                     let t = self.telemetry.as_ref().unwrap();
                     let Target::Cctl(slot) = target else {
                         unreachable!()
                     };
                     let error = t.error_bits[slot as usize];
-                    if t.buses & 1 == 0
-                        || t.stale_slots & (1 << slot) != 0
-                        || (if slot == 2 { error & 0xf0 } else { error }) != 0
-                    {
+                    if t.buses & 1 == 0 || t.stale_slots & (1 << slot) != 0 || error != 0 {
                         bail!("対象モータの応答・異常を確認してください");
                     }
                 } else if self.telemetry.as_ref().unwrap().buses & 2 == 0

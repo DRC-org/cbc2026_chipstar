@@ -1,5 +1,8 @@
 //! 基板の公開パラメータの説明。ID・意味はdevice_protocol.mdとFW定義に対応する。
 pub(super) fn help(name: &str) -> Option<(&'static str, &'static str)> {
+    if let Some(suffix) = name.strip_prefix("m3508_slot2_") {
+        return help(&format!("m3508_{suffix}"));
+    }
     Some(match name {
         "m3508_pos_kp" => (
             "",
@@ -76,14 +79,14 @@ pub(super) fn help(name: &str) -> Option<(&'static str, &'static str)> {
             "slot 1（M3508）のモータ累積角度の上限。減速後のアーム角度ではありません。",
         ),
         "slot2_min" => (
-            "rad",
-            "slot 2（DM）の基板側絶対位置の下限。hostの原点採用では移動しません。",
+            "deg",
+            "slot 2（M3508、減速前deg）の基板側絶対位置の下限。hostの原点採用では移動しません。",
         ),
         "slot2_max" => (
-            "rad",
-            "slot 2（DM）の基板側絶対位置の上限。hostの可動域とは別に働きます。",
+            "deg",
+            "slot 2（M3508、減速前deg）の基板側絶対位置の上限。hostの可動域とは別に働きます。",
         ),
-        "c620_esc_id" => (
+        "c620_esc_id" | "c620_slot2_esc_id" => (
             "",
             "C620のESC ID（1〜8）。実機のIDと一致させます。変更はSAFE中に反映します。",
         ),

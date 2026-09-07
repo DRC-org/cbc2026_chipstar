@@ -392,3 +392,16 @@ fn accepts_but_does_not_drive_serial_servo_from_host_profile() {
     assert_eq!(lines.len(), 3);
     assert!(lines.iter().all(|line| line.starts_with("JOG ")));
 }
+
+#[test]
+fn m3508_z_profile_uses_rotor_degrees_and_rejects_legacy_dm() {
+    let mut profile = MachineProfile::embedded().unwrap();
+    let z = profile.axes.iter().find(|a| a.slot == 2).unwrap();
+    assert!((z.native_per_unit * 72.0 - 360.0 * (3591.0 / 187.0)).abs() < 0.001);
+    assert_eq!(profile.parameters["c620_slot2_esc_id"], 2.0);
+    profile.parameters.insert("c620_slot2_esc_id".into(), 1.0);
+    assert!(profile.validate().is_err());
+    profile.parameters.insert("c620_slot2_esc_id".into(), 2.0);
+    profile.parameters.insert("dm_p_max".into(), 2048.0);
+    assert!(profile.validate().is_err());
+}

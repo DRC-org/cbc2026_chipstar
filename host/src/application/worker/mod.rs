@@ -195,8 +195,12 @@ impl Runtime {
         if !self.fresh() {
             bail!("機体の応答がありません");
         }
-        if self.cfg.machine.parameters.len() != crate::machine::PARAMETER_NAMES.len() {
-            bail!("cctlの全33項目をPCの機体設定で指定してください");
+        if crate::machine::PARAMETER_NAMES
+            .iter()
+            .filter(|name| !name.starts_with("dm_"))
+            .any(|name| !self.cfg.machine.parameters.contains_key(*name))
+        {
+            bail!("cctlの有効な全36項目をPCの機体設定で指定してください");
         }
         if self.setup_error || !self.setup || !self.settings.ready() {
             bail!("設定の反映が確認できていません");
@@ -204,17 +208,16 @@ impl Runtime {
         let Some(device) = &self.device else {
             bail!("能力確認待ち");
         };
-        if device.board != "cctl" || device.protocol != 1 || device.slots < 3 || !device.jog {
-            bail!("JOG対応のcctl FWが必要です");
+        if device.board != "cctl"
+            || device.protocol != 1
+            || device.slots < 3
+            || !device.jog
+            || device.motor_layout != "el05,m3508,m3508"
+        {
+            bail!("M3508×2台対応のcctl FWが必要です");
         }
         let t = self.telemetry.as_ref().unwrap();
-        if t.stale_slots != 0
-            || t.buses & 1 == 0
-            || t.error_bits
-                .iter()
-                .enumerate()
-                .any(|(i, &e)| if i == 2 { e & 0xf0 != 0 } else { e != 0 })
-        {
+        if t.stale_slots != 0 || t.buses & 1 == 0 || t.error_bits.iter().any(|&e| e != 0) {
             bail!("モータ応答・異常状態を確認してください");
         }
         if self.cfg.machine.requires_can_bus_2()
@@ -349,6 +352,10 @@ impl Runtime {
                 self.fault(error.to_string());
             }
             if let Some(device) = parse_device_info(&line) {
+                if device.motor_layout != "el05,m3508,m3508" {
+                    self.setup = false;
+                    self.fault("M3508×2台対応のcctl FWへ更新してください".into());
+                }
                 self.device = Some(device);
             }
             if let Some(t) = parse_telemetry(&line) {
@@ -384,7 +391,7 @@ impl Runtime {
                                 .started
                                 .is_some_and(|time| time.elapsed() > Duration::from_millis(500))))
                         || t.stale_slots & (1 << slot) != 0
-                        || (if slot == 2 { error & 0xf0 } else { error }) != 0
+                        || error != 0
                     {
                         self.fault("個別テスト対象の出力または応答を失いました".into());
                     }
@@ -457,7 +464,13 @@ impl Runtime {
                 self.send(&crate::protocol::serial_svmd::Command::Hello.to_cctl_line())?;
             }
         }
-        if self.fresh() && self.device.is_some() && !self.setup {
+        if self.fresh()
+            && self
+                .device
+                .as_ref()
+                .is_some_and(|d| d.motor_layout == "el05,m3508,m3508")
+            && !self.setup
+        {
             self.clear_drive();
             self.send("SAFE")?;
             self.stop_peripherals()?;

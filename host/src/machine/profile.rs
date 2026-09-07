@@ -108,7 +108,7 @@ fn yes() -> bool {
 /// パラメータ名から値への対応。名前は device_protocol.md の表に従う。
 pub type ParameterMap = std::collections::BTreeMap<String, f32>;
 
-pub const PARAMETER_NAMES: [&str; 33] = [
+pub const PARAMETER_NAMES: [&str; 43] = [
     "m3508_pos_kp",
     "m3508_pos_ki",
     "m3508_pos_kd",
@@ -142,6 +142,16 @@ pub const PARAMETER_NAMES: [&str; 33] = [
     "watchdog_ms",
     "feedback_timeout_ms",
     "m3508_max_temperature_c",
+    "m3508_slot2_pos_kp",
+    "m3508_slot2_pos_ki",
+    "m3508_slot2_pos_kd",
+    "m3508_slot2_max_rpm",
+    "m3508_slot2_vel_kp",
+    "m3508_slot2_vel_ki",
+    "m3508_slot2_vel_kd",
+    "m3508_slot2_max_current_ma",
+    "c620_slot2_esc_id",
+    "m3508_slot2_max_temperature_c",
 ];
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -226,6 +236,18 @@ impl MachineProfile {
             }
         }
 
+        if self.parameters.keys().any(|name| name.starts_with("dm_")) {
+            bail!("旧DM用設定です。M3508×2台用の機体設定へ移行してください");
+        }
+        let first = self.parameters.get("c620_esc_id").copied().unwrap_or(1.0);
+        let second = self
+            .parameters
+            .get("c620_slot2_esc_id")
+            .copied()
+            .unwrap_or(2.0);
+        if !(1.0..=8.0).contains(&first) || !(1.0..=8.0).contains(&second) || first == second {
+            bail!("C620のESC IDは1〜8で2台を重複なく指定してください");
+        }
         for (minimum, maximum) in [
             ("slot0_min", "slot0_max"),
             ("slot1_min", "slot1_max"),

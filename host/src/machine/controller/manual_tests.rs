@@ -61,3 +61,17 @@ fn holding_outside_a_soft_limit_does_not_command_a_return() {
     machine.hold_at_measured(Some(&telemetry(8.0)));
     assert_eq!(machine.targets[0], 200.0);
 }
+
+#[test]
+fn z_ten_mm_feedback_and_five_mm_per_second_command_use_rotor_degrees() {
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
+    let start = telemetry(1234.0);
+    assert!(machine.capture_origin(2, Some(&start)));
+    let moved = telemetry(1234.0 + 960.160_4);
+    assert!((machine.origin_states(Some(&moved))[2].position - 10.0).abs() < 0.001);
+    let mut input = ControllerState::default();
+    input.axes[3] = 1.0;
+    let line = &machine.jog_lines(&input, &start, false)[2];
+    let velocity: f32 = line.split_whitespace().last().unwrap().parse().unwrap();
+    assert!((velocity - 480.080_2).abs() < 0.001);
+}

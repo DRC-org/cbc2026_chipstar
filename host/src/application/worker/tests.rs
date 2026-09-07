@@ -818,3 +818,23 @@ fn recovery_does_not_unlock_a_faulted_held_test_request() {
     runtime.request(&output, true).unwrap();
     assert!(runtime.error.is_empty());
 }
+
+#[test]
+fn old_motor_layout_cannot_start_even_with_confirmed_settings() {
+    let shared = Arc::new(Shared::new(BridgeConfig {
+        serial_device: "unused".into(),
+        baud_rate: 115200,
+        rate_hz: 20.0,
+        machine: MachineProfile::embedded().unwrap(),
+        profile_path: "/dev/null".into(),
+        simulate: true,
+    }));
+    let mut runtime = Runtime::new(shared);
+    for _ in 0..40 {
+        runtime.tick().unwrap();
+    }
+    assert!(runtime.settings.ready());
+    runtime.device.as_mut().unwrap().motor_layout.clear();
+    assert!(runtime.start().is_err());
+    assert!(!runtime.drive.running());
+}

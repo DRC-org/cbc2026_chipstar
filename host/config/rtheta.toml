@@ -13,23 +13,17 @@ m3508_vel_kp = 7.0
 m3508_vel_ki = 0.5
 m3508_vel_kd = 0.05
 el05_loc_kp = 30.0
-# DM本体のPMAXも2048に設定・保存する。通信の位置表現範囲であり可動域ではない。
-dm_p_max = 2048.0
-dm_v_max = 200.0
-dm_t_max = 10.0
 slot0_min = -12.5
 slot0_max = 12.5
 slot1_min = -26000.0
 slot1_max = 26000.0
-slot2_min = -2048.0
-slot2_max = 2048.0
+slot2_min = -26000.0
+slot2_max = 26000.0
 c620_esc_id = 1.0
-dm_can_id = 9.0
-dm_mst_id = 17.0
+c620_slot2_esc_id = 2.0
 el05_motor_id = 127.0
 el05_host_id = 253.0
 m3508_period_ms = 1.0
-dm_period_ms = 10.0
 el05_period_ms = 20.0
 telemetry_period_ms = 50.0
 watchdog_ms = 250.0
@@ -41,8 +35,17 @@ m3508_max_current_ma = 1000.0
 # EL05: ドライバ内の速度制限と電流制限。設定時にモータへ書き込まれる。
 el05_limit_spd = 1.0
 el05_limit_cur = 2.0
-# DM: 位置速度モードの速度上限。z軸は重力負荷があるので特に低速から。
-dm_pos_vel_limit = 1.0
+
+# slot 2: M3508 + C620。slot 1と独立した初期調整値。
+m3508_slot2_pos_kp = 8.0
+m3508_slot2_pos_ki = 0.0
+m3508_slot2_pos_kd = 0.0
+m3508_slot2_max_rpm = 500.0
+m3508_slot2_vel_kp = 7.0
+m3508_slot2_vel_ki = 0.5
+m3508_slot2_vel_kd = 0.05
+m3508_slot2_max_current_ma = 1000.0
+m3508_slot2_max_temperature_c = 80.0
 
 [[axes]]
 name = "r"
@@ -88,9 +91,8 @@ input_axis = 3
 input_sign = 1.0
 # 重力負荷があるので低速から始める。実機で詰める。
 speed_per_second = 5.0
-# 手動移動の実測比で補正した暫定校正値。通信角度の物理単位は未確定。
-# 実移動との一致を確認してから速度上限を調整する。
-native_per_unit = 1.1730445
+# GT2・36T、標準減速器付きM3508: 360 * (3591/187) / 72 [motor deg/mm]
+native_per_unit = 96.01604278
 minimum = 0.0
 maximum = 75.0
 initial = 0.0

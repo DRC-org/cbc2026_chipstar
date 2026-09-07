@@ -85,7 +85,7 @@ impl Simulator {
         }
         match words.as_slice() {
             ["HELLO", "1"] => self.rx.push_back(
-                "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=default jog=1"
+                "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=default jog=1 motors=el05,m3508,m3508"
                     .into(),
             ),
             ["HEARTBEAT"] => self.contact = Instant::now(),
@@ -262,7 +262,7 @@ impl Simulator {
             let caps = [
                 *self.parameters.get(&9).unwrap_or(&1.0),
                 self.parameters.get(&3).unwrap_or(&500.0) * 6.0,
-                *self.parameters.get(&14).unwrap_or(&1.0),
+                self.parameters.get(&36).unwrap_or(&500.0) * 6.0,
             ];
             for (i, cap) in caps.iter().enumerate() {
                 if self.enabled & (1 << i) != 0 {
@@ -281,5 +281,33 @@ impl Simulator {
         let mut lines: Vec<_> = self.rx.drain(..).collect();
         lines.push(format!("STATE t={} mode={} en={} a0={p0}/{p0} a1={p1}/{p1} a2={p2}/{p2} err=00,00,00 sw=7 stale=0 can=3", self.started.elapsed().as_millis(), self.mode, self.enabled, p0=self.position[0], p1=self.position[1], p2=self.position[2]));
         lines
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::time::Duration;
+    #[test]
+    fn slot2_speed_limit_uses_its_own_rotor_rpm() {
+        let mut sim = Simulator::new();
+        for line in [
+            "PARAM 3 500",
+            "PARAM 36 10",
+            "ENABLE 6 1",
+            "RUN",
+            "JOG 1 600",
+            "JOG 2 600",
+        ] {
+            sim.write(line).unwrap();
+        }
+        sim.tick = Instant::now() - Duration::from_secs(1);
+        sim.read();
+        assert!((sim.position[1] - 60.0).abs() < 0.001);
+        assert!((sim.position[2] - 6.0).abs() < 0.001);
+        sim.write("STOP").unwrap();
+        let held = sim.position;
+        sim.read();
+        assert_eq!(sim.position, held);
     }
 }

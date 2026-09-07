@@ -79,7 +79,15 @@ impl Target {
                     .parameters
                     .get(&format!("slot{slot}_max"))
                     .context("基板の最大位置設定がありません")?;
-                (*min, *max, if slot == 1 { "motor deg" } else { "rad" })
+                (
+                    *min,
+                    *max,
+                    if slot == 1 || slot == 2 {
+                        "motor deg"
+                    } else {
+                        "rad"
+                    },
+                )
             }
             (Self::Cctl(slot), Kind::Velocity) => {
                 let axis = profile
@@ -88,7 +96,15 @@ impl Target {
                     .find(|a| a.slot == slot)
                     .context("軸設定がありません")?;
                 let cap = (axis.speed_per_second * axis.native_per_unit * 0.2).abs();
-                (-cap, cap, if slot == 1 { "motor deg/s" } else { "rad/s" })
+                (
+                    -cap,
+                    cap,
+                    if slot == 1 || slot == 2 {
+                        "motor deg/s"
+                    } else {
+                        "rad/s"
+                    },
+                )
             }
             (Self::Pwm(_), Kind::Position) => (
                 profile
