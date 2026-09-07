@@ -363,3 +363,24 @@ detachして状態通知にtimeoutを設定する。
 `[version=1, parameter_id, 0, 0, float32のbig endian 4 byte]`。
 既存の状態応答も維持する。設定に失敗した場合は適用値応答を出さない。
 hostはこの値を照合し、単なるCAN送信成功や一般のOK応答を設定一致として扱わない。
+
+### 起動時のモータ識別診断
+
+cctlは起動時に一度、SAFE / STOP中だけFDCAN1へ識別情報の読取りを送る。
+EL05のID 0..255へ通信タイプ0、続いてDMのID 0..2047へESC_IDレジスタの
+読取りを20ms間隔で送り、全探索は約46秒かかる。出力有効化や設定変更は行わない。
+RUNになった場合は探索を中断し、再探索にはcctlの再起動が必要となる。
+
+```text
+MOTOR_ID kind=el05 id=127
+MOTOR_ID kind=dm id=9 feedback_id=10
+MOTOR_RX std=1000 ext=80 last_std=513 last_ext=02007FFD scan_done=0 scan_cancel=0 tx_failed=0
+```
+
+`MOTOR_ID`は識別応答を受信した時点で通知する。DMの識別応答は位置フィードバックの
+鮮度更新には使用しない。結果はhostの通信ログで確認できる。
+`MOTOR_RX`は1秒ごとに、起動後の標準・拡張フレーム受信数、最後の受信ID、
+探索終了・中断状態、探索フレームの送信受付失敗数を返す。`last_ext`のみ16進数。
+`scan_done=1`でも`scan_cancel=1`なら全IDの探索は完了していない。
+`tx_failed=0`はモータとの通信成立を保証しない。CANSTATおよび識別応答と併せて確認する。
+モータの電源が切れていた期間の探索結果から、モータ不在やID不一致を断定しない。
