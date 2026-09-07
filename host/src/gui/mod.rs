@@ -29,6 +29,8 @@ enum Screen {
 pub struct BridgeApp {
     shared: Arc<Shared>,
     screen: Screen,
+    tune_view: tune::TuneView,
+    diagnosis_view: diagnose::DiagnosisView,
     edit: MachineProfile,
     source: String,
     base: String,
@@ -67,6 +69,8 @@ impl BridgeApp {
             },
             shared,
             screen: Screen::Operate,
+            tune_view: tune::TuneView::Axes,
+            diagnosis_view: diagnose::DiagnosisView::Tests,
             edit,
             base: source.clone(),
             source,
@@ -215,97 +219,6 @@ impl BridgeApp {
             }
         }
     }
-    fn header(&mut self, ui: &mut egui::Ui, status: &Status) {
-        ui.horizontal(|ui| {
-            ui.vertical(|ui| {
-                ui.label(RichText::new("キャチロボクワガタ").size(22.0).strong());
-                ui.horizontal(|ui| {
-                    ui.label(RichText::new("CONTROL STATION").size(10.0).color(MUTED));
-                    if status.simulated {
-                        chip(ui, "模擬接続", WARNING);
-                    }
-                    if status.ai_active {
-                        chip(ui, "AI操作中", DANGER);
-                    }
-                });
-            });
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_sized(
-                        [170.0, 48.0],
-                        egui::Button::new(RichText::new("停止・保持  s").strong())
-                            .fill(Color32::from_rgb(115, 39, 48)),
-                    )
-                    .clicked()
-                {
-                    self.dispatch(Action::Stop);
-                }
-                if ui
-                    .add_enabled(
-                        Self::can_run(status),
-                        egui::Button::new("運転再開")
-                            .min_size(egui::vec2(120.0, 48.0))
-                            .fill(Color32::from_rgb(27, 80, 74)),
-                    )
-                    .on_hover_text(" :run / Options\n原点と入力中立を確認して再開")
-                    .clicked()
-                {
-                    self.dispatch(Action::Run);
-                }
-            });
-        });
-        ui.add_space(8.0);
-        ui.horizontal(|ui| {
-            for (screen, label) in [
-                (Screen::Operate, "1   操縦"),
-                (Screen::Tune, "2   調整"),
-                (Screen::Diagnose, "3   診断"),
-                (Screen::Documents, "4   文書"),
-            ] {
-                let selected = self.screen == screen;
-                if ui
-                    .add_sized(
-                        [110.0, 42.0],
-                        egui::Button::new(RichText::new(label).color(if selected {
-                            ACCENT
-                        } else {
-                            MUTED
-                        }))
-                        .fill(if selected { SURFACE } else { BG })
-                        .stroke(if selected {
-                            egui::Stroke::new(1.0, BORDER)
-                        } else {
-                            egui::Stroke::new(1.0, BG)
-                        }),
-                    )
-                    .clicked()
-                {
-                    self.screen = screen;
-                }
-            }
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if ui
-                    .add_sized([140.0, 42.0], egui::Button::new("キー操作  ?"))
-                    .clicked()
-                {
-                    self.dispatch(Action::Help);
-                }
-                if status.ai_active
-                    && ui
-                        .add_sized([170.0, 42.0], egui::Button::new("通常操縦へ戻す"))
-                        .on_hover_text(
-                            "停止・保持してAIの操作権を解除します。運転は自動再開しません。",
-                        )
-                        .clicked()
-                {
-                    self.operation("takeover");
-                }
-            });
-        });
-        ui.add_space(8.0);
-        ui.separator();
-        ui.add_space(8.0);
-    }
     fn help(&mut self, ctx: &egui::Context) {
         egui::Window::new("キーボード操作")
             .open(&mut self.help_open)
@@ -410,11 +323,12 @@ impl eframe::App for BridgeApp {
                 if status.ai_active { 4.0 } else { 0.0 },
                 DANGER,
             ))
-            .inner_margin(20.0)
+            .inner_margin(16.0)
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
                 self.header(ui, &status);
                 self.global_state(ui, &status);
+                self.page_navigation(ui);
                 self.command_line(ui);
                 if !status.error.is_empty() {
                     ui.colored_label(DANGER, &status.error);
@@ -582,3 +496,5 @@ mod manual;
 mod documents;
 
 mod parameter_help;
+
+mod shell;

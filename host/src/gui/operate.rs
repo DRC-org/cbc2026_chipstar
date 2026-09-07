@@ -4,47 +4,11 @@ impl BridgeApp {
     pub(super) fn operate(&mut self, ui: &mut egui::Ui) {
         let status = self.shared.status_snapshot();
         let config = self.shared.config();
-        panel().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-            ui.horizontal(|ui| {
-                ui.label(
-                    RichText::new(&status.operating_state)
-                        .size(32.0)
-                        .strong()
-                        .color(if status.running {
-                            ACCENT
-                        } else {
-                            Color32::WHITE
-                        }),
-                );
-                if status.slow {
-                    chip(ui, "低速 20%", ACCENT);
-                }
-                if status.origin_adjustment {
-                    chip(ui, "原点調整", WARNING);
-                }
-                ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                    chip(
-                        ui,
-                        if status.configured {
-                            "設定一致"
-                        } else {
-                            "設定確認中"
-                        },
-                        if status.configured { ACCENT } else { WARNING },
-                    );
-                });
-            });
-            ui.add_space(6.0);
-            ui.label(RichText::new(&status.reason).size(16.0).color(MUTED));
-            if status.origin_adjustment {
-                ui.add_space(6.0);
-                ui.colored_label(WARNING, "機体座標の可動域制限を解除しています");
-            }
-        });
-        ui.add_space(12.0);
         ui.horizontal(|ui| {
-            ui.label(RichText::new("軸の位置").size(17.0).strong());
+            ui.label(RichText::new("アーム").size(20.0).strong());
+            if status.slow {
+                chip(ui, "低速 20%", ACCENT);
+            }
             ui.label(
                 RichText::new(format!(
                     "原点確認  {} / {}",
@@ -152,17 +116,13 @@ impl BridgeApp {
                     .color(MUTED),
                 );
             });
-            ui.add_space(6.0);
-            ui.columns(3, |columns| {
-                for (ui, (title, key, detail)) in columns.iter_mut().zip([
-                    ("移動", "左スティック / 右上下", "r・θ / z"),
-                    ("低速", "L1 を保持", "通常速度の20%"),
-                    ("再開 / 停止", "Options / PS", "PC：:run / s"),
-                ]) {
-                    ui.label(RichText::new(title).size(12.0).color(MUTED));
-                    keycap(ui, key);
-                    ui.label(RichText::new(detail).size(12.0).color(MUTED));
-                }
+            ui.horizontal_wrapped(|ui| {
+                keycap(ui, "左スティック / 右上下");
+                ui.label(RichText::new("r・θ / z").size(12.0).color(MUTED));
+                keycap(ui, "L1");
+                ui.label(RichText::new("低速20%").size(12.0).color(MUTED));
+                keycap(ui, "Options / PS");
+                ui.label(RichText::new("再開 / 停止").size(12.0).color(MUTED));
             });
         });
     }

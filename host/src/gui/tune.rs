@@ -1,8 +1,104 @@
 use super::*;
 
+#[derive(Clone, Copy, PartialEq)]
+pub(super) enum TuneView {
+    Axes,
+    Parameters,
+    File,
+}
+
 impl BridgeApp {
-    pub(super) fn tune(&mut self, ui: &mut egui::Ui) {
+    pub(super) fn tune_actions(&mut self, ui: &mut egui::Ui) {
         let status = self.shared.status_snapshot();
+        ui.add_enabled_ui(!status.ai_active, |ui| {
+            let current = toml::to_string_pretty(&self.shared.config().machine).unwrap_or_default();
+            let matches = self.draft_matches_applied();
+            panel().show(ui, |ui| {
+                ui.set_width(ui.available_width());
+                ui.horizontal_wrapped(|ui| {
+                    if ui
+                        .add_enabled(
+                            self.can_apply(&status),
+                            egui::Button::new("適用  :apply").fill(Color32::from_rgb(27, 80, 74)),
+                        )
+                        .clicked()
+                    {
+                        self.dispatch(Action::Apply);
+                    }
+                    if ui
+                        .add_enabled(self.can_save(&status), egui::Button::new("保存  :w"))
+                        .on_hover_text(format!(
+                            "保存先：{}\n未適用の編集は先に適用してください。",
+                            self.profile_file
+                        ))
+                        .clicked()
+                    {
+                        self.dispatch(Action::Save);
+                    }
+                    if ui
+                        .button("編集を戻す")
+                        .on_hover_text("未適用の編集を破棄して、適用中の内容に戻します")
+                        .clicked()
+                    {
+                        self.reload();
+                    }
+                    chip(
+                        ui,
+                        if matches {
+                            "適用内容と一致"
+                        } else {
+                            "未適用の編集あり"
+                        },
+                        if matches { MUTED } else { WARNING },
+                    );
+                    chip(
+                        ui,
+                        if status.saved {
+                            "保存済み"
+                        } else {
+                            "未保存"
+                        },
+                        if status.saved { ACCENT } else { WARNING },
+                    );
+                });
+                ui.label(
+                    RichText::new(format!(
+                        "{}  ·  {}/{}項目",
+                        status.configuration,
+                        status.parameters_confirmed,
+                        status.parameters_expected
+                    ))
+                    .size(12.0)
+                    .color(MUTED),
+                );
+                if current != self.base {
+                    ui.colored_label(
+                        WARNING,
+                        "外部から設定が更新されています。適用中の内容を読み直してください。",
+                    );
+                }
+            });
+        });
+        ui.add_space(8.0);
+    }
+
+    pub(super) fn tune(&mut self, ui: &mut egui::Ui) {
+        let edited = match self.tune_view {
+            TuneView::Axes => self.tune_axes(ui),
+            TuneView::Parameters => self.tune_parameters(ui),
+            TuneView::File => {
+                self.tune_file(ui);
+                false
+            }
+        };
+        if edited {
+            self.source = toml::to_string_pretty(&self.edit).unwrap_or_default();
+        }
+    }
+
+    fn tune_axes(&mut self, ui: &mut egui::Ui) -> bool {
+        let status = self.shared.status_snapshot();
+        let mut edited = false;
         section(
             ui,
             "原点の確認",
@@ -71,45 +167,7 @@ impl BridgeApp {
                 }
             });
         });
-        ui.add_space(18.0);
-        section(ui, "機体設定", "編集 → 一時適用 → 保存の順で反映します。");
-        let current = toml::to_string_pretty(&self.shared.config().machine).unwrap_or_default();
-        let draft_matches = self.draft_matches_applied();
-        panel().show(ui, |ui| {
-            ui.set_width(ui.available_width());
-
-            ui.horizontal(|ui| {
-                ui.label("読込元・保存先");
-                ui.add(egui::TextEdit::singleline(&mut self.profile_file).desired_width(470.0));
-                if ui.button("ファイルから読込").on_hover_text("編集中の内容をファイルの内容に置き換えます。一時適用するまで機体設定は変わりません。").clicked() {
-                    match crate::transport::profile_store::load(std::path::Path::new(&self.profile_file)) {
-                        Ok(profile) => {
-                            self.edit = profile;
-                            self.source = toml::to_string_pretty(&self.edit).unwrap_or_default();
-                            self.message = "設定ファイルを読み込みました。一時適用で反映します".into();
-                            self.message_error = false;
-                        }
-                        Err(error) => { self.message = error.to_string(); self.message_error = true; }
-                    }
-                }
-            });
-            ui.horizontal_wrapped(|ui| {
-                chip(ui, if draft_matches { "適用内容と一致" } else { "未適用の編集あり" }, if draft_matches { MUTED } else { WARNING });
-                chip(ui, if status.saved { "適用内容は保存済み" } else { "適用内容は未保存" }, if status.saved { ACCENT } else { WARNING });
-            });
-            ui.add_space(4.0);
-            ui.horizontal_wrapped(|ui| {
-                if ui.add_enabled(self.can_apply(&status), egui::Button::new("適用  :apply").fill(Color32::from_rgb(27, 80, 74))).clicked() { self.dispatch(Action::Apply); }
-                if ui.add_enabled(self.can_save(&status), egui::Button::new("保存  :w"))
-                    .on_hover_text("指定したパスに適用中の設定を保存。未適用の編集がある場合は先に一時適用してください。").clicked() { self.dispatch(Action::Save); }
-                if ui.button("適用中の内容に戻す").on_hover_text("未適用の編集を破棄して、hostで適用中の設定を読み直します").clicked() { self.reload(); }
-            });
-            ui.label(RichText::new(format!("{}  ·  {}/{}項目", status.configuration, status.parameters_confirmed, status.parameters_expected)).size(12.0).color(MUTED));
-            ui.label(RichText::new(format!("適用中の設定ファイル  {}", self.shared.config().profile_path.display())).size(12.0).color(MUTED));
-            if current != self.base { ui.colored_label(WARNING, "外部から設定が更新されています。適用中の内容を読み直してください。"); }
-        });
         ui.add_space(12.0);
-        let mut edited = false;
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             for axis in &mut self.edit.axes {
@@ -122,7 +180,8 @@ impl BridgeApp {
                     .show(ui, |ui| {
                         egui::Grid::new("axis")
                             .num_columns(3)
-                            .spacing([30.0, 10.0])
+                            .spacing([20.0, 10.0])
+                                    .max_col_width((ui.available_width() - 340.0).max(180.0))
                             .show(ui, |ui| {
                                 for (label, value, description) in [
                                 ("通常速度 / 秒", &mut axis.speed_per_second, "スティック最大入力時の機体速度。低速・画面操作ではこの20%になります。"),
@@ -148,7 +207,16 @@ impl BridgeApp {
                 .color(MUTED),
             );
         });
-        ui.add_space(12.0);
+        edited
+    }
+
+    fn tune_parameters(&mut self, ui: &mut egui::Ui) -> bool {
+        let mut edited = false;
+        section(
+            ui,
+            "基板パラメータ",
+            "値と説明を確認し、変更後に適用してください。",
+        );
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             egui::CollapsingHeader::new("基板の調整値")
@@ -168,7 +236,7 @@ impl BridgeApp {
                             .num_columns(3)
                             .striped(true)
                             .spacing([16.0, 10.0])
-                            .max_col_width(540.0)
+                            .max_col_width((ui.available_width() - 360.0).max(180.0))
                             .show(ui, |ui| {
                                 for (name, value) in parameters {
                                     let (unit, description) = parameter_help::help(name)
@@ -190,22 +258,44 @@ impl BridgeApp {
                             });
                     }
                 });
-            if edited {
-                self.source = toml::to_string_pretty(&self.edit).unwrap_or_default();
-            }
+        });
+        edited
+    }
+
+    fn tune_file(&mut self, ui: &mut egui::Ui) {
+        section(ui, "設定ファイル", "読込・保存先と全設定の編集");
+        panel().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.horizontal_wrapped(|ui| {
+                ui.label("読込元・保存先");
+                ui.add(egui::TextEdit::singleline(&mut self.profile_file).desired_width(470.0));
+                let hint = "編集中の内容をファイルから読み直します。一時適用するまで機体設定は変わりません。";
+                if ui.button("ファイルから読込").on_hover_text(hint).clicked() {
+                    match crate::transport::profile_store::load(std::path::Path::new(&self.profile_file)) {
+                        Ok(profile) => {
+                            self.edit = profile;
+                            self.source = toml::to_string_pretty(&self.edit).unwrap_or_default();
+                            self.message = "設定ファイルを読み込みました。一時適用で反映します".into();
+                            self.message_error = false;
+                        }
+                        Err(error) => {
+                            self.message = error.to_string();
+                            self.message_error = true;
+                        }
+                    }
+                }
+            });
+            let path = self.shared.config().profile_path.display().to_string();
+            ui.label(RichText::new(format!("適用中の設定ファイル  {path}")).size(12.0).color(MUTED));
             egui::CollapsingHeader::new("全設定を編集 · TOML")
                 .default_open(true)
                 .show(ui, |ui| {
-                    if ui
-                        .add(
-                            egui::TextEdit::multiline(&mut self.source)
-                                .font(egui::TextStyle::Monospace)
-                                .desired_rows(16)
-                                .desired_width(f32::INFINITY),
-                        )
-                        .changed()
-                        && let Ok(profile) = MachineProfile::parse(&self.source)
-                    {
+                    if ui.add(
+                        egui::TextEdit::multiline(&mut self.source)
+                            .font(egui::TextStyle::Monospace)
+                            .desired_rows(16)
+                            .desired_width(f32::INFINITY),
+                    ).changed() && let Ok(profile) = MachineProfile::parse(&self.source) {
                         self.edit = profile;
                     }
                     if let Err(error) = MachineProfile::parse(&self.source) {

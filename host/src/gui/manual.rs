@@ -37,24 +37,28 @@ impl BridgeApp {
                     && !status.test_mode
                     && !status.ai_active
                     && !self.stop_requested;
-                ui.horizontal_wrapped(|ui| {
-                    for axis in self.shared.config().machine.axes {
-                        ui.group(|ui| {
-                            ui.horizontal(|ui| {
-                                ui.label(RichText::new(&axis.name).strong().color(ACCENT));
-                                for (value, label) in [(-1.0, "−"), (1.0, "+")] {
-                                    let response = ui.add_enabled(
-                                        can_jog,
-                                        egui::Button::new(label).min_size(egui::vec2(65.0, 40.0)),
-                                    );
-                                    if can_jog && response.is_pointer_button_down_on() {
-                                        self.requested_jog = Some((axis.name.clone(), value));
+                ui.with_layout(
+                    egui::Layout::left_to_right(egui::Align::Min).with_main_wrap(true),
+                    |ui| {
+                        for axis in self.shared.config().machine.axes {
+                            ui.group(|ui| {
+                                ui.horizontal(|ui| {
+                                    ui.label(RichText::new(&axis.name).strong().color(ACCENT));
+                                    for (value, label) in [(-1.0, "−"), (1.0, "+")] {
+                                        let response = ui.add_enabled(
+                                            can_jog,
+                                            egui::Button::new(label)
+                                                .min_size(egui::vec2(65.0, 40.0)),
+                                        );
+                                        if can_jog && response.is_pointer_button_down_on() {
+                                            self.requested_jog = Some((axis.name.clone(), value));
+                                        }
                                     }
-                                }
+                                });
                             });
-                        });
-                    }
-                });
+                        }
+                    },
+                );
             } else {
                 ui.label(
                     RichText::new("操作方法の切替は停止中に行えます。")
