@@ -75,7 +75,7 @@ impl BridgeApp {
                         )
                         .clicked()
                     {
-                        self.screen = screen;
+                        self.switch_screen(screen);
                     }
                 }
                 ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
@@ -164,6 +164,7 @@ impl BridgeApp {
             _ => {}
         });
         if changed {
+            self.end_test_on_tab_change();
             self.navigation = Some(Action::Edge(true));
         }
         if self.screen == Screen::Tune {

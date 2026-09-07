@@ -19,7 +19,9 @@ impl Runtime {
                 "緊停を解除しました。出力停止を維持しています".into(),
             ));
         }
+        let leaving_test = req.action == "test_mode" && req.flag == Some(false);
         if self.emergency
+            && !leaving_test
             && !matches!(
                 req.action.as_str(),
                 "stop" | "cut" | "safe" | "fault" | "connection"

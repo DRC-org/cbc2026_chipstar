@@ -142,6 +142,22 @@ impl BridgeApp {
             && status.connected
             && status.configured
     }
+    fn end_test_on_tab_change(&mut self) {
+        if self.shared.status_snapshot().test_mode {
+            self.stop_requested = true;
+            self.tests.requested = false;
+            self.request(Request {
+                flag: Some(false),
+                ..Request::new("test_mode")
+            });
+        }
+    }
+    fn switch_screen(&mut self, screen: Screen) {
+        if self.screen != screen {
+            self.end_test_on_tab_change();
+            self.screen = screen;
+        }
+    }
     fn dispatch(&mut self, action: Action) {
         let status = self.shared.status_snapshot();
         match action {
@@ -170,7 +186,7 @@ impl BridgeApp {
                 self.operation("stop");
             }
             Action::Run if !self.stop_requested && Self::can_run(&status) => self.operation("run"),
-            Action::Screen(screen) => self.screen = screen,
+            Action::Screen(screen) => self.switch_screen(screen),
             Action::Tab(direction) => {
                 let screens = [
                     Screen::Operate,
@@ -182,7 +198,7 @@ impl BridgeApp {
                     .iter()
                     .position(|screen| *screen == self.screen)
                     .unwrap_or(0);
-                self.screen = screens[(index as i32 + direction).rem_euclid(4) as usize];
+                self.switch_screen(screens[(index as i32 + direction).rem_euclid(4) as usize]);
             }
             Action::Scroll(_) | Action::Page(_) | Action::Edge(_) => self.navigation = Some(action),
             Action::Help => self.help_open = !self.help_open,

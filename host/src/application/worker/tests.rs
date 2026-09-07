@@ -695,3 +695,67 @@ fn explicit_position_update_preserves_output_and_can_restart_after_a_fault() {
     assert!(runtime.test.active);
     assert!(!runtime.test.restart_blocked);
 }
+
+#[test]
+fn leaving_test_stops_velocity_and_position_and_keeps_emergency_latched() {
+    for kind in ["velocity", "position"] {
+        let mut runtime = screen_runtime();
+        select_test(&mut runtime, "cctl:0", kind);
+        runtime
+            .request(
+                &Request {
+                    value: Some(0.01),
+                    ..Request::new("test_output")
+                },
+                true,
+            )
+            .unwrap();
+        runtime.tick().unwrap();
+        assert!(runtime.test.active);
+        runtime.emergency = true;
+        runtime
+            .request(
+                &Request {
+                    flag: Some(false),
+                    ..Request::new("test_mode")
+                },
+                true,
+            )
+            .unwrap();
+        runtime.tick().unwrap();
+        assert!(!runtime.test.enabled && !runtime.test.active);
+        assert!(runtime.test.selected.is_none());
+        assert!(runtime.emergency);
+        assert!(!runtime.drive.running());
+        assert_ne!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Run);
+    }
+}
+
+#[test]
+fn leaving_test_while_disconnected_still_ends_local_test_mode() {
+    let mut runtime = screen_runtime();
+    select_test(&mut runtime, "cctl:0", "position");
+    runtime
+        .request(
+            &Request {
+                value: Some(0.01),
+                ..Request::new("test_output")
+            },
+            true,
+        )
+        .unwrap();
+    runtime.link.fault("disconnect").unwrap();
+    assert!(
+        runtime
+            .request(
+                &Request {
+                    flag: Some(false),
+                    ..Request::new("test_mode")
+                },
+                true
+            )
+            .is_err()
+    );
+    assert!(!runtime.test.enabled && !runtime.test.active);
+    assert!(runtime.test.selected.is_none());
+}

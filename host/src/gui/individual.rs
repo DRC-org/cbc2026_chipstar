@@ -81,7 +81,7 @@ impl BridgeApp {
                     ui.label(RichText::new(if self.tests.kind.momentary() {
                         "ボタンを離すか入力更新が150ms途切れると出力解除します。"
                     } else {
-                        "位置保持はページを離れても続きます。上部のテスト出力解除で停止できます。"
+                        "タブを切り替えると位置保持を解除し、個別テストを終了します。"
                     }).size(12.0).color(MUTED));
                 } else {
                     ui.colored_label(WARNING, "この対象の軸設定を読み込んでください。");

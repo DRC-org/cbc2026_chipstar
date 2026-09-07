@@ -97,10 +97,13 @@ impl Runtime {
         match req.action.as_str() {
             "test_mode" => {
                 let enabled = req.flag.context("モードが必要です")?;
-                self.stop(true)?;
-                self.test.restart_blocked = false;
-                self.test.enabled = enabled;
-                self.test.selected = None;
+                let result = self.stop(true);
+                if result.is_ok() || !enabled {
+                    self.test.restart_blocked = false;
+                    self.test.enabled = enabled;
+                    self.test.selected = None;
+                }
+                result?;
             }
             "test_select" => {
                 if !self.test.enabled {
