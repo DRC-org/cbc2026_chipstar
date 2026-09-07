@@ -30,6 +30,7 @@
 - [rtheta_z_machine.md](rtheta_z_machine.md) — rθz 3軸機構の構成、各軸の駆動系、座標定義、原点方針、要実測パラメータ
 - [cctl_can_bus.md](cctl_can_bus.md) — cctl(STM32G474) の FDCAN クロック/ビットレート、ピン割当、バス用途分離、CAN ID 衝突回避設計
 - [motor_protocols.md](motor_protocols.md) — DM-S3519 / RobStride EL05 / M3508+C620 の CAN プロトコル要点
+- [DM3520位置単位調査](investigations/dm3520_position_units.md) — z換算の確定事項、未検証の単位、通信ログの再解析
 
 ## 資料
 
