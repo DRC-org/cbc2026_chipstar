@@ -550,3 +550,28 @@ fn malformed_and_negative_peripheral_feedback_cannot_leave_a_test_active() {
     runtime.observe_test_reply("CAN_RX bus=2 id=769 data=0100000000000000");
     assert!(!runtime.test.active);
 }
+
+#[test]
+fn drive_rejection_stops_without_invalidating_confirmed_settings() {
+    let shared = Arc::new(Shared::new(BridgeConfig {
+        serial_device: "unused".into(),
+        baud_rate: 115200,
+        rate_hz: 20.0,
+        machine: MachineProfile::embedded().unwrap(),
+        profile_path: "/dev/null".into(),
+        simulate: true,
+    }));
+    let mut runtime = Runtime::new(shared);
+    for _ in 0..40 {
+        runtime.tick().unwrap();
+    }
+    assert!(runtime.settings.ready());
+    runtime.link.fault("reject").unwrap();
+    runtime.send("JOG 1 1").unwrap();
+    runtime.tick().unwrap();
+    assert!(!runtime.setup_error);
+    assert!(runtime.settings.ready());
+    assert!(!runtime.error.is_empty());
+    runtime.tick().unwrap();
+    assert_eq!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Stop);
+}

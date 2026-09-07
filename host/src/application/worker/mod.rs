@@ -296,8 +296,31 @@ impl Runtime {
                     );
                 });
             }
+            if let Some(body) = line.strip_prefix("C620_SCAN mask=")
+                && let Some(mask) = body
+                    .split_whitespace()
+                    .next()
+                    .and_then(|v| v.parse::<u8>().ok())
+            {
+                let ids = (1..=8)
+                    .filter(|id| mask & (1 << (id - 1)) != 0)
+                    .map(|id| id.to_string())
+                    .collect::<Vec<_>>()
+                    .join(", ");
+                self.shared.update_status(|s| {
+                    s.peripherals.insert(
+                        "C620 検出ID".into(),
+                        if ids.is_empty() {
+                            "応答なし（直近500ms）".into()
+                        } else {
+                            ids
+                        },
+                    );
+                });
+            }
             if line.starts_with("ERR ") {
-                self.setup_error = true;
+                // 駆動拒否でも停止するが、照合済みの設定まで失敗扱いにしない。
+                self.setup_error |= !self.settings.ready();
                 self.fault(line);
                 continue;
             }

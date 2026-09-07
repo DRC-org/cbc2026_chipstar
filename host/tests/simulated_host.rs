@@ -155,7 +155,7 @@ fn operator_ownership_expiring_input_and_disconnect_do_not_resume() {
 }
 
 #[test]
-fn settings_are_temporary_until_saved_and_rejected_changes_block_run() {
+fn settings_are_temporary_until_saved_and_drive_rejection_keeps_configuration() {
     let host = Host::new();
     let token = host.call(Request::new("claim")).token.unwrap();
     let before = fs::read_to_string(host.dir.join("machine.toml")).unwrap();
@@ -187,7 +187,8 @@ fn settings_are_temporary_until_saved_and_rejected_changes_block_run() {
     );
     host.origins(&token);
     assert!(host.request("run", &token).ok); // 受付と基板の反映は別
-    host.wait(|s| s["configuration"].as_str() == Some("反映失敗"));
+    host.wait(|s| s["error"].as_str().is_some_and(|e| e.contains("SIM_REJECTED")));
+    assert_eq!(host.status()["configured"].as_bool(), Some(true));
     assert_eq!(host.status()["running"].as_bool(), Some(false));
     assert!(!host.request("run", &token).ok);
 }
