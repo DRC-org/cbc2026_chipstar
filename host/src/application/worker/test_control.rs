@@ -213,7 +213,7 @@ impl Runtime {
             // 読取りだけで出力を有効化しない。
             for (board, line) in [
                 ("pwm", "CAN 2 768 0103000000000000"),
-                ("dc", "CAN 2 784 0108000000000000"),
+                ("dc", "CAN 2 784 0106000000000000"),
                 ("sts", "CAN 2 800 0108000000000000"),
             ] {
                 if self.uses_test_board(board) {

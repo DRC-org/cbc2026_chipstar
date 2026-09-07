@@ -198,7 +198,7 @@ impl Simulator {
                                         self.dc_duty = 0;
                                     }
                                     4 => self.dc_duty = i16::from_be_bytes([bytes[4], bytes[5]]),
-                                    8 => self.rx.push_back(
+                                    6 => self.rx.push_back(
                                         "CAN_RX bus=2 id=787 data=0100000007000000".into(),
                                     ),
                                     _ => {}
