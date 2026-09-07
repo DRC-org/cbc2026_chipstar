@@ -1,51 +1,6 @@
+dc_motors = []
 protocol_version = 1
-# serial_svmdを使う機体では、[serial_svmd]と[[serial_svmd.servos]]を追加する。
-
-# 立ち上げ用の安全側の上限。能力確認の直後にcctlへ送られる。
-# ゲインは机上値のままなので、実機で挙動を確かめながら緩めていく。
-# PCの設定を接続時に適用し、基板の応答で一致を確認する。
-# 可動域は未校正の暫定値。実機で原点と干渉を確認して調整する。
-[parameters]
-m3508_pos_kp = 8.0
-m3508_pos_ki = 0.0
-m3508_pos_kd = 0.0
-m3508_vel_kp = 7.0
-m3508_vel_ki = 0.5
-m3508_vel_kd = 0.05
-el05_loc_kp = 30.0
-slot0_min = -12.5
-slot0_max = 12.5
-slot1_min = -26000.0
-slot1_max = 26000.0
-slot2_min = -26000.0
-slot2_max = 26000.0
-c620_esc_id = 1.0
-c620_slot2_esc_id = 2.0
-el05_motor_id = 127.0
-el05_host_id = 253.0
-m3508_period_ms = 1.0
-el05_period_ms = 20.0
-telemetry_period_ms = 50.0
-watchdog_ms = 250.0
-feedback_timeout_ms = 200.0
-m3508_max_temperature_c = 80.0
-# M3508: 位置ループが出す速度指令と、C620へ出す電流を絞る。
-m3508_max_rpm = 500.0
-m3508_max_current_ma = 1000.0
-# EL05: ドライバ内の速度制限と電流制限。設定時にモータへ書き込まれる。
-el05_limit_spd = 1.0
-el05_limit_cur = 2.0
-
-# slot 2: M3508 + C620。slot 1と独立した初期調整値。
-m3508_slot2_pos_kp = 8.0
-m3508_slot2_pos_ki = 0.0
-m3508_slot2_pos_kd = 0.0
-m3508_slot2_max_rpm = 500.0
-m3508_slot2_vel_kp = 7.0
-m3508_slot2_vel_ki = 0.5
-m3508_slot2_vel_kd = 0.05
-m3508_slot2_max_current_ma = 1000.0
-m3508_slot2_max_temperature_c = 80.0
+pwm_servos = []
 
 [[axes]]
 name = "r"
@@ -58,10 +13,8 @@ native_per_unit = 0.04
 minimum = 0.0
 maximum = 120.0
 initial = 0.0
-# 前進しきるとビーム後端がSW1を叩き、そこが可動域の最大側になる。
 origin_position = 120.0
 
-# COM–NC配線。未接続・断線は到達扱い。
 [axes.limit]
 input = 0
 direction = 1.0
@@ -78,8 +31,6 @@ native_per_unit = 132.02206
 minimum = -180.0
 maximum = 180.0
 initial = 0.0
-# 赤青コートで取り付けを共用できないためスイッチは持たない。
-# セッティングで姿勢を合わせ、GUIから原点を採る。
 origin_position = 0.0
 
 [[axes]]
@@ -88,17 +39,70 @@ unit = "mm"
 slot = 2
 input_axis = 3
 input_sign = 1.0
-# 重力負荷があるので低速から始める。実機で詰める。
 speed_per_second = 5.0
-# GT2・36T、標準減速器付きM3508: 360 * (3591/187) / 72 [motor deg/mm]
-native_per_unit = 96.01604278
+native_per_unit = 96.016045
 minimum = 0.0
 maximum = 75.0
 initial = 0.0
 origin_position = 0.0
 
-# 下端でSW2に当たる。
 [axes.limit]
 input = 1
 direction = -1.0
 normally_closed = true
+
+[[serial_svmd.servos]]
+name = "ee_rotation"
+id = 1
+input_sign = 1.0
+speed_position_per_second = 100.0
+minimum_position = 1800
+maximum_position = 2200
+initial_position = 2048
+move_speed = 100
+acceleration = 10
+enabled = false
+
+[parameters]
+c620_esc_id = 1.0
+c620_slot2_esc_id = 2.0
+el05_host_id = 253.0
+el05_limit_cur = 2.0
+el05_limit_spd = 1.0
+el05_loc_kp = 30.0
+el05_motor_id = 127.0
+el05_period_ms = 20.0
+feedback_timeout_ms = 200.0
+m3508_max_current_ma = 1000.0
+m3508_max_rpm = 500.0
+m3508_max_temperature_c = 80.0
+m3508_period_ms = 1.0
+m3508_pos_kd = 0.0
+m3508_pos_ki = 0.0
+m3508_pos_kp = 8.0
+m3508_slot2_max_current_ma = 1000.0
+m3508_slot2_max_rpm = 500.0
+m3508_slot2_max_temperature_c = 80.0
+m3508_slot2_pos_kd = 0.0
+m3508_slot2_pos_ki = 0.0
+m3508_slot2_pos_kp = 8.0
+m3508_slot2_vel_kd = 0.05
+m3508_slot2_vel_ki = 0.5
+m3508_slot2_vel_kp = 7.0
+m3508_vel_kd = 0.05
+m3508_vel_ki = 0.5
+m3508_vel_kp = 7.0
+slot0_max = 12.5
+slot0_min = -12.5
+slot1_max = 26000.0
+slot1_min = -26000.0
+slot2_max = 26000.0
+slot2_min = -26000.0
+telemetry_period_ms = 50.0
+watchdog_ms = 250.0
+
+[svmd_parameters]
+
+[dcmd_parameters]
+
+[serial_svmd_parameters]
