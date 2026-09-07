@@ -36,6 +36,11 @@ pub struct BridgeConfig {
 
 #[derive(Clone, Default, Serialize)]
 pub struct Status {
+    pub test_mode: bool,
+    pub test_target: String,
+    pub test_active: bool,
+    pub test_ready: bool,
+    pub test_kind: String,
     pub emergency: bool,
     pub outputs_active: bool,
     pub operating_state: String,
@@ -167,5 +172,38 @@ impl Shared {
         // 実行期限を超えた要求はワーカーが取り消す。
         rx.recv_timeout(Duration::from_secs(2))
             .unwrap_or_else(|_| Reply::error("応答期限切れ。状態を確認してください"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn emergency_cancels_queued_motion_and_signals_before_worker_execution() {
+        let shared = std::sync::Arc::new(Shared::new(BridgeConfig {
+            serial_device: "unused".into(),
+            baud_rate: 115200,
+            rate_hz: 20.0,
+            machine: MachineProfile::embedded().unwrap(),
+            profile_path: "/dev/null".into(),
+            simulate: true,
+        }));
+        let (tx, rx) = mpsc::channel();
+        shared.pending.lock().unwrap().push_back(Pending {
+            request: Request::new("run"),
+            manual: true,
+            deadline: std::time::Instant::now() + Duration::from_secs(1),
+            reply: tx,
+        });
+        let caller = shared.clone();
+        let thread = std::thread::spawn(move || caller.submit(Request::new("estop"), false));
+        assert!(!rx.recv_timeout(Duration::from_secs(1)).unwrap().ok);
+        assert!(shared.take_emergency());
+        let mut pending = shared.take_requests();
+        assert_eq!(pending.len(), 1);
+        let stop = pending.pop().unwrap();
+        assert_eq!(stop.request.action, "estop");
+        stop.reply.send(Reply::accepted()).unwrap();
+        assert!(thread.join().unwrap().ok);
     }
 }

@@ -13,6 +13,12 @@ pub struct Simulator {
     enabled: u8,
     position: [f32; 3],
     velocity: [f32; 3],
+    targets: [Option<f32>; 3],
+    pwm: u8,
+    servos: BTreeMap<u8, (u16, bool)>,
+    servo_mode: u8,
+    dc_enabled: bool,
+    dc_duty: i16,
     parameters: BTreeMap<u8, f32>,
     rx: VecDeque<String>,
     disconnected: bool,
@@ -23,6 +29,12 @@ impl Simulator {
         match fault {
             "disconnect" => {
                 self.disconnected = true;
+                self.pwm = 0;
+                self.dc_enabled = false;
+                self.dc_duty = 0;
+                for servo in self.servos.values_mut() {
+                    servo.1 = false;
+                }
                 self.velocity = [0.0; 3];
                 self.mode = "STOP";
                 self.rx.clear();
@@ -49,6 +61,12 @@ impl Simulator {
             enabled: 0,
             position: [0.0; 3],
             velocity: [0.0; 3],
+            targets: [None; 3],
+            pwm: 0,
+            servos: BTreeMap::new(),
+            servo_mode: 0,
+            dc_enabled: false,
+            dc_duty: 0,
             parameters: BTreeMap::new(),
             rx: VecDeque::new(),
             disconnected: false,
@@ -74,6 +92,7 @@ impl Simulator {
             ["STOP"] | ["SAFE"] => {
                 self.mode = if line == "STOP" { "STOP" } else { "SAFE" };
                 self.velocity = [0.0; 3];
+                self.targets = [None; 3];
             }
             ["RUN"] => {
                 self.mode = "RUN";
@@ -98,9 +117,25 @@ impl Simulator {
                 {
                     self.rx.push_back("ERR code=JOG_REJECTED".into());
                 } else {
+                    self.targets[slot] = None;
                     self.velocity[slot] = value;
                     self.contact = Instant::now();
                 }
+            }
+            ["TARGET", slot, value] => {
+                let slot: usize = slot.parse()?;
+                let value: f32 = value.parse()?;
+                if slot >= 3 || !value.is_finite() {
+                    self.rx.push_back("ERR code=TARGET_REJECTED".into());
+                } else {
+                    self.targets[slot] = Some(value);
+                    self.velocity[slot] = 0.0;
+                }
+            }
+            ["REINIT", _] => {
+                self.mode = "SAFE";
+                self.targets = [None; 3];
+                self.velocity = [0.0; 3];
             }
             ["PARAM", id, value] => {
                 let id: u8 = id.parse()?;
@@ -133,8 +168,79 @@ impl Simulator {
                             &payload[8..]
                         ));
                     } else {
-                        self.rx
-                            .push_back(format!("CAN_RX bus=2 id={} data=0100000000000000", id + 1));
+                        match id {
+                            768 => {
+                                if bytes[1] == 0 {
+                                    self.pwm = 0;
+                                }
+                                if bytes[1] == 2 && bytes[2] < 4 {
+                                    if bytes[3] == 1 {
+                                        self.pwm |= 1 << bytes[2];
+                                    } else {
+                                        self.pwm &= !(1 << bytes[2]);
+                                    }
+                                }
+                                self.rx.push_back(format!(
+                                    "CAN_RX bus=2 id=769 data=0100{:02X}{:02X}{:02X}000000",
+                                    bytes[1], bytes[2], self.pwm
+                                ));
+                            }
+                            784 => {
+                                match bytes[1] {
+                                    2 => self.dc_enabled = bytes[2] == 1,
+                                    3 => {
+                                        self.dc_enabled = false;
+                                        self.dc_duty = 0;
+                                    }
+                                    4 => self.dc_duty = i16::from_be_bytes([bytes[4], bytes[5]]),
+                                    8 => self.rx.push_back(
+                                        "CAN_RX bus=2 id=787 data=0100000007000000".into(),
+                                    ),
+                                    _ => {}
+                                }
+                                let [hi, lo] = self.dc_duty.to_be_bytes();
+                                self.rx.push_back(format!(
+                                    "CAN_RX bus=2 id=785 data=0100{:02X}{:02X}{hi:02X}{lo:02X}0000",
+                                    u8::from(self.dc_enabled),
+                                    u8::from(self.dc_enabled)
+                                ));
+                                self.rx
+                                    .push_back("CAN_RX bus=2 id=786 data=0101000000000000".into());
+                            }
+                            800 => {
+                                match bytes[1] {
+                                    1 | 3 => {
+                                        self.servo_mode = if bytes[1] == 1 { 0 } else { 2 };
+                                        for servo in self.servos.values_mut() {
+                                            servo.1 = false;
+                                        }
+                                    }
+                                    2 => self.servo_mode = 1,
+                                    4 => {
+                                        self.servos.entry(bytes[2]).or_default().0 =
+                                            u16::from_be_bytes([bytes[4], bytes[5]]);
+                                    }
+                                    6 => {
+                                        self.servos.entry(bytes[2]).or_default().1 = bytes[3] == 1;
+                                    }
+                                    7 => {
+                                        let (position, enabled) =
+                                            self.servos.get(&bytes[2]).copied().unwrap_or_default();
+                                        self.rx.push_back(format!("CAN_RX bus=2 id=802 data=01{:02X}{position:04X}{:02X}000000", bytes[2], u8::from(enabled)));
+                                    }
+                                    8 => self.rx.push_back(
+                                        "CAN_RX bus=2 id=803 data=010000003F000000".into(),
+                                    ),
+                                    _ => {}
+                                }
+                                self.rx.push_back(format!(
+                                    "CAN_RX bus=2 id=801 data=0100{:02X}{:02X}00000000",
+                                    self.servo_mode,
+                                    self.servos.values().filter(|servo| servo.1).count()
+                                ));
+                            }
+                            _ => {}
+                        }
                     }
                 }
             }
@@ -160,6 +266,9 @@ impl Simulator {
             ];
             for (i, cap) in caps.iter().enumerate() {
                 if self.enabled & (1 << i) != 0 {
+                    if let Some(target) = self.targets[i] {
+                        self.position[i] = target;
+                    }
                     self.position[i] += self.velocity[i].clamp(-cap.abs(), cap.abs()) * dt;
                     let minimum = *self.parameters.get(&(15 + 2 * i as u8)).unwrap_or(&-1.0e6);
                     let maximum = *self.parameters.get(&(16 + 2 * i as u8)).unwrap_or(&1.0e6);

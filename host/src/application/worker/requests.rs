@@ -28,7 +28,7 @@ impl Runtime {
             bail!("ソフト緊停中です。人間が解除するまで操作できません");
         }
         if req.action == "claim" {
-            if manual || self.authority.active() {
+            if manual || self.authority.active() || self.test.enabled {
                 bail!("操作権は使用中です");
             }
             self.stop(false)?;
@@ -59,6 +59,27 @@ impl Runtime {
             req.action == "stop",
             Instant::now(),
         )?;
+        if req.action.starts_with("test_") {
+            let result = self.test_request(req, manual);
+            if result.is_err() && self.test.active {
+                let _ = self.stop(true);
+            }
+            return result;
+        }
+        if self.test.active
+            && matches!(
+                req.action.as_str(),
+                "apply"
+                    | "save"
+                    | "connection"
+                    | "reinit"
+                    | "origin"
+                    | "adjustment"
+                    | "manual_control"
+            )
+        {
+            bail!("個別テストの出力を停止してから操作してください");
+        }
         match req.action.as_str() {
             "heartbeat" => {}
             "manual_control" => {
@@ -146,6 +167,7 @@ impl Runtime {
                 if let Some(simulate) = connection.simulate {
                     self.cfg.simulate = simulate;
                 }
+                self.test = test_control::TestControl::default();
                 self.screen_control = self.cfg.simulate;
                 self.manual_input = ControllerState::default();
                 self.screen_input_times = [None; 6];

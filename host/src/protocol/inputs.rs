@@ -28,7 +28,7 @@ pub fn supported(board: Board) -> bool {
 pub fn parse(line: &str, board: Board) -> Option<InputState> {
     let (available, dip_mask) = capability(board)?;
     let values = match board {
-        Board::SerialSvmd => {
+        Board::SerialSvmd if line.starts_with("INPUT_STATE ") => {
             let fields: Vec<_> = line
                 .strip_prefix("INPUT_STATE ")?
                 .split_whitespace()
@@ -51,7 +51,11 @@ pub fn parse(line: &str, board: Board) -> Option<InputState> {
             values
         }
         _ => {
-            let data = line.strip_prefix("CAN_RX bus=2 id=787 data=")?;
+            let data = line.strip_prefix(if board == Board::SerialSvmd {
+                "CAN_RX bus=2 id=803 data="
+            } else {
+                "CAN_RX bus=2 id=787 data="
+            })?;
             if data.len() != 16 || !data.is_ascii() || !data.starts_with("01") {
                 return None;
             }

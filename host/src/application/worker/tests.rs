@@ -255,6 +255,9 @@ fn save_as_changes_the_active_path_only_after_success() {
 #[test]
 fn emergency_revokes_ai_and_requires_human_reset_without_resuming() {
     let mut runtime = screen_runtime();
+    for board in ["pwm", "dc", "sts"] {
+        runtime.test.peers.insert(board, Instant::now());
+    }
     let token = runtime
         .request(&Request::new("claim"), false)
         .unwrap()
@@ -336,4 +339,214 @@ fn output_cut_preserves_origins_but_disconnect_invalidates_them() {
             .iter()
             .all(|o| !o.captured)
     );
+}
+
+fn select_test(runtime: &mut Runtime, target: &str, kind: &str) {
+    runtime
+        .request(
+            &Request {
+                flag: Some(true),
+                ..Request::new("test_mode")
+            },
+            true,
+        )
+        .unwrap();
+    runtime
+        .request(
+            &Request {
+                axis: Some(target.into()),
+                text: Some(kind.into()),
+                ..Request::new("test_select")
+            },
+            true,
+        )
+        .unwrap();
+    runtime.tick().unwrap();
+    runtime.tick().unwrap();
+}
+#[test]
+fn individual_test_excludes_driving_ai_and_apply_until_output_is_stopped() {
+    let mut runtime = screen_runtime();
+    runtime.start().unwrap();
+    runtime.tick().unwrap();
+    select_test(&mut runtime, "cctl:0", "velocity");
+    assert!(!runtime.drive.running());
+    assert!(runtime.start().is_err());
+    assert!(runtime.request(&Request::new("claim"), false).is_err());
+    runtime
+        .request(
+            &Request {
+                value: Some(0.04),
+                ..Request::new("test_output")
+            },
+            true,
+        )
+        .unwrap();
+    runtime.tick().unwrap();
+    assert!(runtime.test.active);
+    assert_eq!(runtime.telemetry.as_ref().unwrap().enabled_slots, 1);
+    let profile = toml::to_string(&runtime.cfg.machine).unwrap();
+    assert!(
+        runtime
+            .request(
+                &Request {
+                    text: Some(profile),
+                    ..Request::new("apply")
+                },
+                true
+            )
+            .is_err()
+    );
+    assert!(runtime.test.active);
+    runtime
+        .tick_at(Instant::now() + Duration::from_millis(151))
+        .unwrap();
+    assert!(!runtime.test.active);
+    runtime
+        .request(
+            &Request {
+                flag: Some(false),
+                ..Request::new("test_mode")
+            },
+            true,
+        )
+        .unwrap();
+    assert!(!runtime.drive.running());
+    assert!(!runtime.test.enabled);
+}
+#[test]
+fn position_test_holds_without_gui_refresh_and_target_change_cuts_output() {
+    let mut runtime = screen_runtime();
+    select_test(&mut runtime, "sts:1", "position");
+    runtime
+        .request(
+            &Request {
+                value: Some(2048.0),
+                ..Request::new("test_output")
+            },
+            true,
+        )
+        .unwrap();
+    runtime
+        .tick_at(Instant::now() + Duration::from_millis(500))
+        .unwrap();
+    assert!(runtime.test.active);
+    runtime.publish();
+    assert!(runtime.shared.status_snapshot().outputs_active);
+    runtime
+        .request(
+            &Request {
+                axis: Some("pwm:0".into()),
+                text: Some("position".into()),
+                ..Request::new("test_select")
+            },
+            true,
+        )
+        .unwrap();
+    assert!(!runtime.test.active);
+    runtime.tick().unwrap();
+    runtime.tick().unwrap();
+    runtime
+        .request(
+            &Request {
+                value: Some(1500.0),
+                ..Request::new("test_output")
+            },
+            true,
+        )
+        .unwrap();
+    runtime.tick().unwrap();
+    assert!(runtime.test.active);
+    runtime.request(&Request::new("estop"), true).unwrap();
+    assert!(!runtime.test.active);
+    assert!(runtime.test.enabled);
+    runtime.request(&Request::new("estop_reset"), true).unwrap();
+    assert!(!runtime.test.active);
+}
+#[test]
+fn cctl_position_test_and_sensor_observation_do_not_reenable_other_axes() {
+    let mut runtime = screen_runtime();
+    assert!(runtime.test.peers.is_empty()); // 未設定・未選択の基板へは送信しない。
+    assert_eq!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Safe);
+    select_test(&mut runtime, "cctl:0", "position");
+    runtime
+        .request(
+            &Request {
+                value: Some(0.4),
+                ..Request::new("test_output")
+            },
+            true,
+        )
+        .unwrap();
+    runtime.tick().unwrap();
+    assert!(runtime.test.active);
+    assert_eq!(runtime.telemetry.as_ref().unwrap().enabled_slots, 1);
+    assert!((runtime.telemetry.as_ref().unwrap().slots[0].measured - 0.4).abs() < 0.01);
+    runtime.request(&Request::new("stop"), true).unwrap();
+    runtime.tick().unwrap();
+    assert!(!runtime.test.active);
+    assert_eq!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Stop);
+}
+#[test]
+fn dc_output_is_bounded_and_communication_loss_does_not_resume_tests() {
+    let mut runtime = screen_runtime();
+    select_test(&mut runtime, "dc:0", "duty");
+    assert!(
+        runtime
+            .request(
+                &Request {
+                    value: Some(101.0),
+                    ..Request::new("test_output")
+                },
+                true
+            )
+            .is_err()
+    );
+    runtime
+        .request(
+            &Request {
+                value: Some(-100.0),
+                ..Request::new("test_output")
+            },
+            true,
+        )
+        .unwrap();
+    runtime.tick().unwrap();
+    assert!(runtime.test.active);
+    runtime.fault("disconnect".into());
+    assert!(!runtime.test.active);
+    runtime.tick().unwrap();
+    assert!(!runtime.test.active);
+}
+
+#[test]
+fn malformed_and_negative_peripheral_feedback_cannot_leave_a_test_active() {
+    let mut runtime = screen_runtime();
+    select_test(&mut runtime, "sts:1", "position");
+    runtime
+        .request(
+            &Request {
+                value: Some(2048.0),
+                ..Request::new("test_output")
+            },
+            true,
+        )
+        .unwrap();
+    runtime.observe_test_reply("CAN_RX bus=2 id=801 data=01あ00000000000");
+    assert!(runtime.test.active);
+    runtime.observe_test_reply("CAN_RX bus=2 id=802 data=0101080001010000");
+    assert!(!runtime.test.active);
+    select_test(&mut runtime, "pwm:0", "position");
+    runtime
+        .request(
+            &Request {
+                value: Some(1500.0),
+                ..Request::new("test_output")
+            },
+            true,
+        )
+        .unwrap();
+    runtime.test.started = Some(Instant::now() - Duration::from_secs(1));
+    runtime.observe_test_reply("CAN_RX bus=2 id=769 data=0100000000000000");
+    assert!(!runtime.test.active);
 }

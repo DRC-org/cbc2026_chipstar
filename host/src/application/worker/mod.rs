@@ -51,6 +51,7 @@ struct Runtime {
     setup_error: bool,
     drive: DriveState,
     emergency: bool,
+    test: test_control::TestControl,
     authority: Authority,
     manual_input: ControllerState,
     screen_control: bool,
@@ -79,6 +80,7 @@ impl Runtime {
             setup_error: false,
             drive: DriveState::Stopped,
             emergency: false,
+            test: test_control::TestControl::default(),
             authority: Authority::default(),
             manual_input: ControllerState::default(),
             gamepad_name: String::new(),
@@ -106,6 +108,11 @@ impl Runtime {
         self.screen_input_times = [None; 6];
     }
     fn stop(&mut self, cut: bool) -> Result<()> {
+        let cut = cut || self.test.enabled;
+        self.test.active = false;
+        self.test.renewed = None;
+        self.test.started = None;
+        self.test.confirmed = false;
         self.clear_drive();
         if !self.fresh() {
             let _ = self.send("STOP");
@@ -134,12 +141,17 @@ impl Runtime {
     fn stop_peripherals(&mut self) -> Result<()> {
         // 機体設定に未登録の個別テスト対象も停止する。1基板の送信失敗で残りを省略しない。
         let mut result = Ok(());
-        for line in [
-            crate::protocol::svmd::Command::Stop.to_cctl_line(),
-            crate::protocol::dcmd::line(3, 0, 0),
-            crate::protocol::serial_svmd::Command::Stop.to_cctl_line(),
+        for (board, line) in [
+            ("pwm", crate::protocol::svmd::Command::Stop.to_cctl_line()),
+            ("dc", crate::protocol::dcmd::line(3, 0, 0)),
+            (
+                "sts",
+                crate::protocol::serial_svmd::Command::Stop.to_cctl_line(),
+            ),
         ] {
-            if let Err(error) = self.send(&line) {
+            if self.uses_test_board(board)
+                && let Err(error) = self.send(&line)
+            {
                 result = Err(error);
             }
         }
@@ -205,6 +217,9 @@ impl Runtime {
         if self.emergency {
             bail!("ソフト緊停中です");
         }
+        if self.test.enabled {
+            bail!("個別テストモードを終了してください");
+        }
         self.ready()?;
         let input = self.authority.input().unwrap_or(&self.manual_input);
         if input.axes.iter().any(|v| !v.is_finite() || v.abs() >= 0.1) {
@@ -236,6 +251,20 @@ impl Runtime {
     }
     fn receive(&mut self) {
         for line in self.link.read_lines() {
+            self.observe_test_reply(&line);
+            for board in [
+                crate::protocol::board::Board::Dcmd,
+                crate::protocol::board::Board::SerialSvmd,
+            ] {
+                if let Some(input) = crate::protocol::inputs::parse(&line, board) {
+                    self.shared.update_status(|s| {
+                        s.peripherals.insert(
+                            format!("{} 接点", board.key()),
+                            crate::protocol::inputs::describe(&input),
+                        );
+                    });
+                }
+            }
             self.shared.log(format!("RX {line}"));
             if let Some(status) = crate::protocol::dcmd::parse_status(&line) {
                 self.shared.update_status(|s| {
@@ -290,6 +319,33 @@ impl Runtime {
                     self.settings = Settings::new(&self.cfg.machine);
                 }
                 self.rx = Some(Instant::now());
+                if let Some(contacts) = t.contacts {
+                    self.shared.update_status(|s| {
+                        s.peripherals
+                            .insert("cctl 接点".into(), format!("SW1..3 閉={contacts:03b}"));
+                    });
+                }
+                if self.test.active
+                    && let Some((crate::diagnostics::individual::Target::Cctl(slot), _)) =
+                        self.test.selected
+                {
+                    let error = t.error_bits[slot as usize];
+                    let enabled = t.mode == RunMode::Run && t.enabled_slots & (1 << slot) != 0;
+                    if enabled {
+                        self.test.confirmed = true;
+                    }
+                    if (!enabled
+                        && (self.test.confirmed
+                            || self
+                                .test
+                                .started
+                                .is_some_and(|time| time.elapsed() > Duration::from_millis(500))))
+                        || t.stale_slots & (1 << slot) != 0
+                        || (if slot == 2 { error & 0xf0 } else { error }) != 0
+                    {
+                        self.fault("個別テスト対象の出力または応答を失いました".into());
+                    }
+                }
                 let before = self.machine.origin_states(self.telemetry.as_ref());
                 self.machine.observe(&t);
                 let origin_lost = self
@@ -408,6 +464,7 @@ impl Runtime {
                 }
             }
         }
+        self.tick_test(now)?;
         if self.emergency {
             self.stop(true)?;
         }
@@ -428,8 +485,33 @@ impl Runtime {
     fn publish(&self) {
         let origins = self.machine.origin_states(self.telemetry.as_ref());
         self.shared.update_status(|s| {
+            s.test_mode = self.test.enabled;
+            s.test_active = self.test.active;
+            s.test_ready = !self.emergency
+                && self.fresh()
+                && self.settings.ready()
+                && !self.setup_error
+                && self.test.selected.is_some_and(|(target, _)| {
+                    target.board() == "cctl"
+                        || self
+                            .test
+                            .peers
+                            .get(target.board())
+                            .is_some_and(|time| time.elapsed() < Duration::from_secs(2))
+                });
+            s.test_target = self
+                .test
+                .selected
+                .map(|(target, _)| target.key())
+                .unwrap_or_default();
+            s.test_kind = self
+                .test
+                .selected
+                .map(|(_, kind)| kind.key().into())
+                .unwrap_or_default();
             s.emergency = self.emergency;
-            s.outputs_active = self.drive.awaiting().is_some()
+            s.outputs_active = self.test.active
+                || self.drive.awaiting().is_some()
                 || self
                     .telemetry
                     .as_ref()
@@ -438,6 +520,8 @@ impl Runtime {
                 "ソフト緊停中"
             } else if !self.fresh() {
                 "接続断 / 状態不明"
+            } else if self.test.active {
+                "個別テスト出力中"
             } else if self.drive.running() {
                 "運転中"
             } else if self.drive.awaiting().is_some() {
@@ -581,6 +665,8 @@ pub fn run(shared: Arc<Shared>) {
             let _ = pending.reply.send(reply);
         }
         if let Err(error) = runtime.tick() {
+            let _ = runtime.stop(true);
+            runtime.test.peers.clear();
             runtime.clear_drive();
             runtime.machine.invalidate_origins();
             runtime.error = error.to_string();
@@ -600,5 +686,6 @@ pub fn run(shared: Arc<Shared>) {
 }
 
 mod requests;
+mod test_control;
 #[cfg(test)]
 mod tests;

@@ -191,3 +191,29 @@ fn settings_are_temporary_until_saved_and_rejected_changes_block_run() {
     assert_eq!(host.status()["running"].as_bool(), Some(false));
     assert!(!host.request("run", &token).ok);
 }
+
+#[test]
+fn api_emergency_revokes_the_token_and_cannot_be_reset_remotely() {
+    let host = Host::new();
+    let token = host.call(Request::new("claim")).token.unwrap();
+    host.origins(&token);
+    assert!(host.request("run", &token).ok);
+    host.wait(|s| s["running"].as_bool() == Some(true));
+    assert!(host.call(Request::new("estop")).ok);
+    let stopped = host.wait(|s| {
+        s["emergency"].as_bool() == Some(true) && s["outputs_active"].as_bool() == Some(false)
+    });
+    assert_eq!(stopped["ai_active"].as_bool(), Some(false));
+    assert!(
+        stopped["origins"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .all(|o| o["captured"].as_bool() == Some(true))
+    );
+    assert!(!host.call(Request::new("claim")).ok);
+    assert!(!host.request("run", &token).ok);
+    assert!(!host.request("estop_reset", &token).ok);
+    assert!(host.call(Request::new("stop")).ok);
+    assert_eq!(host.status()["emergency"].as_bool(), Some(true));
+}
