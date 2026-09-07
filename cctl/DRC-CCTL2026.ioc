@@ -2,10 +2,11 @@
 CAD.formats=[{"id"\:42,"cad_product"\:"KiCAD v6+","cad_family"\:"KiCAD"}]
 CAD.pinconfig=Dual
 CAD.provider=
+FDCAN1.AutoRetransmission=ENABLE
 FDCAN1.CalculateBaudRateNominal=1000000
 FDCAN1.CalculateTimeBitNominal=1000
 FDCAN1.CalculateTimeQuantumNominal=100.0
-FDCAN1.IPParameters=CalculateTimeQuantumNominal,CalculateTimeBitNominal,CalculateBaudRateNominal,NominalPrescaler,NominalTimeSeg1,NominalTimeSeg2
+FDCAN1.IPParameters=AutoRetransmission,CalculateTimeQuantumNominal,CalculateTimeBitNominal,CalculateBaudRateNominal,NominalPrescaler,NominalTimeSeg1,NominalTimeSeg2
 FDCAN1.NominalPrescaler=16
 FDCAN1.NominalTimeSeg1=7
 FDCAN1.NominalTimeSeg2=2
