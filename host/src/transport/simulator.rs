@@ -26,6 +26,8 @@ pub struct Simulator {
     reject: bool,
     delay_run: bool,
     pending_run: Option<Instant>,
+    stale_once: u8,
+    errors_once: [u8; 3],
 }
 impl Simulator {
     pub(super) fn fault(&mut self, fault: &str) -> Result<()> {
@@ -43,6 +45,11 @@ impl Simulator {
                 self.mode = "STOP";
                 self.rx.clear();
             }
+            "silence_rx" => {
+                self.disconnected = true;
+                self.rx.clear();
+            }
+            "resume_rx" => self.disconnected = false,
             "reconnect" => {
                 self.disconnected = false;
                 self.mode = "SAFE";
@@ -53,7 +60,25 @@ impl Simulator {
             }
             "reject" => self.reject = true,
             "delay_run" => self.delay_run = true,
-            _ => bail!("disconnect / reconnect / reject / delay_run を指定してください"),
+            "mode_stop" => {
+                self.mode = "STOP";
+                self.velocity = [0.0; 3];
+            }
+            "disable_slot0" => self.enabled &= !1,
+            "stale_slot0" => self.stale_once |= 1,
+            "error_slot0" => self.errors_once[0] = 0x80,
+            "restart" => {
+                self.started = Instant::now();
+                self.mode = "SAFE";
+                self.enabled = 0;
+                self.velocity = [0.0; 3];
+                self.targets = [None; 3];
+                self.pending_run = None;
+            }
+            "jump_slot0" => self.position[0] += 1000.0,
+            _ => bail!(
+                "disconnect / reconnect / silence_rx / resume_rx / reject / delay_run / mode_stop / disable_slot0 / stale_slot0 / error_slot0 / restart / jump_slot0 を指定してください"
+            ),
         }
         Ok(())
     }
@@ -80,6 +105,8 @@ impl Simulator {
             reject: false,
             delay_run: false,
             pending_run: None,
+            stale_once: 0,
+            errors_once: [0; 3],
         }
     }
     pub(super) fn write(&mut self, line: &str) -> Result<()> {
@@ -269,6 +296,11 @@ impl Simulator {
     pub(super) fn read(&mut self) -> Vec<String> {
         let dt = self.tick.elapsed().as_secs_f32().min(0.1);
         self.tick = Instant::now();
+        // 通信線が無音でも基板側watchdogは独立して動作する。
+        if self.contact.elapsed().as_millis() > 250 && self.mode == "RUN" {
+            self.mode = "STOP";
+            self.velocity = [0.0; 3];
+        }
         if self.disconnected {
             return Vec::new();
         }
@@ -280,10 +312,6 @@ impl Simulator {
             self.mode = "RUN";
             self.velocity = [0.0; 3];
             self.contact = Instant::now();
-        }
-        if self.contact.elapsed().as_millis() > 250 && self.mode == "RUN" {
-            self.mode = "STOP";
-            self.velocity = [0.0; 3];
         }
         if self.mode == "RUN" {
             let caps = [
@@ -306,7 +334,9 @@ impl Simulator {
             }
         }
         let mut lines: Vec<_> = self.rx.drain(..).collect();
-        lines.push(format!("STATE t={} mode={} en={} a0={p0}/{p0} a1={p1}/{p1} a2={p2}/{p2} err=00,00,00 sw=7 stale=0 can=3", self.started.elapsed().as_millis(), self.mode, self.enabled, p0=self.position[0], p1=self.position[1], p2=self.position[2]));
+        let stale = std::mem::take(&mut self.stale_once);
+        let errors = std::mem::take(&mut self.errors_once);
+        lines.push(format!("STATE t={} mode={} en={} a0={p0}/{p0} a1={p1}/{p1} a2={p2}/{p2} err={:02X},{:02X},{:02X} sw=7 stale={stale} can=3", self.started.elapsed().as_millis(), self.mode, self.enabled, errors[0], errors[1], errors[2], p0=self.position[0], p1=self.position[1], p2=self.position[2]));
         lines
     }
 }

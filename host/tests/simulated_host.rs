@@ -201,6 +201,43 @@ fn disconnect_reconnect_invalidates_origins_and_never_resumes() {
 }
 
 #[test]
+fn silent_link_loss_uses_board_watchdog_and_recovery_stays_stopped() {
+    let host = Host::new();
+    let token = host.claim();
+    host.origins(&token);
+    host.run(&token);
+    assert!(
+        host.call(Request {
+            token: Some(token.clone()),
+            text: Some("silence_rx".into()),
+            ..Request::new("fault")
+        })
+        .ok
+    );
+    let disconnected = host.wait(|state| state["connected"].as_bool() == Some(false));
+    assert_eq!(disconnected["running"].as_bool(), Some(false));
+    assert!(all_origins(&disconnected, false));
+    thread::sleep(Duration::from_millis(350));
+
+    assert!(
+        host.call(Request {
+            token: Some(token.clone()),
+            text: Some("resume_rx".into()),
+            ..Request::new("fault")
+        })
+        .ok
+    );
+    let recovered = host.wait(|state| {
+        state["configured"].as_bool() == Some(true)
+            && state["connected"].as_bool() == Some(true)
+            && state["outputs_active"].as_bool() == Some(false)
+    });
+    assert_eq!(recovered["running"].as_bool(), Some(false));
+    assert!(all_origins(&recovered, false));
+    assert!(!host.request("run", &token).ok);
+}
+
+#[test]
 fn settings_are_temporary_until_explicitly_saved() {
     let host = Host::new();
     let token = host.claim();
@@ -405,6 +442,48 @@ fn running_rejects_configuration_and_mode_switches_without_side_effects() {
         fs::read_to_string(host.dir.join("machine.toml")).unwrap(),
         file_before
     );
+}
+
+#[test]
+fn telemetry_faults_stop_outputs_invalidate_origins_and_block_restart() {
+    for (fault, expected_error) in [
+        ("mode_stop", "運転状態または原点"),
+        ("disable_slot0", "運転状態または原点"),
+        ("stale_slot0", "運転状態または原点"),
+        ("error_slot0", "モータ応答・異常状態"),
+        ("restart", "基板の再起動"),
+        ("jump_slot0", "運転状態または原点"),
+    ] {
+        let host = Host::new();
+        let token = host.claim();
+        host.origins(&token);
+        host.run(&token);
+        assert!(
+            host.call(Request {
+                token: Some(token.clone()),
+                text: Some(fault.into()),
+                ..Request::new("fault")
+            })
+            .ok,
+            "fault={fault}"
+        );
+        let stopped = host.wait(|state| {
+            !state["error"].as_str().unwrap_or_default().is_empty()
+                && state["running"].as_bool() == Some(false)
+                && state["outputs_active"].as_bool() == Some(false)
+        });
+        assert!(
+            stopped["error"].as_str().unwrap().contains(expected_error),
+            "fault={fault}, state={stopped}"
+        );
+        assert_eq!(
+            stopped["outputs_active"].as_bool(),
+            Some(false),
+            "fault={fault}"
+        );
+        assert!(all_origins(&stopped, false), "fault={fault}");
+        assert!(!host.request("run", &token).ok, "fault={fault}");
+    }
 }
 
 #[test]
