@@ -27,7 +27,7 @@ void ActuatorController::initMotor(uint8_t slot) {
       HAL_Delay(50);
       slot0_.setRunMode(El05Motor::RunMode::Position);
       HAL_Delay(20);
-      slot0_.writeParamFloat(domain::el05::param::LIMIT_SPD,
+      slot0_.writeParamFloat(domain::el05::param::VEL_MAX,
                              parameters_.get(domain::ParamId::El05LimitSpd));
       HAL_Delay(20);
       slot0_.writeParamFloat(domain::el05::param::LIMIT_CUR,
@@ -402,7 +402,7 @@ void ActuatorController::applyParameter(uint8_t id) {
       slot0_.writeParamFloat(domain::el05::param::LOC_KP, parameters_.get(ParamId::El05LocKp));
       break;
     case ParamId::El05LimitSpd:
-      slot0_.writeParamFloat(domain::el05::param::LIMIT_SPD,
+      slot0_.writeParamFloat(domain::el05::param::VEL_MAX,
                              parameters_.get(ParamId::El05LimitSpd));
       break;
     case ParamId::El05LimitCur:

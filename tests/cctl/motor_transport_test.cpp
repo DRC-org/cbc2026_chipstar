@@ -80,6 +80,14 @@ TEST_CASE("開始シーケンスはEL05とDMのEnableを送信する") {
  }
  CHECK(el05);CHECK(dm);
 }
+TEST_CASE("EL05速度上限はPP用のVEL_MAXへ書く") {
+ resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();accepted.clear();
+ REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::El05LimitSpd),0.75f));
+ REQUIRE(accepted.size()==1);
+ CHECK(accepted[0].data[0]==0x24);CHECK(accepted[0].data[1]==0x70);
+ float value=0;std::memcpy(&value,&accepted[0].data[4],4);CHECK(value==doctest::Approx(0.75));
+}
+
 TEST_CASE("周期指令と再初期化の送信失敗も停止側へ戻す") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
  REQUIRE(controller.setSlotsEnabled(1,true));REQUIRE(controller.setMode(domain::RunMode::Run));
