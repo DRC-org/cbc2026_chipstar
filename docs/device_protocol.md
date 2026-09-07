@@ -22,62 +22,18 @@ host と各基板の間で使う、改行区切りASCIIプロトコル。1行は
 `key=value` 形式にする。
 
 ```text
-DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=stored
+DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=stored jog=1 motors=el05,m3508,m3508
 ERR code=BAD_COMMAND
 ERR code=OUT_OF_RANGE
 ```
 
-### DMドライバのレジスタ
+### モータ構成の照合
 
-DM-S3519のドライバは、CANのID `0x7FF` へ送る設定フレームでレジスタを読み書きできる。
-cctlはこれを `DMREG` として中継する。デバッグアシスタント（PC＋シリアル）がなくても
-CAN_ID、Master ID、制御モード、PMAX/VMAX/TMAXを設定できる。
-
-```text
-DMREG 10                  # レジスタ0x0A(CTRL_MODE)を読む
-DMREG 10 00000002         # 位置速度モード(2)を書く
-DMREG 21 41480000         # PMAX へ 12.5f を書く
-DMREG rid=10 raw=00000002 f=2.000
-```
-
-値は32bitを8桁の16進で指定する。floatか整数かはレジスタごとに決まっており、
-FWは解釈せずそのまま渡す。応答は生値とfloat解釈の両方を返すので、
-どちらのレジスタでも読み取れる。
-
-`ERR code=BUSY` はSAFEでないとき、`ERR code=CAN_TX` はFDCAN1へ送信できなかった
-ときに返る。送信キューの満杯やCANドライバの状態異常でも発生するため、
-このエラーだけでは電源・配線の異常を断定できない。
-
-`DMREG` はSAFE中だけ受理する。走行中にIDやモードを変えると、指令の宛先と
-フィードバックの解釈が食い違うためである。応答は非同期に届く。
-
-`DMSTORE`はDMドライバへ現在の全パラメータの保存を要求する。
-SAFE中かつ直近1秒以内にDMの無効状態を受信している場合のみ受理する。
-成功判定には送信受付ではなく、ドライバの保存応答に対応する
-`DMSTORE result=stored`を使う。送信失敗や条件不成立は`ERR code=DMSTORE_REJECTED`。
-モータ側Flashへの書込みになるため、設定変更ごとに必要な場合だけ実行する。
-
-DM3520の実機ではCAN ID 17の停止応答が`D0=0x11`となり、状態ビットとIDが重なった。
-CAN IDは1〜15を使用する。応答先のMST_IDは別項目であり、現在の機体設定は
-CAN ID 9・MST_ID 17である。モータ側ID変更は`DMREG 8`で読み戻し、保存応答を確認する。
-
-機体設定のDM位置表現範囲は`PMAX=2048`、CCTL側の`dm_p_max=2048`である。
-DM本体にはSAFE中に`DMREG 21 45000000`で設定し、`DMREG 21`の読み戻しと
-`DMSTORE result=stored`を確認する。hostのパラメータ適用だけではDM本体のPMAXは変わらない。
-設定変更中は出力を停止し、本体とCCTLの値が揃ってから原点を採用する。
-
-DM3520では内部位置が±PMAXを超えると通常の位置応答が折り返される。
-その位置を位置速度モードの目標へ使うと、現在位置を保持するつもりでも遠い位置を指令する。
-停止中の`DMREG 80`（内部位置）と通常の位置応答が一致することを確認する。
-±2048では位置応答の刻みは約0.0625通信角度単位。
-zの暫定実測校正値では約0.0533 mmに相当するが、補正後の実移動との一致は未確認。
-換算の前提は[rθzと周辺機構](rtheta_z_machine.md)を参照する。
-この範囲は通信表現の範囲であり、機体のz可動域はhostの原点から0〜75 mmで制限する。
-`slot2_min/max`はDMの絶対位置に対する別の制限で、hostの原点採用では移動しない。
-モータ交換・内部原点変更・表現範囲外までの移動後は、内部位置と各範囲を再確認する。
-
-主なレジスタ: `MST_ID`(0x07) / `ESC_ID`(0x08) / `TIMEOUT`(0x09) / `CTRL_MODE`(0x0A) /
-`PMAX`(0x15) / `VMAX`(0x16) / `TMAX`(0x17) / `ACC`(0x04) / `DEC`(0x05) / `BAUD`(0x23)。
+現在のcctlはslot 0=EL05、slot 1=M3508、slot 2=M3508。
+能力通知の`motors=el05,m3508,m3508`をhostが確認してからパラメータを適用する。
+旧DM用hostから送られるDMパラメータの書込みは拒否する。
+`DMREG`・`DMSTORE`は`ERR code=UNSUPPORTED`として拒否し、モータへ送信しない。
+旧DM構成の調査記録は[位置単位調査](investigations/dm3520_position_units.md)に残す。
 
 ## 基板アドレス
 
@@ -242,19 +198,30 @@ PARAMの応答値は小数5桁で返す。例えば速度ゲイン `0.0005` は 
 | 8 | `el05_loc_kp` | EL05 位置ループのゲイン（モータへ書き込む） |
 | 9 | `el05_limit_spd` | EL05 PP速度制限（VEL_MAX 0x7024へ書き込む） |
 | 10 | `el05_limit_cur` | EL05 電流制限（モータへ書き込む） |
-| 11..13 | `dm_p_max` / `dm_v_max` / `dm_t_max` | DMのフレーム符号化レンジ。モータ側設定と一致必須 |
-| 14 | `dm_pos_vel_limit` | DM Position-Velocityの速度上限 |
+| 11..13 | 予約（旧DM） | 書込み拒否、制御に使用しない |
+| 14 | 予約（旧DM） | 書込み拒否、制御に使用しない |
 | 15..20 | `slot0_min` / `slot0_max` / `slot1_…` / `slot2_…` | slotのネイティブ単位での絶対可動域 |
 | 21 | `c620_esc_id` | C620のESC ID（1..8） |
-| 22..23 | `dm_can_id` / `dm_mst_id` | DMの指令IDとフィードバックID |
+| 22..23 | 予約（旧DM） | 書込み拒否、制御に使用しない |
 | 24..25 | `el05_motor_id` / `el05_host_id` | EL05の拡張IDに載るID |
-| 26..29 | `m3508_period_ms` / `dm_period_ms` / `el05_period_ms` / `telemetry_period_ms` | 各送信周期 |
+| 26 | `m3508_period_ms` | 両M3508の共通制御・送信周期 |
+| 27 | 予約（旧DM） | 書込み拒否、制御に使用しない |
+| 28..29 | `el05_period_ms` / `telemetry_period_ms` | EL05指令・状態通知の周期 |
 | 30 | `watchdog_ms` | 通信期限 |
 | 31 | `feedback_timeout_ms` | モータの応答が途絶えたと判断するまでの時間 |
 | 32 | `m3508_max_temperature_c` | M3508の過熱と判断する温度 |
-| 32 | `m3508_max_temperature_c` | M3508の過熱と判断する温度 |
+| 33 | `m3508_slot2_pos_kp` | slot 2の位置Kp |
+| 34 | `m3508_slot2_pos_ki` | slot 2の位置Ki |
+| 35 | `m3508_slot2_pos_kd` | slot 2の位置Kd |
+| 36 | `m3508_slot2_max_rpm` | slot 2の減速前の速度上限 [rpm] |
+| 37 | `m3508_slot2_vel_kp` | slot 2の速度Kp |
+| 38 | `m3508_slot2_vel_ki` | slot 2の速度Ki |
+| 39 | `m3508_slot2_vel_kd` | slot 2の速度Kd |
+| 40 | `m3508_slot2_max_current_ma` | slot 2の電流上限 [mA] |
+| 41 | `c620_slot2_esc_id` | slot 2のESC ID（1〜8、slot 1と重複不可） |
+| 42 | `m3508_slot2_max_temperature_c` | slot 2の過熱しきい値 [°C] |
 
-id 21..25（通信ID）の変更はSAFE中だけ受理する。走行中に宛先を差し替えると、
+id 21・24・25・41（通信ID）の変更はSAFE中だけ受理する。走行中に宛先を差し替えると、
 指令の宛先とフィードバックの解釈が食い違うためである。
 
 検証は**FWが壊れる値だけ**を弾く。制御周期0やCAN IDの規格外は拒否するが、
@@ -427,7 +394,7 @@ CSP用のLIMIT_SPD（0x7017）とは異なる。PP加速度はモータ側の設
 
 ### 電流と識別要求の送信完了
 
-`C620_DIAG cmd_ma=... actual_ma=... rpm=...` を100ms周期で出力する。
+`C620_DIAG slot=1|2 cmd_ma=... actual_ma=... rpm=...` を100ms周期で出力する。
 `cmd_ma` は電流制御器が最後に生成した指令、`actual_ma` と `rpm` はESCからの
 フィードバックである。指令電流が小さいまま停止している場合と、電流上限に達しても
 動かない場合を区別する。送信受付と実機への反映はこの行だけでは判定しない。
@@ -439,10 +406,8 @@ CANのACKは同じバス上の別の機器からも返るため、送信完了�
 FDCAN1は自動再送を有効にする。送信受付の成功だけを見て、競合後に未送信のまま
 捨てられた指令を見逃さないよう、送信完了件数も確認する。
 
-### DMの停止中の照会と受信診断
+### C620の停止中の応答
 
-無効なDMスロットには位置指令を送らず、無効化指令を周期送信する。
-DM3520はこれに位置・状態を返すため、出力を無効にしたまま実測値を更新できる。
-
-`DM_RX id=... data=...`は設定されたDM応答IDの8バイト受信内容を最大10Hzで表示する。
-レジスタ応答と動作状態応答を区別し、停止指令後に新たな無効状態の応答があるか確認する。
+slot 1・2は停止中にもC620の周期応答から累積角度を更新する。
+電流指令は同じグループに属するESCを1フレームにまとめ、停止したslotの電流だけを0にする。
+`C620_SCAN mask=... configured_id=... slot2_id=...`で検出IDと設定IDを確認できる。

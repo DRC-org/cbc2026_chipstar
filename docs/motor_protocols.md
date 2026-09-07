@@ -8,7 +8,7 @@ cctl 側実装は `cctl/src/{dm_motor,el05_motor,m3508_motor}.{hpp,cpp}`。
 
 ---
 
-## z軸: Damiao DM-S3519（標準ID）
+## 旧z軸: Damiao DM-S3519（標準ID、現構成では未使用）
 
 レジスタ式プロトコル。電源投入時に**位置 = 0.0 rad**。
 位置・速度・トルクはいずれも**減速後の出力軸**の値。
@@ -157,7 +157,7 @@ pos `±12.57 rad`, vel `±50 rad/s`, tau `±6 N·m`（各uint16→線形）、te
 
 ---
 
-## θ軸: DJI M3508 + C620（標準ID）
+## θ・z軸: DJI M3508 + C620（標準ID）
 
 C620 ESC は**電流指令のみ**受け付ける。位置制御は cctl 側で実装する。
 

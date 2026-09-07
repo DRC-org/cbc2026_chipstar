@@ -5,7 +5,7 @@ JOG対応のcctl FWを使い、PCの設定との一致を確認してから運�
 
 ## 接続
 
-cctlのFDCAN1にEL05、M3508/C620、DMを、FDCAN2に周辺基板を接続する。
+cctlのFDCAN1にEL05、M3508/C620×2台を、FDCAN2に周辺基板を接続する。
 CANは1Mbps、終端抵抗とGND共有を確認する。PCへの接続はcctlのUSB CDC。
 STS3215のバス速度はサーボの設定に合わせる。全UARTを同一速度と仮定しない。
 

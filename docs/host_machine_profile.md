@@ -59,7 +59,7 @@ normally_closed = true
 
 ## 調整値の適用と保存
 
-`[parameters]`にはcctlの全33項目を指定する。名前とIDは
+`[parameters]`にはcctlの有効な全36項目（旧DMの予約IDを除く）を指定する。名前とIDは
 [デバイスプロトコル](device_protocol.md)を参照。
 既定ファイルには起動用の低い速度・電流上限を含め、全項目を明示している。
 

@@ -13,7 +13,7 @@ CAN で分配する。
 ```
 PC ──USB──▶ DualSense（コントローラ）
    └─USB──▶ cctl  J12 (USB-C)          指令とテレメトリ 115200 baud
-                   ├─ FDCAN1  J2 ──▶ EL05 / M3508+C620 / DM-S3519     1 Mbps
+                   ├─ FDCAN1  J2 ──▶ EL05 / M3508+C620×2台     1 Mbps
                    └─ FDCAN2  J3 ──▶ svmd ──▶ DCMD ──▶ serial_svmd    1 Mbps
                                        (各基板のCANコネクタ2個で数珠つなぎ)
                                                           └─ USART1 ──▶ STS3215 J11〜J14
@@ -63,7 +63,7 @@ Feetech の設定ツールでサーボを直接触るための口であり、hos
 J5 と J6 のどちらも silk が `ENC0` になっている。**ENC1（現 FW が使う方）は J6**。
 `ENC_X1` が出ている方が J6 である。
 
-### DM の Duty ゼロはブレーキ
+### DCMD の Duty ゼロはブレーキ
 
 DCMD の PWM はアクティブ Low で、Duty ゼロは両ローサイド ON のブレーキになる。
 コーストでも電源遮断でもない。詳細は [board_dcmd.md](board_dcmd.md)。
@@ -93,7 +93,7 @@ FDCAN1 に繋ぐモータの ID 割当は [cctl_can_bus.md](cctl_can_bus.md)。
 |---|---|---|
 | 0 | RobStride EL05 | FDCAN1（拡張 ID） |
 | 1 | M3508 + C620 | FDCAN1（標準 0x200 / 0x201） |
-| 2 | DM-S3519 | FDCAN1（標準 0x109 / 0x00A） |
+| 2 | M3508 + C620（ESC ID 2） | FDCAN1（標準指令 0x200 / 応答 0x202） |
 
 ## serial_svmd（DRC-SerialSVMD2026 / STM32F303K8T6）
 

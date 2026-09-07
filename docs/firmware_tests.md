@@ -46,7 +46,7 @@ serial_svmdはSTOP/SAFE時に有効設定と保持目標を解除するFWを使�
 
 | 対象 | 機能名 | ONの例 | 確認対象 |
 |---|---|---|---|
-| cctl | `motor0` / `motor1` / `motor2` | `on motor0 0.1` | EL05 / M3508 / DMの配線・駆動。slot 0/2はrad、slot 1はモータ角deg |
+| cctl | `motor0` / `motor1` / `motor2` | `on motor0 0.1` | EL05 / M3508×2台の配線・駆動。slot 0はrad、slot 1/2は減速前のモータ角deg |
 | cctl | `status` | `on status` | USB経由のSTATE、目標/実測値、モータのerror bits |
 | svmd | `motor0`〜`motor3` | `on motor0 1500` | 各PWM出力とサーボ。500〜2500 us |
 | svmd | `status` | `on status` | CAN返信、出力有効mask、指令パルス幅 |

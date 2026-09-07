@@ -19,7 +19,7 @@ SystemClock（`main.c` の `SystemClock_Config`）:
 | FDCAN2 | 16 | 7 | 2 | 10 | **1 Mbps** | 正常（周辺基板用） |
 | FDCAN3 | 16 | 1 | 1 | 3 | 3.33 Mbps | ⚠ CubeMX 既定のまま・未整備 |
 
-FDCAN1/2はClassic CAN、1Mbps、`AutoRetransmission=DISABLE`。FDCAN3は未使用で、
+FDCAN1/2はClassic CAN、1Mbps。自動再送はFDCAN1で有効、FDCAN2で無効。FDCAN3は未使用で、
 アプリから開始していない。
 
 ## ピン割当（`stm32g4xx_hal_msp.c`）
@@ -36,27 +36,24 @@ FDCAN1/2はClassic CAN、1Mbps、`AutoRetransmission=DISABLE`。FDCAN3は未使�
 
 | バス | 用途 | ビットレート |
 |---|---|---|
-| **FDCAN1** | **全モータ（DM / EL05 / M3508）を集約** | 1 Mbps |
+| **FDCAN1** | **全モータ（EL05 / M3508×2台）を集約** | 1 Mbps |
 | **FDCAN2** | **周辺基板。hostからの汎用CANゲートウェイ** | 1 Mbps |
 | FDCAN3 | 予備（未使用） | — |
 
-モータは3種とも1MbpsのFDCAN1に集約し、周辺基板通信をFDCAN2へ分離する。
+モータは3台とも1MbpsのFDCAN1に集約し、周辺基板通信をFDCAN2へ分離する。
 
 ## CAN ID 割当（同一バス上の衝突回避）
 
-1本のバスに DM・EL05・M3508 を混載するため、**標準IDの衝突**に注意が必要。
-EL05 は拡張ID(29bit)なので標準IDと空間が別で衝突しない。**DM と M3508/C620 が標準IDで競合**する。
+EL05は拡張ID、C620は標準IDを使用する。
+θとzのC620はESC IDを分け、同じグループの電流指令を1フレームにまとめる。
+ESC ID 1〜4は`0x200`、5〜8は`0x1FF`へ送信する。
 
-- C620(θ) はコマンド `0x200`、フィードバック `0x200 + ESC_ID`（ID=1 → `0x201`）を占有。
-- DMのPosition-Velocity指令は`0x100 + CAN_ID`。指令IDとフィードバックIDの両方を
-  C620が使用するIDと重複させない。
-
-採用した割当（`cctl/src/device_config.hpp` の `can_id` 名前空間）:
+採用した割当（`host/config/rtheta.toml`）:
 
 | モータ | 種別 | コマンドID | フィードバックID | 備考 |
 |---|---|---|---|---|
 | M3508 / C620 (θ) | 標準 | `0x200` | `0x201` | ESC ID = 1 |
-| DM-S3519 (z) | 標準 | `0x109`（=0x100+0x09） | `0x00A` | CAN_ID=0x09 / MST_ID=0x0A |
+| M3508 / C620 (z) | 標準 | `0x200` | `0x202` | ESC ID = 2 |
 | EL05 (r) | 拡張 | 拡張ID | 拡張ID | motor=0x7F / host=0xFD |
 
 受信振り分けは **`RxHeader.IdType`（標準/拡張）＋ Identifier** で判定する
@@ -76,9 +73,8 @@ FDCAN2はUSB CDCの`CAN 2 <id> <data>`を標準CANフレームへ変換し、受
 
 制御周期（`period` 名前空間）:
 
-- M3508 電流ループ: 1kHz（`0x200` 送信＋FB受信）
-- DM 位置速度指令: 100Hz 再送
+- M3508 電流ループ: 1kHz（2台分を`0x200`へ一括送信、応答は各ESCから受信）
 - EL05 `LOC_REF`: 50Hz 更新
 
 1Mbps で 8byte 標準フレーム ≈ 130µs。送受合わせて概ね数百µs/ms のため、上記配分なら余裕がある。
-θ の応答を上げる場合は M3508 レートを優先し、DM/EL05 の再送レートを絞る。
+M3508の制御周期は2台共通。周期を変更する際は両台の制御応答とバス負荷を確認する。
