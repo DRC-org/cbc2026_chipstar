@@ -61,6 +61,17 @@ impl Runtime {
             req.action == "stop",
             Instant::now(),
         )?;
+        if req.action == "sts" {
+            return self.sts_request(req);
+        }
+        if (self.sts.active || self.sts.busy())
+            && !matches!(
+                req.action.as_str(),
+                "stop" | "cut" | "safe" | "heartbeat" | "release" | "fault"
+            )
+        {
+            bail!("STS操作を停止してから操作してください");
+        }
         if req.action.starts_with("test_") {
             let result = self.test_request(req, manual);
             if result.is_err() && self.test.active {

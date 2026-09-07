@@ -36,6 +36,7 @@ pub struct BridgeConfig {
 
 #[derive(Clone, Default, Serialize)]
 pub struct Status {
+    pub sts: crate::application::sts::Status,
     pub test_mode: bool,
     pub test_target: String,
     pub test_active: bool,

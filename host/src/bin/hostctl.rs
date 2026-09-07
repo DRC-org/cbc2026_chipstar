@@ -9,7 +9,7 @@ use std::{
 };
 #[derive(Parser)]
 #[command(
-    about = "起動済みhostの観測・設定・操作。action: status/config/claim/heartbeat/release/run/stop/estop/cut/safe/recover/origin/adjustment/input/apply/save/connection/reinit/fault"
+    about = "起動済みhostの観測・設定・操作。action: status/config/claim/heartbeat/release/run/stop/estop/cut/safe/recover/origin/adjustment/input/apply/save/connection/reinit/fault/sts"
 )]
 struct Args {
     action: String,
@@ -27,7 +27,7 @@ struct Args {
     file: Option<PathBuf>,
     #[arg(long)]
     text: Option<String>,
-    /// inputを50ms周期で送り、最後にゼロへ戻す。最大30秒。
+    /// inputまたはSTS速度操作を最大30秒継続し、最後に停止する。
     #[arg(long)]
     seconds: Option<f32>,
 }
@@ -47,6 +47,34 @@ fn main() -> Result<()> {
         text,
     };
     if let Some(seconds) = args.seconds {
+        if req.action == "sts" {
+            anyhow::ensure!(
+                seconds.is_finite() && (0.0..=30.0).contains(&seconds),
+                "secondsは0..30秒です"
+            );
+            let operation: host::application::sts::Operation =
+                toml::from_str(req.text.as_deref().unwrap_or(""))?;
+            anyhow::ensure!(
+                matches!(operation, host::application::sts::Operation::Move { ref targets } if targets.iter().any(|t| t.mode == 1)),
+                "secondsはSTSの速度を含むmove操作に指定してください"
+            );
+            let result: Result<()> = (|| {
+                let reply = call(&socket, &req)?;
+                anyhow::ensure!(reply.ok, "{}", reply.message);
+                req.text = Some("operation = \"renew\"".into());
+                let end = Instant::now() + Duration::from_secs_f32(seconds);
+                while Instant::now() < end {
+                    let reply = call(&socket, &req)?;
+                    anyhow::ensure!(reply.ok, "{}", reply.message);
+                    std::thread::sleep(Duration::from_millis(50));
+                }
+                Ok(())
+            })();
+            req.action = "stop".into();
+            req.text = None;
+            let _ = call(&socket, &req);
+            return result;
+        }
         if req.action != "input" || !seconds.is_finite() || !(0.0..=30.0).contains(&seconds) {
             bail!("secondsはinputに0..30秒で指定してください");
         }

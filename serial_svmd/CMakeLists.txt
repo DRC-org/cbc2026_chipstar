@@ -52,6 +52,7 @@ target_sources(${CMAKE_PROJECT_NAME} PRIVATE
     # 追加: C++のコードをビルド対象にする
     ${CMAKE_CURRENT_SOURCE_DIR}/src/app.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/sts3215.cpp
+    ${CMAKE_CURRENT_SOURCE_DIR}/src/servo_service.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/sts3215_protocol.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/servo_command.cpp
     ${CMAKE_CURRENT_SOURCE_DIR}/src/domain/servo_can.cpp

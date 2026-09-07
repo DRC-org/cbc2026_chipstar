@@ -52,6 +52,7 @@ struct Runtime {
     drive: DriveState,
     emergency: bool,
     test: test_control::TestControl,
+    sts: sts_control::Control,
     authority: Authority,
     manual_input: ControllerState,
     screen_control: bool,
@@ -82,6 +83,7 @@ impl Runtime {
             drive: DriveState::Stopped,
             emergency: false,
             test: test_control::TestControl::default(),
+            sts: sts_control::Control::default(),
             authority: Authority::default(),
             manual_input: ControllerState::default(),
             gamepad_name: String::new(),
@@ -110,7 +112,8 @@ impl Runtime {
         self.screen_input_times = [None; 6];
     }
     fn stop(&mut self, cut: bool) -> Result<()> {
-        let cut = cut || self.test.enabled;
+        let cut = cut || self.test.enabled || self.sts.active;
+        self.sts.cancel();
         self.test.restart_blocked |= self.test.active;
         self.test.active = false;
         self.test.renewed = None;
@@ -237,6 +240,7 @@ impl Runtime {
         Ok(())
     }
     fn start(&mut self) -> Result<()> {
+        anyhow::ensure!(!self.sts.active, "STS操作を停止してください");
         if self.emergency {
             bail!("ソフト緊停中です");
         }
@@ -275,6 +279,12 @@ impl Runtime {
     fn receive(&mut self) -> Result<()> {
         for line in self.link.read_lines()? {
             self.observe_test_reply(&line);
+            if let Err(error) = self.observe_sts(&line) {
+                self.sts.stop_monitoring();
+                self.shared
+                    .update_status(|s| s.sts.message = error.to_string());
+                self.fault(error.to_string());
+            }
             for board in [
                 crate::protocol::board::Board::Dcmd,
                 crate::protocol::board::Board::SerialSvmd,
@@ -532,6 +542,12 @@ impl Runtime {
             self.reason = "通信復旧。原点を確認して再開してください".into();
         }
         self.tick_test(now)?;
+        if let Err(error) = self.tick_sts(now) {
+            self.sts.stop_monitoring();
+            self.shared
+                .update_status(|s| s.sts.message = error.to_string());
+            self.fault(error.to_string());
+        }
         if self.emergency {
             self.stop(true)?;
         }
@@ -578,7 +594,8 @@ impl Runtime {
                 .map(|(_, kind)| kind.key().into())
                 .unwrap_or_default();
             s.emergency = self.emergency;
-            s.outputs_active = self.test.active
+            s.outputs_active = self.sts.active
+                || self.test.active
                 || self.drive.awaiting().is_some()
                 || self
                     .telemetry
@@ -746,6 +763,7 @@ pub fn run(shared: Arc<Shared>) {
 }
 
 mod requests;
+mod sts_control;
 mod test_control;
 #[cfg(test)]
 mod tests;

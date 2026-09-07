@@ -154,6 +154,7 @@ impl BridgeApp {
             Screen::Diagnose => {
                 for (view, label) in [
                     (diagnose::DiagnosisView::Tests, "個別テスト"),
+                    (diagnose::DiagnosisView::Sts, "STS管理"),
                     (diagnose::DiagnosisView::Connection, "接続・保守"),
                     (diagnose::DiagnosisView::Log, "通信ログ"),
                 ] {

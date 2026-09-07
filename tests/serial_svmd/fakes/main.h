@@ -9,6 +9,7 @@ constexpr uint32_t HAL_UART_ERROR_NONE=0, UART_RXDATA_FLUSH_REQUEST=0, DMA_IT_HT
 #define __HAL_UART_SEND_REQ(h,m) ((void)0)
 #define __HAL_UART_CLEAR_OREFLAG(h) ((void)0)
 uint32_t HAL_GetTick();
+void HAL_Delay(uint32_t);
 HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef*,uint8_t*,uint16_t,uint32_t);
 HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef*,uint8_t*,uint16_t,uint32_t);
 HAL_StatusTypeDef HAL_UART_Receive_DMA(UART_HandleTypeDef*,uint8_t*,uint16_t);

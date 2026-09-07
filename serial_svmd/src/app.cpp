@@ -6,6 +6,7 @@
 #include "domain/status_led.hpp"
 #include "main.h"
 #include "sts3215.hpp"
+#include "servo_service.hpp"
 
 #include <cstdint>
 #include <cstdio>
@@ -43,6 +44,9 @@ bool command_failed = false;
 bool stop_retry = false;
 uint32_t last_stop_retry_ms = 0;
 Sts3215 bus(&huart1, config::SERVO_TIMEOUT_MS, config::WAIT_FOR_WRITE_STATUS);
+void serviceReply(uint16_t id, const uint8_t* data);
+bool serviceBaud(uint32_t baud);
+ServoService servo_service(bus, serviceReply, serviceBaud);
 ServoState servos[config::MAX_SERVOS];
 Mode mode = Mode::Safe;
 bool protocol_ready = false;
@@ -94,7 +98,20 @@ void sendCan(uint16_t id, const uint8_t* data) {
   header.RTR = CAN_RTR_DATA;
   header.DLC = 8;
   uint32_t mailbox = 0;
-  HAL_CAN_AddTxMessage(&hcan, &header, const_cast<uint8_t*>(data), &mailbox);
+  const uint32_t start = HAL_GetTick();
+  while (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) == 0) {
+    if (HAL_GetTick() - start >= 5) {
+      mode = Mode::Stop;
+      stop_retry = true;
+      command_failed = true;
+      return;
+    }
+  }
+  if (HAL_CAN_AddTxMessage(&hcan, &header, const_cast<uint8_t*>(data), &mailbox) != HAL_OK) {
+    mode = Mode::Stop;
+    stop_retry = true;
+    command_failed = true;
+  }
 }
 
 void sendStatus(domain::servo_can::Status status) {
@@ -143,9 +160,37 @@ bool configureServoUart() {
   return servo_uart_ready;
 }
 
+bool serviceBaud(uint32_t baud) {
+  if (!parameters.set(0, static_cast<float>(baud))) return false;
+  return configureServoUart();
+}
+
+void serviceReply(uint16_t id, const uint8_t* data) {
+  if (id == 0x326 && data[1] == 21 && data[4] == 0 && data[5] == 5) {
+    for (auto& servo : servos) if (servo.used && servo.id == data[2]) servo = {};
+  }
+  // ACKのIDは計測フレームより小さいため、CAN優先順位で追い越さないよう待つ。
+  if (id == 0x326 && bus_ready) {
+    const uint32_t started = HAL_GetTick();
+    while (HAL_CAN_GetTxMailboxesFreeLevel(&hcan) != 3) {
+      if (HAL_GetTick() - started >= 5) {
+        mode = Mode::Stop;
+        stop_retry = true;
+        return;
+      }
+    }
+  }
+  sendCan(domain::servo_can::canId(id, address), data);
+  if (id == 0x326 && data[4] != 0 && mode == Mode::Run) {
+    mode = Mode::Stop;
+    stop_retry = true;
+  }
+}
+
 void disableAll() {
   // 登録されていない個体も停止対象。broadcastにはACKは返らない。
   stop_retry = bus.setTorque(Sts3215::BROADCAST_ID, false) != Sts3215::Result::Ok;
+  if (!servo_service.stop()) stop_retry = true;
   for (auto& servo : servos) {
     if (servo.used) {
       const auto result = bus.setTorque(servo.id, false);
@@ -342,6 +387,16 @@ void pollCan(void) {
     }
     domain::ServoCommand command;
     source = Link::Can;
+    if (header.DLC == 8 && data[1] >= 20 && data[1] <= 27) {
+      if (protocol_ready && servo_uart_ready) {
+        servo_service.handle(data, mode == Mode::Run);
+      } else {
+        uint8_t rejected[8] = {1, data[1], data[2], data[3], 2, 0, 0, 0};
+        serviceReply(0x326, rejected);
+      }
+      source = Link::Serial;
+      continue;
+    }
     if (domain::servo_can::parse(data, header.DLC, command)) {
       if (command.kind == domain::ServoCommandKind::Run ||
           command.kind == domain::ServoCommandKind::Target ||

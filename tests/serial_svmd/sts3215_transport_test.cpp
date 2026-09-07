@@ -1,5 +1,6 @@
 #include "doctest.h"
 #include "sts3215.hpp"
+#include "servo_service.hpp"
 #include <array>
 #include <vector>
 #include <cstring>
@@ -22,6 +23,7 @@ void status(uint8_t id, const std::vector<uint8_t>& data, uint8_t error=0) {
 }
 }
 uint32_t HAL_GetTick() { return ticks++/100; }
+void HAL_Delay(uint32_t ms) { ticks += ms * 100; }
 HAL_StatusTypeDef HAL_UART_Receive_DMA(UART_HandleTypeDef*,uint8_t* data,uint16_t n) {rx=data;size=n;head=0;dma.count=n;return HAL_OK;}
 HAL_StatusTypeDef HAL_UART_AbortReceive(UART_HandleTypeDef*) {uart.ErrorCode=0;return HAL_OK;}
 HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef*,uint8_t*,uint16_t,uint32_t) {return HAL_TIMEOUT;}
@@ -73,4 +75,60 @@ TEST_CASE("目標の符号化が公式SDKの7byte指令と一致する") {
  REQUIRE(bus.setTarget({1,50,2048,0,500})==Sts3215::Result::Ok);
  const std::vector<uint8_t> expected{255,255,254,12,131,41,7,1,50,0,8,0,0,244,1,18};
  CHECK(sent[0]==expected);
+}
+
+namespace {
+std::vector<std::array<uint8_t,8>> replies;
+void emitService(uint16_t, const uint8_t* data) { std::array<uint8_t,8> p{};std::memcpy(p.data(),data,8);replies.push_back(p); }
+bool changeBaud(uint32_t) { return true; }
+}
+TEST_CASE("相対ステップのEXECUTE再送で二度動かさず停止で待機目標を破棄する") {
+ reset();replies.clear();regs[33]=3;
+ Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ ServoService service(bus,emitService,changeBaud);
+ const uint8_t stage[8]={1,22,1,20,0x80,100,0,100};
+ const uint8_t execute[8]={1,23,1,7,0,0,0,0};
+ service.handle(stage,true);service.handle(execute,true);
+ REQUIRE(replies.back()[4]==0);
+ const auto transmissions=sent.size();
+ service.handle(execute,true);CHECK(sent.size()==transmissions);
+ REQUIRE(service.stop());CHECK(regs[40]==0);CHECK_FALSE(service.active());
+ const uint8_t empty[8]={1,23,1,8,0,0,0,0};
+ service.handle(empty,true);CHECK(replies.back()[4]!=0);
+}
+TEST_CASE("保存設定は停止中だけ変更しモード3の角度制限とロックを読戻す") {
+ reset();replies.clear();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ ServoService service(bus,emitService,changeBaud);
+ const uint8_t mode[8]={1,21,1,3,33,1,0,3};
+ service.handle(mode,true);CHECK(replies.back()[4]!=0);CHECK(regs[33]==0);
+ regs[11]=255;regs[12]=15;
+ service.handle(mode,false);REQUIRE(replies.back()[4]==0);
+ CHECK(regs[33]==3);CHECK(regs[11]==0);CHECK(regs[12]==0);CHECK(regs[55]==1);CHECK(regs[40]==0);
+ const uint8_t arbitrary[8]={1,21,1,4,40,1,0,1};
+ service.handle(arbitrary,false);CHECK(replies.back()[4]!=0);CHECK(regs[40]==0);
+}
+
+TEST_CASE("多回転位置は角度上下限0のときだけ許可し符号付き現在位置から開始する") {
+ reset();replies.clear();regs[56]=0x88;regs[57]=0x13;
+ Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ ServoService service(bus,emitService,changeBaud);
+ const uint8_t stage[8]={1,22,1,20,0x93,0x88,0,100};
+ const uint8_t execute[8]={1,23,1,7,0,0,0,0};
+ regs[11]=255;regs[12]=15;
+ service.handle(stage,true);service.handle(execute,true);CHECK(replies.back()[4]!=0);CHECK(regs[40]==0);
+ regs[11]=0;regs[12]=0;
+ service.handle(stage,true);service.handle(execute,true);REQUIRE(replies.back()[4]==0);
+ CHECK(regs[42]==0x88);CHECK(regs[43]==0x93);
+ REQUIRE(service.stop());
+}
+
+TEST_CASE("現在位置が設定角度範囲外ならトルクを有効化しない") {
+ reset();replies.clear();regs[11]=0xe8;regs[12]=3;
+ Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ ServoService service(bus,emitService,changeBaud);
+ const uint8_t stage[8]={1,22,1,20,1,244,0,100};
+ const uint8_t execute[8]={1,23,1,7,0,0,0,0};
+ service.handle(stage,true);service.handle(execute,true);
+ CHECK(replies.back()[4]!=0);CHECK(regs[40]==0);
+ for(const auto& p:sent) CHECK_FALSE((p[4]==0x83 && p[5]==40 && p[8]==1));
 }

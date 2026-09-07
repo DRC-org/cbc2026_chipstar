@@ -3,6 +3,7 @@ use super::*;
 #[derive(Clone, Copy, PartialEq)]
 pub(super) enum DiagnosisView {
     Tests,
+    Sts,
     Connection,
     Log,
 }
@@ -13,6 +14,7 @@ impl BridgeApp {
         let can_change =
             !status.emergency && !status.test_active && !status.ai_active && !status.running;
         match self.diagnosis_view {
+            DiagnosisView::Sts => self.sts_panel(ui),
             DiagnosisView::Tests => {
                 self.individual_test(ui, &status);
                 ui.add_space(12.0);

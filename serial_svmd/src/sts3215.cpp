@@ -211,6 +211,14 @@ Sts3215::Result Sts3215::setTarget(const Target& target) {
 }
 
 Sts3215::Result Sts3215::syncWriteTargets(const Target* targets, std::size_t count) {
+  if (!targets || count == 0 || count > MAX_SYNC_TARGETS) return Result::ArgumentError;
+  for (std::size_t i = 0; i < count; ++i) {
+    if (targets[i].position > MAX_POSITION) return Result::ArgumentError;
+  }
+  return syncWriteRawTargets(targets, count);
+}
+
+Sts3215::Result Sts3215::syncWriteRawTargets(const Target* targets, std::size_t count) {
   if (targets == nullptr || count == 0 || count > MAX_SYNC_TARGETS) {
     return Result::ArgumentError;
   }
@@ -221,7 +229,7 @@ Sts3215::Result Sts3215::syncWriteTargets(const Target* targets, std::size_t cou
 
   std::size_t offset = 2;
   for (std::size_t i = 0; i < count; ++i) {
-    if (targets[i].id == BROADCAST_ID || targets[i].position > MAX_POSITION) {
+    if (targets[i].id >= BROADCAST_ID) {
       return Result::ArgumentError;
     }
 
@@ -253,6 +261,13 @@ Sts3215::Result Sts3215::writeVerified(uint8_t id, uint8_t address, const uint8_
   result = read(id, address, actual, length);
   if (result != Result::Ok) return result;
   return std::memcmp(data, actual, length) == 0 ? Result::Ok : Result::ReadbackMismatch;
+}
+
+Sts3215::Result Sts3215::writeUnacknowledged(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length) {
+  if (id >= BROADCAST_ID || !data || !length || length + 3 > proto::MAX_TX_PARAMETERS) return Result::ArgumentError;
+  uint8_t packet[proto::MAX_TX_PARAMETERS] = {address, length, id};
+  std::memcpy(packet + 3, data, length);
+  return sendInstruction(BROADCAST_ID, proto::INSTRUCTION_SYNC_WRITE, packet, length + 3);
 }
 
 Sts3215::Result Sts3215::preparePosition(uint8_t id, const Target* target) {

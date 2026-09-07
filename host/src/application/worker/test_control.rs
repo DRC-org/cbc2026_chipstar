@@ -15,7 +15,8 @@ pub(super) struct TestControl {
 }
 impl Runtime {
     pub(super) fn uses_test_board(&self, board: &str) -> bool {
-        self.test.peers.contains_key(board)
+        (board == "sts" && self.sts.interested)
+            || self.test.peers.contains_key(board)
             || self
                 .test
                 .selected

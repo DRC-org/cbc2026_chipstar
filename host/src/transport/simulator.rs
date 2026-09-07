@@ -17,6 +17,7 @@ pub struct Simulator {
     pwm: u8,
     servos: BTreeMap<u8, (u16, bool)>,
     servo_mode: u8,
+    sts: super::sts_simulator::StsSimulator,
     dc_enabled: bool,
     dc_duty: i16,
     parameters: BTreeMap<u8, f32>,
@@ -28,6 +29,7 @@ impl Simulator {
     pub(super) fn fault(&mut self, fault: &str) -> Result<()> {
         match fault {
             "disconnect" => {
+                self.sts.stop();
                 self.disconnected = true;
                 self.pwm = 0;
                 self.dc_enabled = false;
@@ -65,6 +67,7 @@ impl Simulator {
             pwm: 0,
             servos: BTreeMap::new(),
             servo_mode: 0,
+            sts: super::sts_simulator::StsSimulator::default(),
             dc_enabled: false,
             dc_duty: 0,
             parameters: BTreeMap::new(),
@@ -157,7 +160,9 @@ impl Simulator {
                     for (i, byte) in bytes.iter_mut().enumerate() {
                         *byte = u8::from_str_radix(&payload[i * 2..i * 2 + 2], 16)?;
                     }
-                    if (id == 768 && bytes[1] == 4)
+                    if id == 800 && bytes[1] >= 20 {
+                        self.sts.handle(bytes, self.servo_mode == 1, &mut self.rx);
+                    } else if (id == 768 && bytes[1] == 4)
                         || (id == 784 && bytes[1] == 7)
                         || (id == 800 && bytes[1] == 9)
                     {
@@ -210,6 +215,7 @@ impl Simulator {
                             800 => {
                                 match bytes[1] {
                                     1 | 3 => {
+                                        self.sts.stop();
                                         self.servo_mode = if bytes[1] == 1 { 0 } else { 2 };
                                         for servo in self.servos.values_mut() {
                                             servo.1 = false;

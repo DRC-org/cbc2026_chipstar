@@ -100,6 +100,7 @@ target_include_directories(motor_transport_tests BEFORE PRIVATE ${CMAKE_CURRENT_
 
 add_firmware_tests(sts3215_transport_tests ${REPO_ROOT}/serial_svmd/src
     serial_svmd/sts3215_transport_test.cpp
+    ${REPO_ROOT}/serial_svmd/src/servo_service.cpp
     ${REPO_ROOT}/serial_svmd/src/sts3215.cpp
     ${REPO_ROOT}/serial_svmd/src/domain/sts3215_protocol.cpp
 )

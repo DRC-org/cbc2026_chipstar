@@ -54,6 +54,7 @@ pub struct BridgeApp {
     command_focus: bool,
     command_text: String,
     tests: individual::TestPanel,
+    sts_ui: sts::StsPanel,
     connection: crate::application::app_state::Connection,
 }
 impl BridgeApp {
@@ -94,6 +95,7 @@ impl BridgeApp {
             command_focus: false,
             command_text: String::new(),
             tests: individual::TestPanel::default(),
+            sts_ui: sts::StsPanel::default(),
         }
     }
     fn request(&mut self, request: Request) {
@@ -143,6 +145,10 @@ impl BridgeApp {
             && status.configured
     }
     fn end_test_on_tab_change(&mut self) {
+        let status = self.shared.status_snapshot();
+        if status.sts.active || status.sts.busy {
+            self.dispatch(Action::Stop);
+        }
         if self.shared.status_snapshot().test_mode {
             self.stop_requested = true;
             self.tests.requested = false;
@@ -517,6 +523,7 @@ mod diagnose;
 mod operate;
 mod pid;
 mod shortcuts;
+mod sts;
 mod tune;
 
 mod controls;

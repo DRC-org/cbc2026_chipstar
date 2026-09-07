@@ -12,7 +12,7 @@
 //
 // 基板上の絶縁回路が半二重の送受信方向を自動で切り替えるため、
 // MCU 側で方向制御 GPIO を操作する必要はない。
-// 通信は HAL の Blocking API によるポーリングで行う。
+// 送信はblocking API、受信は循環DMAで行う。
 class Sts3215 {
  public:
   enum class Result {
@@ -35,7 +35,7 @@ class Sts3215 {
   static constexpr std::size_t MAX_SYNC_TARGETS = domain::sts3215::MAX_SYNC_TARGETS;
 
   // wait_for_write_status: 書き込み命令のステータス応答を待つか。
-  // false にすると指令の往復待ちがなくなる代わりに、書き込みの成否は検出できない。
+  // falseではSYNC_WRITEを使用。トルク・目標の成否は読戻しで確認する。
   Sts3215(UART_HandleTypeDef* huart, uint32_t timeout_ms, bool wait_for_write_status)
       : huart_(huart),
         timeout_ms_(timeout_ms),
@@ -70,6 +70,9 @@ class Sts3215 {
   Result syncWriteTargets(const Target* targets, std::size_t count);
 
   Result readPosition(uint8_t id, uint16_t& position);
+  Result writeVerified(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length);
+  Result writeUnacknowledged(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length);
+  Result syncWriteRawTargets(const Target* targets, std::size_t count);
 
   // 直近の応答パケットが返したサーボ側のエラービット。
   uint8_t lastServoError() const { return last_servo_error_; }
@@ -84,7 +87,6 @@ class Sts3215 {
                        uint8_t& parameter_count);
   Result receiveExact(uint8_t* data, uint16_t length, uint32_t start_ms);
   void flushRx();
-  Result writeVerified(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length);
   static constexpr uint16_t RX_BUFFER_SIZE = 256;
   uint8_t rx_buffer_[RX_BUFFER_SIZE] = {};
   uint16_t rx_tail_ = 0;
