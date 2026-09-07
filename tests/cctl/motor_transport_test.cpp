@@ -166,3 +166,30 @@ TEST_CASE("識別要求の受付とCAN送信完了を区別する") {
   REQUIRE(bus.sendStd(0x200, data, 8));
   CHECK(last_event_control == FDCAN_NO_TX_EVENTS);
 }
+
+TEST_CASE("EL05読出しはマニュアルのloc_kp要求と応答の実例に一致する") {
+  resetBus();
+  CanBus bus(&handle);
+  El05Motor motor(bus, 0x7F, 0xFD);
+  REQUIRE(motor.requestParam(0x701E));
+  REQUIRE(accepted.size() == 1);
+  const uint8_t request[8] = {0x1E, 0x70, 0, 0, 0, 0, 0, 0};
+  CHECK(accepted[0].extended);
+  CHECK(accepted[0].id == 0x1100FD7F);
+  CHECK(std::memcmp(accepted[0].data, request, 8) == 0);
+
+  // EL05 manual 4.1.16: motor 0x7F -> host 0xFD, loc_kp = 30.
+  const uint8_t reply[8] = {0x1E, 0x70, 0, 0, 0, 0, 0xF0, 0x41};
+  CHECK_FALSE(motor.onFeedback(0x11007FFD, reply));
+  CHECK(motor.lastParamFloat() == doctest::Approx(30.0f));
+  uint16_t index = 0;
+  uint32_t raw = 0;
+  REQUIRE(motor.takeParamReply(index, raw));
+  CHECK(index == 0x701E);
+  CHECK(raw == 0x41F00000);
+  CHECK_FALSE(motor.takeParamReply(index, raw));
+
+  CHECK_FALSE(motor.onFeedback(0x11007EFD, reply));
+  CHECK_FALSE(motor.onFeedback(0x11007FFC, reply));
+  CHECK_FALSE(motor.takeParamReply(index, raw));
+}
