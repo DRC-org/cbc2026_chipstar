@@ -575,3 +575,78 @@ fn drive_rejection_stops_without_invalidating_confirmed_settings() {
     runtime.tick().unwrap();
     assert_eq!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Stop);
 }
+
+#[test]
+fn communication_recovery_clears_only_transport_error_and_keeps_outputs_stopped() {
+    let mut runtime = screen_runtime();
+    runtime.start().unwrap();
+    runtime.tick().unwrap();
+    runtime.error = "機体側の異常".into();
+    runtime.link.fault("disconnect").unwrap();
+    let error = runtime.tick().unwrap_err();
+    runtime.communication_failed(format!("{error:#}"));
+    runtime.publish();
+    assert!(runtime.communication_error.is_some());
+    assert!(!runtime.shared.status_snapshot().connected);
+    assert!(!runtime.drive.running());
+    assert!(
+        runtime
+            .machine
+            .origin_states(None)
+            .iter()
+            .all(|o| !o.captured)
+    );
+    runtime.link.fault("reconnect").unwrap();
+    runtime.last_hello = Instant::now() - Duration::from_secs(2);
+    runtime.tick().unwrap();
+    assert!(runtime.communication_error.is_some());
+    for _ in 0..45 {
+        runtime.tick().unwrap();
+    }
+    runtime.publish();
+    let status = runtime.shared.status_snapshot();
+    assert!(status.connected && status.configured);
+    assert!(runtime.communication_error.is_none());
+    assert_eq!(status.error, "機体側の異常");
+    assert!(!status.outputs_active && !status.running);
+    assert!(status.origins.iter().all(|o| !o.captured));
+    assert!(status.logs.iter().any(|l| l.starts_with("通信復旧:")));
+}
+
+#[test]
+fn repeated_transport_failure_logs_once_and_retains_cause() {
+    let mut runtime = screen_runtime();
+    let error = anyhow::anyhow!("Permission denied").context("failed to open /dev/test");
+    for _ in 0..3 {
+        runtime.communication_failed(format!("{error:#}"));
+    }
+    runtime.publish();
+    let status = runtime.shared.status_snapshot();
+    assert_eq!(status.error, "failed to open /dev/test: Permission denied");
+    assert_eq!(
+        status
+            .logs
+            .iter()
+            .filter(|l| l.starts_with("通信切断:"))
+            .count(),
+        1
+    );
+}
+
+#[test]
+fn recovery_during_emergency_does_not_release_the_latch() {
+    let mut runtime = screen_runtime();
+    runtime.emergency = true;
+    runtime.communication_failed("USB disconnected".into());
+    runtime.last_hello = Instant::now() - Duration::from_secs(2);
+    for _ in 0..4 {
+        runtime.tick().unwrap();
+    }
+    runtime.publish();
+    let status = runtime.shared.status_snapshot();
+    assert!(status.connected);
+    assert!(runtime.communication_error.is_none());
+    assert!(status.emergency);
+    assert!(!status.outputs_active && !status.running);
+    assert!(status.error.is_empty());
+}

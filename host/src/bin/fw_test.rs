@@ -97,7 +97,7 @@ fn main() -> Result<()> {
             if previous_outputs != output_ids(&session) {
                 println!("テスト出力ON（指令状態）: {:?}", output_ids(&session));
             }
-            for line in link.read_lines() {
+            for line in link.read_lines()? {
                 if line.starts_with("ERR ") {
                     bail!("FWが指令を拒否しました: {line}");
                 }

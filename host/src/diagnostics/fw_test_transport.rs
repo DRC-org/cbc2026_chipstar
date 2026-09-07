@@ -20,7 +20,7 @@ pub fn connect(link: &mut serial::SerialLink, board: Board) -> Result<()> {
     while start.elapsed() < Duration::from_secs(3) {
         link.write_line("HELLO 1")?;
         thread::sleep(Duration::from_millis(100));
-        for line in link.read_lines() {
+        for line in link.read_lines()? {
             if let Some(info) = device::parse_device_info(&line) {
                 let expected = if board == Board::SerialSvmd {
                     "serial_svmd"
@@ -58,7 +58,7 @@ fn probe(link: &mut serial::SerialLink, board: Board) -> Result<bool> {
     while start.elapsed() < Duration::from_secs(3) {
         link.write_line(request)?;
         thread::sleep(Duration::from_millis(100));
-        if link.read_lines().iter().any(|line| line.starts_with(reply)) {
+        if link.read_lines()?.iter().any(|line| line.starts_with(reply)) {
             return Ok(true);
         }
     }

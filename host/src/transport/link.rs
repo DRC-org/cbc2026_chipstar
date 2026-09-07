@@ -22,10 +22,10 @@ impl Link {
             Self::Sim(sim) => sim.write(line),
         }
     }
-    pub fn read_lines(&mut self) -> Vec<String> {
+    pub fn read_lines(&mut self) -> Result<Vec<String>> {
         match self {
             Self::Real(link) => link.read_lines(),
-            Self::Sim(sim) => sim.read(),
+            Self::Sim(sim) => Ok(sim.read()),
         }
     }
     pub fn fault(&mut self, fault: &str) -> Result<()> {

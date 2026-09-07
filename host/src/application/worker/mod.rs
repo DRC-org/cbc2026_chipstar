@@ -61,6 +61,7 @@ struct Runtime {
     last_hello: Instant,
     reason: String,
     error: String,
+    communication_error: Option<String>,
 }
 impl Runtime {
     fn new(shared: Arc<Shared>) -> Self {
@@ -88,6 +89,7 @@ impl Runtime {
             last_hello: Instant::now() - Duration::from_secs(2),
             reason: "接続待ち".into(),
             error: String::new(),
+            communication_error: None,
         }
     }
     fn send(&mut self, line: &str) -> Result<()> {
@@ -167,6 +169,23 @@ impl Runtime {
         self.machine.invalidate_origins();
         self.reason = reason.clone();
         self.error = reason;
+    }
+    fn communication_failed(&mut self, reason: String) {
+        if self.communication_error.as_ref() != Some(&reason) {
+            self.shared.log(format!("通信切断: {reason}"));
+        }
+        self.communication_error = Some(reason);
+        let _ = self.stop(true);
+        self.test.peers.clear();
+        self.clear_drive();
+        self.machine.invalidate_origins();
+        self.rx = None;
+        self.device = None;
+        self.telemetry = None;
+        self.setup = false;
+        self.setup_error = false;
+        self.settings = Settings::new(&self.cfg.machine);
+        self.reason = "通信失敗。再接続と原点確認が必要です".into();
     }
     fn ready(&self) -> Result<()> {
         if self.cfg.machine.axes.is_empty() {
@@ -249,8 +268,8 @@ impl Runtime {
         self.reason = "基板の運転応答待ち".into();
         Ok(())
     }
-    fn receive(&mut self) {
-        for line in self.link.read_lines() {
+    fn receive(&mut self) -> Result<()> {
+        for line in self.link.read_lines()? {
             self.observe_test_reply(&line);
             for board in [
                 crate::protocol::board::Board::Dcmd,
@@ -403,12 +422,13 @@ impl Runtime {
                 self.telemetry = Some(t);
             }
         }
+        Ok(())
     }
     fn tick(&mut self) -> Result<()> {
         self.tick_at(Instant::now())
     }
     fn tick_at(&mut self, now: Instant) -> Result<()> {
-        self.receive();
+        self.receive()?;
         if self.authority.expired(now) {
             self.stop(false)?;
             self.authority.release();
@@ -424,13 +444,7 @@ impl Runtime {
             }
         }
         if !self.fresh() && self.rx.is_some() {
-            self.fault("機体応答の期限切れ。原点を確認して再開してください".into());
-            self.rx = None;
-            self.device = None;
-            self.telemetry = None;
-            self.setup = false;
-            self.setup_error = false;
-            self.settings = Settings::new(&self.cfg.machine);
+            self.communication_failed("機体応答の期限切れ。原点を確認して再開してください".into());
         }
         if self.last_hello.elapsed() > Duration::from_secs(1) {
             self.last_hello = Instant::now();
@@ -486,6 +500,12 @@ impl Runtime {
                     self.send(&line)?;
                 }
             }
+        }
+        if self.communication_error.is_some() && self.fresh() && self.device.is_some() {
+            self.communication_error = None;
+            self.shared
+                .log("通信復旧: 基板応答を確認。出力停止を維持".into());
+            self.reason = "通信復旧。原点を確認して再開してください".into();
         }
         self.tick_test(now)?;
         if self.emergency {
@@ -581,7 +601,10 @@ impl Runtime {
             } else {
                 self.reason.clone()
             };
-            s.error = self.error.clone();
+            s.error = self
+                .communication_error
+                .clone()
+                .unwrap_or_else(|| self.error.clone());
             s.telemetry_age_ms = self
                 .rx
                 .map(|t| t.elapsed().as_millis() as u64)
@@ -688,18 +711,7 @@ pub fn run(shared: Arc<Shared>) {
             let _ = pending.reply.send(reply);
         }
         if let Err(error) = runtime.tick() {
-            let _ = runtime.stop(true);
-            runtime.test.peers.clear();
-            runtime.clear_drive();
-            runtime.machine.invalidate_origins();
-            runtime.error = error.to_string();
-            runtime.rx = None;
-            runtime.device = None;
-            runtime.telemetry = None;
-            runtime.setup = false;
-            runtime.setup_error = false;
-            runtime.settings = Settings::new(&runtime.cfg.machine);
-            runtime.reason = "通信失敗。再接続と原点確認が必要です".into();
+            runtime.communication_failed(format!("{error:#}"));
         }
         runtime.publish();
         let period = Duration::from_secs_f64(1.0 / runtime.cfg.rate_hz.clamp(20.0, 100.0));

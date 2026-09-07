@@ -48,21 +48,29 @@ impl SerialLink {
 
     /// 受信済みの完全な行を取り出す。ポートが開いていなければ空を返す。
     /// 読めるバイト数だけを読むので、制御周期を待たせない。
-    pub fn read_lines(&mut self) -> Vec<String> {
+    pub fn read_lines(&mut self) -> Result<Vec<String>> {
         let Some(port) = self.port.as_mut() else {
-            return Vec::new();
+            return Ok(Vec::new());
         };
 
-        let available = port.bytes_to_read().unwrap_or(0) as usize;
+        let available = match port.bytes_to_read() {
+            Ok(count) => count as usize,
+            Err(error) => {
+                self.port = None;
+                self.rx.clear();
+                return Err(error).with_context(|| format!("failed to read from {}", self.device));
+            }
+        };
         if available > 0 {
             let mut chunk = vec![0u8; available];
             match port.read_exact(&mut chunk) {
                 Ok(()) => self.rx.extend_from_slice(&chunk),
-                Err(_) => {
+                Err(error) => {
                     // 次回の送信で開き直す。
                     self.port = None;
                     self.rx.clear();
-                    return Vec::new();
+                    return Err(error)
+                        .with_context(|| format!("failed to read from {}", self.device));
                 }
             }
         }
@@ -81,7 +89,7 @@ impl SerialLink {
             self.rx.clear();
         }
 
-        lines
+        Ok(lines)
     }
 
     /// 1 行を送信する（改行を付与）。失敗時はポートを閉じてエラーを返す。
@@ -101,5 +109,23 @@ impl SerialLink {
                 Err(err).with_context(|| format!("failed to write to {}", self.device))
             }
         }
+    }
+}
+
+#[cfg(all(test, unix))]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn disconnected_port_reports_read_failure_and_discards_partial_line() {
+        let (peer, port) = serialport::TTYPort::pair().unwrap();
+        let mut link = SerialLink::new("test-pty".into(), 115200);
+        link.port = Some(Box::new(port));
+        link.rx.extend_from_slice(b"old partial reply");
+        drop(peer);
+        let error = link.read_lines().unwrap_err();
+        assert!(format!("{error:#}").contains("failed to read from test-pty"));
+        assert!(link.port.is_none());
+        assert!(link.rx.is_empty());
     }
 }
