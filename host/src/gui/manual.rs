@@ -6,20 +6,23 @@ impl BridgeApp {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("操作方法").strong());
-                ui.add_enabled_ui(!status.ai_active && !status.running, |ui| {
-                    for (screen, label) in [(false, "DualSense"), (true, "画面操作 · 低速20%")]
-                    {
-                        if ui
-                            .selectable_label(status.screen_control == screen, label)
-                            .clicked()
+                ui.add_enabled_ui(
+                    !status.emergency && !status.test_mode && !status.ai_active && !status.running,
+                    |ui| {
+                        for (screen, label) in [(false, "DualSense"), (true, "画面操作 · 低速20%")]
                         {
-                            self.request(Request {
-                                flag: Some(screen),
-                                ..Request::new("manual_control")
-                            });
+                            if ui
+                                .selectable_label(status.screen_control == screen, label)
+                                .clicked()
+                            {
+                                self.request(Request {
+                                    flag: Some(screen),
+                                    ..Request::new("manual_control")
+                                });
+                            }
                         }
-                    }
-                });
+                    },
+                );
             });
             if status.screen_control {
                 ui.label(
@@ -29,7 +32,11 @@ impl BridgeApp {
                     .size(12.0)
                     .color(MUTED),
                 );
-                let can_jog = status.running && !status.ai_active && !self.stop_requested;
+                let can_jog = status.running
+                    && !status.emergency
+                    && !status.test_mode
+                    && !status.ai_active
+                    && !self.stop_requested;
                 ui.horizontal_wrapped(|ui| {
                     for axis in self.shared.config().machine.axes {
                         ui.group(|ui| {

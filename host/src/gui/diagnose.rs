@@ -3,7 +3,8 @@ use super::*;
 impl BridgeApp {
     pub(super) fn diagnose(&mut self, ui: &mut egui::Ui) {
         let status = self.shared.status_snapshot();
-        let can_change = !status.ai_active && !status.running;
+        let can_change =
+            !status.emergency && !status.test_active && !status.ai_active && !status.running;
         section(ui, "接続と診断", "接続状態と通信履歴を確認できます。");
         ui.columns(2, |columns| {
             panel().show(&mut columns[0], |ui| {
@@ -67,7 +68,7 @@ impl BridgeApp {
                         }
                         if ui
                             .button(RichText::new("全出力停止").color(DANGER))
-                            .on_hover_text("位置保持を解除し、原点を無効化")
+                            .on_hover_text("位置保持を解除。位置追跡が継続していれば原点は維持")
                             .clicked()
                         {
                             self.operation("cut");
@@ -76,6 +77,8 @@ impl BridgeApp {
                 });
             });
         });
+        ui.add_space(12.0);
+        self.individual_test(ui, &status);
         ui.add_space(12.0);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());

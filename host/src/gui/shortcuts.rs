@@ -1,4 +1,4 @@
-//! キー入力の解釈。操作可否はボタンと共通の実行入口で判定する。
+//! 通常モードのキーとコロンコマンド。出力可否は共通の操作受付で判定する。
 use super::Screen;
 use eframe::egui::{Event, Key, Modifiers};
 
@@ -6,15 +6,52 @@ use eframe::egui::{Event, Key, Modifiers};
 pub(super) enum Action {
     Stop,
     Run,
+    Emergency(bool),
+    Escape,
+    Command,
     Screen(Screen),
     Apply,
     Save,
     Help,
     Tab(i32),
     Scroll(f32),
+    Page(f32),
     Edge(bool),
 }
-
+pub(super) struct CommandSpec {
+    pub name: &'static str,
+    pub description: &'static str,
+    pub action: Action,
+}
+pub(super) const COMMANDS: &[CommandSpec] = &[
+    CommandSpec {
+        name: "run",
+        description: "運転再開",
+        action: Action::Run,
+    },
+    CommandSpec {
+        name: "stop",
+        description: "停止・保持（個別テストは出力解除）",
+        action: Action::Stop,
+    },
+    CommandSpec {
+        name: "apply",
+        description: "調整画面の編集内容を適用",
+        action: Action::Apply,
+    },
+    CommandSpec {
+        name: "w",
+        description: "調整画面の適用済み設定を保存",
+        action: Action::Save,
+    },
+];
+pub(super) fn command(text: &str) -> Option<Action> {
+    let text = text.trim();
+    COMMANDS
+        .iter()
+        .find(|item| item.name == text)
+        .map(|item| item.action)
+}
 #[derive(Default)]
 pub(super) struct Vim {
     g_at: Option<f64>,
@@ -28,7 +65,6 @@ impl Vim {
             self.clear();
             return None;
         }
-        let mut action = None;
         for event in events {
             let Event::Key {
                 key,
@@ -42,17 +78,19 @@ impl Vim {
             };
             let mut modifiers = *modifiers;
             modifiers.command = false;
-            let previous_g = self.g_at.take();
-            action = match (*key, modifiers) {
+            let g = self.g_at.take().is_some_and(|time| now - time <= 0.8);
+            let action = match (*key, modifiers) {
                 (Key::J, Modifiers::NONE) => Some(Action::Scroll(48.0)),
                 (Key::K, Modifiers::NONE) => Some(Action::Scroll(-48.0)),
-                (Key::D, Modifiers::CTRL) => Some(Action::Scroll(f32::INFINITY)),
-                (Key::U, Modifiers::CTRL) => Some(Action::Scroll(f32::NEG_INFINITY)),
+                (Key::D, Modifiers::CTRL) => Some(Action::Page(0.5)),
+                (Key::U, Modifiers::CTRL) => Some(Action::Page(-0.5)),
                 (Key::H, Modifiers::NONE) if !repeat => Some(Action::Tab(-1)),
                 (Key::L, Modifiers::NONE) if !repeat => Some(Action::Tab(1)),
+                (Key::T, Modifiers::NONE) if g && !repeat => Some(Action::Tab(1)),
+                (Key::T, Modifiers::SHIFT) if g && !repeat => Some(Action::Tab(-1)),
                 (Key::G, Modifiers::SHIFT) if !repeat => Some(Action::Edge(false)),
                 (Key::G, Modifiers::NONE) if !repeat => {
-                    if previous_g.is_some_and(|time| now - time <= 0.8) {
+                    if g {
                         Some(Action::Edge(true))
                     } else {
                         self.g_at = Some(now);
@@ -62,14 +100,18 @@ impl Vim {
                 _ => None,
             };
             if action.is_some() {
-                break;
+                return action;
             }
         }
-        action
+        None
     }
 }
-
-pub(super) fn resolve(events: &[Event], editing: bool) -> Option<Action> {
+pub(super) fn resolve(
+    events: &[Event],
+    editing: bool,
+    outputs_active: bool,
+    emergency: bool,
+) -> Option<Action> {
     let keys: Vec<_> = events
         .iter()
         .filter_map(|event| match event {
@@ -80,7 +122,6 @@ pub(super) fn resolve(events: &[Event], editing: bool) -> Option<Action> {
                 modifiers,
                 ..
             } => {
-                // eguiはLinux/WindowsのCtrlにもcommandフラグを付ける。
                 let mut modifiers = *modifiers;
                 modifiers.command = false;
                 Some((*key, modifiers))
@@ -88,68 +129,43 @@ pub(super) fn resolve(events: &[Event], editing: bool) -> Option<Action> {
             _ => None,
         })
         .collect();
-    // 同じフレームに開始と停止が来ても停止だけを処理する。
-    if keys.iter().any(|(key, modifiers)| {
-        *key == Key::Escape || (!editing && *key == Key::Space && *modifiers == Modifiers::NONE)
-    }) {
-        return Some(Action::Stop);
+    // 出力中のSpaceは文字入力より優先。解除は編集中に行わない。
+    if keys.contains(&(Key::Space, Modifiers::NONE)) && (!editing || (outputs_active && !emergency))
+    {
+        return Some(Action::Emergency(!emergency));
+    }
+    if keys.iter().any(|(key, _)| *key == Key::Escape) {
+        return Some(Action::Escape);
     }
     if editing {
         return None;
     }
+    if keys.contains(&(Key::S, Modifiers::NONE)) {
+        return Some(Action::Stop);
+    }
+    if let Some(action) = events.iter().find_map(|event| match event {
+        Event::Text(text) if text == ":" => Some(Action::Command),
+        Event::Text(text) if text == "?" => Some(Action::Help),
+        _ => None,
+    }) {
+        return Some(action);
+    }
     keys.into_iter().find_map(|(key, modifiers)| {
-        if modifiers == Modifiers::CTRL {
-            return match key {
-                Key::Enter => Some(Action::Run),
-                Key::S => Some(Action::Save),
-                _ => None,
-            };
-        }
-        if modifiers == Modifiers::CTRL | Modifiers::SHIFT && key == Key::Enter {
-            return Some(Action::Apply);
-        }
         if modifiers != Modifiers::NONE {
             return None;
         }
         match key {
-            Key::F1 => Some(Action::Screen(Screen::Operate)),
-            Key::F2 => Some(Action::Screen(Screen::Tune)),
-            Key::F3 => Some(Action::Screen(Screen::Diagnose)),
-            Key::F4 => Some(Action::Screen(Screen::Documents)),
-            Key::F12 => Some(Action::Help),
+            Key::Num1 => Some(Action::Screen(Screen::Operate)),
+            Key::Num2 => Some(Action::Screen(Screen::Tune)),
+            Key::Num3 => Some(Action::Screen(Screen::Diagnose)),
+            Key::Num4 => Some(Action::Screen(Screen::Documents)),
             _ => None,
         }
     })
 }
-
 #[cfg(test)]
 mod tests {
     use super::*;
-    #[test]
-    fn vim_prefix_expires_and_never_survives_editing_or_other_keys() {
-        let mut vim = Vim::default();
-        let g = key(Key::G, Modifiers::NONE, false);
-        assert_eq!(vim.resolve(std::slice::from_ref(&g), false, 0.0), None);
-        assert_eq!(
-            vim.resolve(std::slice::from_ref(&g), false, 0.5),
-            Some(Action::Edge(true))
-        );
-        assert_eq!(vim.resolve(std::slice::from_ref(&g), false, 1.0), None);
-        assert_eq!(vim.resolve(std::slice::from_ref(&g), false, 2.0), None);
-        assert_eq!(vim.resolve(std::slice::from_ref(&g), true, 2.1), None);
-        assert_eq!(vim.resolve(std::slice::from_ref(&g), false, 2.2), None);
-        assert_eq!(
-            vim.resolve(&[key(Key::J, Modifiers::NONE, true)], false, 2.3),
-            Some(Action::Scroll(48.0))
-        );
-        assert_eq!(vim.resolve(&[g], false, 2.4), None);
-        for key_code in [Key::J, Key::K, Key::H, Key::L, Key::D, Key::U] {
-            assert_eq!(
-                vim.resolve(&[key(key_code, Modifiers::NONE, false)], true, 3.0),
-                None
-            );
-        }
-    }
     fn key(key: Key, modifiers: Modifiers, repeat: bool) -> Event {
         Event::Key {
             key,
@@ -160,66 +176,81 @@ mod tests {
         }
     }
     #[test]
-    fn editing_suppresses_shortcuts_but_not_stop_escape() {
-        for event in [
+    fn emergency_overrides_output_editing_but_reset_does_not() {
+        let events = [
             key(Key::Space, Modifiers::NONE, false),
-            key(Key::S, Modifiers::CTRL, false),
-            key(Key::Enter, Modifiers::CTRL, false),
-            key(Key::F2, Modifiers::NONE, false),
-        ] {
-            assert_eq!(resolve(&[event], true), None);
-        }
+            key(Key::S, Modifiers::NONE, false),
+        ];
         assert_eq!(
-            resolve(&[key(Key::Escape, Modifiers::NONE, false)], true),
-            Some(Action::Stop)
+            resolve(&events, true, true, false),
+            Some(Action::Emergency(true))
+        );
+        assert_eq!(resolve(&events, true, false, false), None);
+        assert_eq!(resolve(&events, true, true, true), None);
+        assert_eq!(
+            resolve(&events, false, false, true),
+            Some(Action::Emergency(false))
+        );
+        assert_eq!(
+            resolve(&[key(Key::Space, Modifiers::NONE, true)], false, true, true),
+            None
         );
     }
     #[test]
-    fn platform_command_alias_does_not_hide_control_shortcuts() {
-        let modifiers = Modifiers {
-            ctrl: true,
+    fn escape_only_exits_editing_and_old_bindings_are_removed() {
+        assert_eq!(
+            resolve(
+                &[key(Key::Escape, Modifiers::NONE, false)],
+                true,
+                true,
+                false
+            ),
+            Some(Action::Escape)
+        );
+        for event in [
+            key(Key::F1, Modifiers::NONE, false),
+            key(Key::F12, Modifiers::NONE, false),
+            key(Key::Enter, Modifiers::CTRL, false),
+            key(Key::S, Modifiers::CTRL, false),
+        ] {
+            assert_eq!(resolve(&[event], false, false, false), None);
+        }
+        for event in [
+            key(Key::S, Modifiers::NONE, false),
+            key(Key::Num1, Modifiers::NONE, false),
+            Event::Text(":".into()),
+        ] {
+            assert_eq!(resolve(&[event], true, false, false), None);
+        }
+    }
+    #[test]
+    fn vim_prefix_expires_and_is_cleared_by_editing() {
+        let mut vim = Vim::default();
+        let g = [key(Key::G, Modifiers::NONE, false)];
+        assert_eq!(vim.resolve(&g, false, 0.0), None);
+        assert_eq!(
+            vim.resolve(&[key(Key::T, Modifiers::SHIFT, false)], false, 0.5),
+            Some(Action::Tab(-1))
+        );
+        vim.resolve(&g, false, 1.0);
+        assert_eq!(vim.resolve(&g, false, 2.0), None);
+        vim.resolve(&[], true, 2.1);
+        assert_eq!(vim.resolve(&g, false, 2.2), None);
+        assert_eq!(vim.resolve(&g, false, 2.3), Some(Action::Edge(true)));
+        let ctrl = Modifiers {
             command: true,
-            ..Modifiers::NONE
+            ..Modifiers::CTRL
         };
         assert_eq!(
-            resolve(&[key(Key::Enter, modifiers, false)], false),
-            Some(Action::Run)
-        );
-        assert_eq!(
-            resolve(&[key(Key::S, modifiers, false)], false),
-            Some(Action::Save)
+            vim.resolve(&[key(Key::D, ctrl, false)], false, 3.0),
+            Some(Action::Page(0.5))
         );
     }
-
     #[test]
-    fn stop_takes_priority_and_key_repeat_never_restarts() {
-        assert_eq!(
-            resolve(
-                &[
-                    key(Key::Enter, Modifiers::CTRL, false),
-                    key(Key::Space, Modifiers::NONE, false)
-                ],
-                false
-            ),
-            Some(Action::Stop)
-        );
-        assert_eq!(
-            resolve(&[key(Key::Enter, Modifiers::CTRL, true)], false),
-            None
-        );
-        assert_eq!(
-            resolve(
-                &[key(Key::Enter, Modifiers::CTRL | Modifiers::SHIFT, false)],
-                false
-            ),
-            Some(Action::Apply)
-        );
-        assert_eq!(
-            resolve(
-                &[key(Key::Enter, Modifiers::CTRL | Modifiers::ALT, false)],
-                false
-            ),
-            None
-        );
+    fn command_registry_accepts_only_complete_known_commands() {
+        assert_eq!(command(" w "), Some(Action::Save));
+        assert_eq!(command("run"), Some(Action::Run));
+        assert_eq!(command("run anything"), None);
+        assert_eq!(command("!rm"), None);
     }
 }

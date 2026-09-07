@@ -44,6 +44,14 @@ pub struct BridgeApp {
     active_jog: Option<String>,
     vim: shortcuts::Vim,
     navigation: Option<Action>,
+    page_offsets: [f32; 4],
+    page_heights: [f32; 4],
+    command_open: bool,
+    emergency_edit_guard: bool,
+    previous_emergency: bool,
+    command_focus: bool,
+    command_text: String,
+    tests: individual::TestPanel,
     connection: crate::application::app_state::Connection,
 }
 impl BridgeApp {
@@ -74,6 +82,14 @@ impl BridgeApp {
             active_jog: None,
             vim: shortcuts::Vim::default(),
             navigation: None,
+            page_offsets: [0.0; 4],
+            page_heights: [0.0; 4],
+            command_open: false,
+            emergency_edit_guard: false,
+            previous_emergency: false,
+            command_focus: false,
+            command_text: String::new(),
+            tests: individual::TestPanel::default(),
         }
     }
     fn request(&mut self, request: Request) {
@@ -100,20 +116,51 @@ impl BridgeApp {
             .is_ok_and(|profile| profile == self.shared.config().machine)
     }
     fn can_apply(&self, status: &Status) -> bool {
-        !status.ai_active
+        !status.emergency
+            && !status.test_active
+            && !status.ai_active
             && !status.running
             && toml::to_string_pretty(&self.shared.config().machine).unwrap_or_default()
                 == self.base
     }
     fn can_save(&self, status: &Status) -> bool {
-        !status.ai_active && !status.running && self.draft_matches_applied()
+        !status.emergency
+            && !status.test_active
+            && !status.ai_active
+            && !status.running
+            && self.draft_matches_applied()
     }
     fn can_run(status: &Status) -> bool {
-        !status.ai_active && !status.running && status.connected && status.configured
+        !status.emergency
+            && !status.test_mode
+            && !status.ai_active
+            && !status.running
+            && status.connected
+            && status.configured
     }
     fn dispatch(&mut self, action: Action) {
         let status = self.shared.status_snapshot();
         match action {
+            Action::Emergency(engage) => {
+                if !engage {
+                    self.emergency_edit_guard = false;
+                }
+                self.stop_requested = true;
+                self.command_open = false;
+                self.operation(if engage { "estop" } else { "estop_reset" });
+            }
+            Action::Escape => {
+                self.emergency_edit_guard = false;
+                self.help_open = false;
+                self.command_open = false;
+                self.command_text.clear();
+            }
+            Action::Command => {
+                self.command_open = true;
+                self.command_focus = true;
+                self.command_text.clear();
+            }
+
             Action::Stop => {
                 self.stop_requested = true;
                 self.operation("stop");
@@ -133,7 +180,7 @@ impl BridgeApp {
                     .unwrap_or(0);
                 self.screen = screens[(index as i32 + direction).rem_euclid(4) as usize];
             }
-            Action::Scroll(_) | Action::Edge(_) => self.navigation = Some(action),
+            Action::Scroll(_) | Action::Page(_) | Action::Edge(_) => self.navigation = Some(action),
             Action::Help => self.help_open = !self.help_open,
             Action::Apply if self.screen == Screen::Tune && self.can_apply(&status) => {
                 match MachineProfile::parse(&self.source) {
@@ -158,7 +205,14 @@ impl BridgeApp {
                     ..Request::new("save")
                 });
             }
-            _ => {}
+            Action::Apply | Action::Save => {
+                self.message = "調整画面で停止し、編集・適用状態を確認してください".into();
+                self.message_error = true;
+            }
+            Action::Run => {
+                self.message = "接続・設定・緊停・個別テストの状態を確認してください".into();
+                self.message_error = true;
+            }
         }
     }
     fn header(&mut self, ui: &mut egui::Ui, status: &Status) {
@@ -179,7 +233,7 @@ impl BridgeApp {
                 if ui
                     .add_sized(
                         [170.0, 48.0],
-                        egui::Button::new(RichText::new("停止・保持  Esc").strong())
+                        egui::Button::new(RichText::new("停止・保持  s").strong())
                             .fill(Color32::from_rgb(115, 39, 48)),
                     )
                     .clicked()
@@ -193,7 +247,7 @@ impl BridgeApp {
                             .min_size(egui::vec2(120.0, 48.0))
                             .fill(Color32::from_rgb(27, 80, 74)),
                     )
-                    .on_hover_text("Ctrl+Enter / Options\n原点と入力中立を確認して再開")
+                    .on_hover_text(" :run / Options\n原点と入力中立を確認して再開")
                     .clicked()
                 {
                     self.dispatch(Action::Run);
@@ -203,10 +257,10 @@ impl BridgeApp {
         ui.add_space(8.0);
         ui.horizontal(|ui| {
             for (screen, label) in [
-                (Screen::Operate, "F1   操縦"),
-                (Screen::Tune, "F2   調整"),
-                (Screen::Diagnose, "F3   診断"),
-                (Screen::Documents, "F4   文書"),
+                (Screen::Operate, "1   操縦"),
+                (Screen::Tune, "2   調整"),
+                (Screen::Diagnose, "3   診断"),
+                (Screen::Documents, "4   文書"),
             ] {
                 let selected = self.screen == screen;
                 if ui
@@ -231,7 +285,7 @@ impl BridgeApp {
             }
             ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
                 if ui
-                    .add_sized([140.0, 42.0], egui::Button::new("キー操作  F12"))
+                    .add_sized([140.0, 42.0], egui::Button::new("キー操作  ?"))
                     .clicked()
                 {
                     self.dispatch(Action::Help);
@@ -262,16 +316,17 @@ impl BridgeApp {
                     .spacing([28.0, 12.0])
                     .show(ui, |ui| {
                         for (key, action) in [
-                            ("Esc / Space", "停止・保持"),
-                            ("Ctrl+Enter", "運転再開"),
-                            ("F1 / F2 / F3 / F4", "操縦 / 調整 / 診断 / 文書"),
-                            ("h / l", "前 / 次のタブ"),
+                            ("Space", "ソフト緊停 / 解除（再開は別操作）"),
+                            ("s / :stop", "停止・保持（個別テストは出力解除）"),
+                            (":run", "運転再開"),
+                            ("1 / 2 / 3 / 4", "操縦 / 調整 / 診断 / 文書"),
+                            ("h / l ・ gT / gt", "前 / 次のタブ"),
                             ("j / k", "下 / 上へスクロール"),
                             ("Ctrl+d / Ctrl+u", "下 / 上へ半ページ移動"),
-                            ("gg / Shift+g", "ページの先頭 / 末尾"),
-                            ("Ctrl+Shift+Enter", "一時適用（調整画面）"),
-                            ("Ctrl+S", "適用中の設定を保存（調整画面）"),
-                            ("F12", "この案内を開閉"),
+                            ("gg / G", "ページの先頭 / 末尾"),
+                            (":apply / :w", "調整画面で適用 / 適用済み設定を保存"),
+                            ("Esc", "編集終了 / コマンド取消"),
+                            ("?", "この案内を開閉"),
                         ] {
                             keycap(ui, key);
                             ui.label(action);
@@ -279,7 +334,10 @@ impl BridgeApp {
                         }
                     });
                 ui.add_space(12.0);
-                ui.label(RichText::new("文字・数値の入力中はEscのみ有効です。").color(MUTED));
+                ui.label(
+                    RichText::new("編集中の文字入力を優先します。出力中のSpaceは緊停です。")
+                        .color(MUTED),
+                );
                 ui.label(
                     RichText::new("保存する前に、編集中の設定を一時適用してください。")
                         .color(MUTED),
@@ -292,15 +350,29 @@ impl eframe::App for BridgeApp {
         ui.ctx().request_repaint_after(Duration::from_millis(50));
         self.stop_requested = false;
         self.requested_jog = None;
+        self.tests.requested = false;
         let current_path = self.shared.config().profile_path.display().to_string();
         if self.profile_file == self.profile_file_base {
             self.profile_file = current_path.clone();
         }
         self.profile_file_base = current_path;
-        let editing = ui.ctx().text_edit_focused();
+        let editing = ui.ctx().text_edit_focused() || self.command_open;
+        let shortcut_status = self.shared.status_snapshot();
+        if shortcut_status.emergency && !self.previous_emergency && editing {
+            self.emergency_edit_guard = true;
+        }
+        self.previous_emergency = shortcut_status.emergency;
+        if !editing && ui.input(|input| input.pointer.any_pressed()) {
+            self.emergency_edit_guard = false;
+        }
         let action = ui.input(|input| {
             if input.focused {
-                if let Some(action) = shortcuts::resolve(&input.events, editing) {
+                if let Some(action) = shortcuts::resolve(
+                    &input.events,
+                    editing || (shortcut_status.emergency && self.emergency_edit_guard),
+                    shortcut_status.outputs_active,
+                    shortcut_status.emergency,
+                ) {
                     self.vim.clear();
                     Some(action)
                 } else {
@@ -313,10 +385,21 @@ impl eframe::App for BridgeApp {
             }
         });
         if let Some(action) = action {
+            if action == Action::Emergency(true) && editing {
+                self.emergency_edit_guard = true;
+            }
+            if action == Action::Escape {
+                ui.ctx().memory_mut(|memory| {
+                    if let Some(id) = memory.focused() {
+                        memory.surrender_focus(id);
+                    }
+                });
+            }
             ui.input_mut(|input| {
-                input
-                    .events
-                    .retain(|event| !matches!(event, egui::Event::Key { pressed: true, .. }))
+                input.events.retain(|event| {
+                    !matches!(event, egui::Event::Key { pressed: true, .. })
+                        && !matches!(event, egui::Event::Text(_))
+                });
             });
             self.dispatch(action);
         }
@@ -331,44 +414,38 @@ impl eframe::App for BridgeApp {
             .show(ui, |ui| {
                 ui.set_min_size(ui.available_size());
                 self.header(ui, &status);
+                self.global_state(ui, &status);
+                self.command_line(ui);
                 if !status.error.is_empty() {
                     ui.colored_label(DANGER, &status.error);
                     ui.add_space(6.0);
                 }
-                egui::ScrollArea::vertical()
+                let page = self.screen as usize;
+                let height = (ui.available_height() - 34.0).max(120.0);
+                let mut scroll = egui::ScrollArea::vertical()
                     .id_salt(format!("page-{:?}", self.screen))
-                    .max_height((ui.available_height() - 34.0).max(120.0))
-                    .auto_shrink([false, false])
-                    .show(ui, |ui| {
-                        let top = ui.cursor().min;
-                        if let Some(Action::Scroll(amount)) = self.navigation {
-                            let amount = if amount.is_infinite() {
-                                amount.signum() * ui.clip_rect().height() * 0.5
-                            } else {
-                                amount
-                            };
-                            ui.scroll_with_delta(egui::vec2(0.0, -amount));
-                        }
-                        match self.screen {
-                            Screen::Operate => self.operate(ui),
-                            Screen::Tune => {
-                                ui.add_enabled_ui(!status.ai_active, |ui| self.tune(ui));
-                            }
-                            Screen::Diagnose => self.diagnose(ui),
-                            Screen::Documents => self.documents.show(ui),
-                        }
-                        if let Some(Action::Edge(start)) = self.navigation.take() {
-                            let point = if start { top } else { ui.min_rect().max };
-                            ui.scroll_to_rect(
-                                egui::Rect::from_min_size(point, egui::Vec2::ZERO),
-                                Some(if start {
-                                    egui::Align::TOP
-                                } else {
-                                    egui::Align::BOTTOM
-                                }),
-                            );
-                        }
-                    });
+                    .max_height(height)
+                    .auto_shrink([false, false]);
+                if let Some(action) = self.navigation.take() {
+                    let offset = match action {
+                        Action::Scroll(delta) => self.page_offsets[page] + delta,
+                        Action::Page(fraction) => self.page_offsets[page] + fraction * height,
+                        Action::Edge(true) => 0.0,
+                        Action::Edge(false) => self.page_heights[page],
+                        _ => self.page_offsets[page],
+                    };
+                    scroll = scroll.vertical_scroll_offset(offset.max(0.0));
+                }
+                let output = scroll.show(ui, |ui| match self.screen {
+                    Screen::Operate => self.operate(ui),
+                    Screen::Tune => {
+                        ui.add_enabled_ui(!status.ai_active, |ui| self.tune(ui));
+                    }
+                    Screen::Diagnose => self.diagnose(ui),
+                    Screen::Documents => self.documents.show(ui),
+                });
+                self.page_offsets[page] = output.state.offset.y;
+                self.page_heights[page] = output.content_size.y;
                 ui.add_space(8.0);
                 ui.horizontal(|ui| {
                     ui.label(
@@ -415,6 +492,7 @@ impl eframe::App for BridgeApp {
                 });
             });
         self.update_screen_input(ui.ctx());
+        self.update_test_input(ui.ctx());
         self.help(ui.ctx());
     }
     fn on_exit(&mut self) {
@@ -497,6 +575,8 @@ mod operate;
 mod shortcuts;
 mod tune;
 
+mod controls;
+mod individual;
 mod manual;
 
 mod documents;

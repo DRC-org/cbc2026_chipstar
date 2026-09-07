@@ -99,8 +99,8 @@ impl BridgeApp {
             });
             ui.add_space(4.0);
             ui.horizontal_wrapped(|ui| {
-                if ui.add_enabled(self.can_apply(&status), egui::Button::new("一時適用  Ctrl+Shift+Enter").fill(Color32::from_rgb(27, 80, 74))).clicked() { self.dispatch(Action::Apply); }
-                if ui.add_enabled(self.can_save(&status), egui::Button::new("保存  Ctrl+S"))
+                if ui.add_enabled(self.can_apply(&status), egui::Button::new("適用  :apply").fill(Color32::from_rgb(27, 80, 74))).clicked() { self.dispatch(Action::Apply); }
+                if ui.add_enabled(self.can_save(&status), egui::Button::new("保存  :w"))
                     .on_hover_text("指定したパスに適用中の設定を保存。未適用の編集がある場合は先に一時適用してください。").clicked() { self.dispatch(Action::Save); }
                 if ui.button("適用中の内容に戻す").on_hover_text("未適用の編集を破棄して、hostで適用中の設定を読み直します").clicked() { self.reload(); }
             });

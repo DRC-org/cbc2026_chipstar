@@ -8,18 +8,14 @@ impl BridgeApp {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
                 ui.label(
-                    RichText::new(if status.running {
-                        "運転中"
-                    } else {
-                        "停止中"
-                    })
-                    .size(32.0)
-                    .strong()
-                    .color(if status.running {
-                        ACCENT
-                    } else {
-                        Color32::WHITE
-                    }),
+                    RichText::new(&status.operating_state)
+                        .size(32.0)
+                        .strong()
+                        .color(if status.running {
+                            ACCENT
+                        } else {
+                            Color32::WHITE
+                        }),
                 );
                 if status.slow {
                     chip(ui, "低速 20%", ACCENT);
@@ -161,7 +157,7 @@ impl BridgeApp {
                 for (ui, (title, key, detail)) in columns.iter_mut().zip([
                     ("移動", "左スティック / 右上下", "r・θ / z"),
                     ("低速", "L1 を保持", "通常速度の20%"),
-                    ("再開 / 停止", "Options / PS", "PC：Ctrl+Enter / Esc"),
+                    ("再開 / 停止", "Options / PS", "PC：:run / s"),
                 ]) {
                     ui.label(RichText::new(title).size(12.0).color(MUTED));
                     keycap(ui, key);
