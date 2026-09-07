@@ -2,6 +2,7 @@
 #include "can_bus.hpp"
 #include "device_config.hpp"
 #include "domain/can_frame.hpp"
+#include "domain/motor_discovery.hpp"
 #include "domain/command.hpp"
 #include "domain/command_queue.hpp"
 #include "domain/line_reader.hpp"
@@ -40,6 +41,12 @@ bool peripheral_bus_ready = false;
 bool motor_bus_ready = false;
 domain::DigitalInputs inputs(7);
 domain::c620::Discovery c620_discovery;
+domain::MotorDiscovery motor_discovery;
+uint32_t motor_scan_tx_failed = 0;
+uint32_t motor_standard_count = 0;
+uint32_t motor_extended_count = 0;
+uint32_t motor_last_standard = 0;
+uint32_t motor_last_extended = 0;
 
 void sampleInputs() {
     const uint8_t raw = (HAL_GPIO_ReadPin(SW1_GPIO_Port, SW1_Pin) == GPIO_PIN_RESET ? 1 : 0) |
@@ -305,6 +312,32 @@ extern "C" void loop(void) {
     domain::CanFrame frame;
     while (motor_bus.receive(frame)) {
         if (!frame.extended && frame.length == 8) c620_discovery.observe(frame.id, HAL_GetTick());
+        if (frame.extended) {
+            ++motor_extended_count;
+            motor_last_extended = frame.id;
+            if (frame.length == 8 && domain::el05::commType(frame.id) == 0 &&
+                domain::el05::targetId(frame.id) == 0xFE) {
+                char text[80];
+                std::snprintf(text, sizeof(text), "MOTOR_ID kind=el05 id=%u",
+                    static_cast<unsigned>(domain::el05::dataArea2(frame.id)));
+                sendText(text);
+            }
+        } else {
+            ++motor_standard_count;
+            motor_last_standard = frame.id;
+            if (frame.length == 8 && frame.data[2] == domain::dm::CONFIG_READ &&
+                frame.data[3] == domain::dm::reg::ESC_ID) {
+                const uint16_t id = frame.data[0] | (static_cast<uint16_t>(frame.data[1]) << 8);
+                if (domain::dm::configReplyValue(frame.data) == id) {
+                    char text[80];
+                    std::snprintf(text, sizeof(text), "MOTOR_ID kind=dm id=%u feedback_id=%lu",
+                        static_cast<unsigned>(id), static_cast<unsigned long>(frame.id));
+                    sendText(text);
+                    // 識別応答を位置フィードバックとして数えない。
+                    continue;
+                }
+            }
+        }
         controller.dispatchRx(frame);
     }
     while (peripheral_bus.receive(frame)) sendCanFrame(frame);
@@ -320,6 +353,14 @@ extern "C" void loop(void) {
     }
 
     controller.update();
+    domain::CanFrame query;
+    if (motor_discovery.next(now, controller.mode() != domain::RunMode::Run,
+            controller.parameters().getU8(domain::ParamId::El05HostId), query)) {
+        const bool sent = query.extended
+            ? motor_bus.sendExt(query.id, query.data, query.length)
+            : motor_bus.sendStd(static_cast<uint16_t>(query.id), query.data, query.length);
+        if (!sent) ++motor_scan_tx_failed;
+    }
     controller.flushParameters();
 
     // バスオフからの自動復帰。放置すると電源を入れ直すまでCANが死ぬ。
@@ -348,6 +389,16 @@ extern "C" void loop(void) {
                       static_cast<unsigned>(controller.parameters().getU8(domain::ParamId::C620EscId)));
         sendText(text);
         sendCanStat(1, motor_bus, motor_bus_ready);
+        char rx_text[128];
+        std::snprintf(rx_text, sizeof(rx_text),
+            "MOTOR_RX std=%lu ext=%lu last_std=%lu last_ext=%08lX scan_done=%u scan_cancel=%u tx_failed=%lu",
+            static_cast<unsigned long>(motor_standard_count),
+            static_cast<unsigned long>(motor_extended_count),
+            static_cast<unsigned long>(motor_last_standard),
+            static_cast<unsigned long>(motor_last_extended), motor_discovery.done() ? 1U : 0U,
+            motor_discovery.cancelled() ? 1U : 0U,
+            static_cast<unsigned long>(motor_scan_tx_failed));
+        sendText(rx_text);
     }
 
     uint16_t el05_index = 0;

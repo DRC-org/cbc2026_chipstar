@@ -57,6 +57,7 @@ add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     cctl/device_config_test.cpp
     cctl/parameters_test.cpp
     cctl/feedback_watch_test.cpp
+    cctl/motor_discovery_test.cpp
     cctl/c620_codec_test.cpp
     cctl/line_reader_test.cpp
     cctl/telemetry_test.cpp
