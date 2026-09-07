@@ -22,13 +22,13 @@ fn frozen_feedback_does_not_accumulate_a_manual_position_target() {
     machine.observe(&t);
     assert!(machine.capture_origin(0, Some(&t)));
     let mut input = ControllerState::default();
-    input.axes[1] = -0.5;
+    input.axes[1] = 0.5;
     for _ in 0..1000 {
         machine.observe(&t);
-        assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 0.20000");
+        assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 -0.20000");
     }
-    assert_eq!(machine.origin_states(Some(&t))[0].position, 0.0);
-    assert_eq!(machine.jog_lines(&input, &t, true)[0], "JOG 0 0.04000");
+    assert!((machine.origin_states(Some(&t))[0].position - 120.0).abs() < 0.001);
+    assert_eq!(machine.jog_lines(&input, &t, true)[0], "JOG 0 -0.04000");
     input.axes[1] = 0.0;
     let lines = machine.jog_lines(&input, &t, false);
     let velocity: f32 = lines[0].split_whitespace().last().unwrap().parse().unwrap();
@@ -42,7 +42,7 @@ fn displayed_position_uses_the_captured_offset() {
     machine.capture_origin(0, Some(&start));
     let moved = telemetry(5.04);
     machine.observe(&moved);
-    assert!((machine.origin_states(Some(&moved))[0].position - 1.0).abs() < 0.001);
+    assert!((machine.origin_states(Some(&moved))[0].position - 121.0).abs() < 0.001);
     let mut input = ControllerState::default();
     input.axes[1] = 1.0;
     let restarted = telemetry(0.0);
@@ -59,7 +59,7 @@ fn holding_outside_a_soft_limit_does_not_command_a_return() {
     let start = telemetry(0.0);
     machine.capture_origin(0, Some(&start));
     machine.hold_at_measured(Some(&telemetry(8.0)));
-    assert_eq!(machine.targets[0], 200.0);
+    assert_eq!(machine.targets[0], 320.0);
 }
 
 #[test]

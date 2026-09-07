@@ -317,10 +317,11 @@ fn unknown_contacts_block_only_axes_with_a_configured_switch() {
     };
     let mut input = neutral_input();
     input.axes[1] = 1.0;
-    for (profile, blocked) in [
-        (profile_with_limits(), true),
-        (MachineProfile::embedded().unwrap(), false),
-    ] {
+    let mut without_limits = MachineProfile::embedded().unwrap();
+    for axis in &mut without_limits.axes {
+        axis.limit = None;
+    }
+    for (profile, blocked) in [(profile_with_limits(), true), (without_limits, false)] {
         let mut machine = MachineController::new(profile);
         machine.set_soft_limits(false);
         machine.observe(&t);

@@ -58,15 +58,14 @@ native_per_unit = 0.04
 minimum = 0.0
 maximum = 120.0
 initial = 0.0
-# スイッチ取付後に origin_position = 120.0 へ戻す。
 # 前進しきるとビーム後端がSW1を叩き、そこが可動域の最大側になる。
-origin_position = 0.0
+origin_position = 120.0
 
-# リミットスイッチ未取付のため無効。取り付けたら有効化する。
-# 接点はB接点配線で、未接続だと「開＝到達」と判定されて前進できなくなる。
-# [axes.limit]
-# input = 0
-# direction = 1.0
+# COM–NC配線。未接続・断線は到達扱い。
+[axes.limit]
+input = 0
+direction = 1.0
+normally_closed = true
 
 [[axes]]
 name = "theta"
@@ -98,8 +97,8 @@ maximum = 75.0
 initial = 0.0
 origin_position = 0.0
 
-# リミットスイッチ未取付のため無効。取り付けたら有効化する。
 # 下端でSW2に当たる。
-# [axes.limit]
-# input = 1
-# direction = -1.0
+[axes.limit]
+input = 1
+direction = -1.0
+normally_closed = true
