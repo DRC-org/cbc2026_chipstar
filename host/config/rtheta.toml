@@ -88,9 +88,9 @@ input_axis = 3
 input_sign = 1.0
 # 重力負荷があるので低速から始める。実機で詰める。
 speed_per_second = 5.0
-# 電気角と仮定した校正用換算。出力軸rad/mm × 極対数7 × 減速比19.203。
+# 手動移動の実測比で補正した暫定校正値。通信角度の物理単位は未確定。
 # 実移動との一致を確認してから速度上限を調整する。
-native_per_unit = 11.730445
+native_per_unit = 1.1730445
 minimum = 0.0
 maximum = 75.0
 initial = 0.0
