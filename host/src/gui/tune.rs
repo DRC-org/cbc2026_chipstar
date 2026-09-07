@@ -4,6 +4,7 @@ use super::*;
 pub(super) enum TuneView {
     Axes,
     Pid,
+    Ee,
     Parameters,
     File,
 }
@@ -87,6 +88,7 @@ impl BridgeApp {
         let edited = match self.tune_view {
             TuneView::Axes => self.tune_axes(ui),
             TuneView::Pid => self.tune_pid(ui),
+            TuneView::Ee => self.tune_ee(ui),
             TuneView::Parameters => self.tune_parameters(ui),
             TuneView::File => {
                 self.tune_file(ui);

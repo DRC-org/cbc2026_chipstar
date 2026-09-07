@@ -69,6 +69,13 @@ impl Target {
         }
     }
     pub fn limits(self, kind: Kind, profile: &MachineProfile) -> Result<(f32, f32, &'static str)> {
+        if kind == Kind::Position
+            && let Some(axis) = crate::machine::ee::axes(profile)
+                .iter()
+                .find(|a| a.target == self)
+        {
+            return Ok((axis.min, axis.max, axis.unit()));
+        }
         Ok(match (self, kind) {
             (Self::Cctl(slot), Kind::Position) => {
                 let min = profile

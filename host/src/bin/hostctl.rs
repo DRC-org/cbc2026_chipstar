@@ -9,7 +9,7 @@ use std::{
 };
 #[derive(Parser)]
 #[command(
-    about = "起動済みhostの観測・設定・操作。action: status/config/claim/heartbeat/release/run/stop/estop/cut/safe/recover/origin/adjustment/input/apply/save/connection/reinit/fault/sts"
+    about = "起動済みhostの観測・設定・操作。action: status/config/claim/heartbeat/release/run/stop/estop/cut/safe/recover/origin/adjustment/input/apply/save/connection/reinit/fault/sts/ee"
 )]
 struct Args {
     action: String,

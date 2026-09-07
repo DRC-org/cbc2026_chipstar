@@ -101,6 +101,7 @@ impl BridgeApp {
         });
         ui.add_space(12.0);
         self.manual_controls(ui, &status);
+        self.operate_ee(ui, &status);
         ui.add_space(12.0);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());

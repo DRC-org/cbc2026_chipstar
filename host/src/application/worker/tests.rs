@@ -78,7 +78,7 @@ fn ai_control_excludes_manual_changes_and_expires_without_resuming() {
     assert!(runtime.drive.awaiting().is_none());
 }
 
-fn screen_runtime() -> Runtime {
+pub(super) fn screen_runtime() -> Runtime {
     let shared = Arc::new(Shared::new(BridgeConfig {
         serial_device: "unused".into(),
         baud_rate: 115200,

@@ -53,6 +53,7 @@ struct Runtime {
     emergency: bool,
     test: test_control::TestControl,
     sts: sts_control::Control,
+    ee: ee_control::Control,
     authority: Authority,
     manual_input: ControllerState,
     screen_control: bool,
@@ -84,6 +85,7 @@ impl Runtime {
             emergency: false,
             test: test_control::TestControl::default(),
             sts: sts_control::Control::default(),
+            ee: ee_control::Control::default(),
             authority: Authority::default(),
             manual_input: ControllerState::default(),
             gamepad_name: String::new(),
@@ -112,7 +114,8 @@ impl Runtime {
         self.screen_input_times = [None; 6];
     }
     fn stop(&mut self, cut: bool) -> Result<()> {
-        let cut = cut || self.test.enabled || self.sts.active;
+        let cut = cut || self.test.enabled || self.sts.active || !self.ee.targets.is_empty();
+        self.ee = ee_control::Control::default();
         self.sts.cancel();
         self.test.restart_blocked |= self.test.active;
         self.test.active = false;
@@ -279,6 +282,9 @@ impl Runtime {
     fn receive(&mut self) -> Result<()> {
         for line in self.link.read_lines()? {
             self.observe_test_reply(&line);
+            if let Err(error) = self.observe_ee(&line) {
+                self.fault(error.to_string());
+            }
             if let Err(error) = self.observe_sts(&line) {
                 self.sts.stop_monitoring();
                 self.shared
@@ -547,6 +553,9 @@ impl Runtime {
             self.reason = "通信復旧。原点を確認して再開してください".into();
         }
         self.tick_test(now)?;
+        if let Err(error) = self.tick_ee(now) {
+            self.fault(error.to_string());
+        }
         if let Err(error) = self.tick_sts(now) {
             self.sts.stop_monitoring();
             self.shared
@@ -574,6 +583,7 @@ impl Runtime {
         let origins = self.machine.origin_states(self.telemetry.as_ref());
         self.shared.update_status(|s| {
             s.test_mode = self.test.enabled;
+            s.ee_targets = self.ee.targets.clone();
             s.test_active = self.test.active;
             s.test_ready = !self.emergency
                 && self.fresh()
@@ -599,7 +609,8 @@ impl Runtime {
                 .map(|(_, kind)| kind.key().into())
                 .unwrap_or_default();
             s.emergency = self.emergency;
-            s.outputs_active = self.sts.active
+            s.outputs_active = !self.ee.targets.is_empty()
+                || self.sts.active
                 || self.test.active
                 || self.drive.awaiting().is_some()
                 || self
@@ -767,6 +778,7 @@ pub fn run(shared: Arc<Shared>) {
     let _ = runtime.stop(true);
 }
 
+mod ee_control;
 mod requests;
 mod sts_control;
 mod test_control;

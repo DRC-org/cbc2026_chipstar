@@ -56,6 +56,7 @@ pub struct BridgeApp {
     tests: individual::TestPanel,
     sts_ui: sts::StsPanel,
     pid_plot: pid_plot::Panel,
+    ee_values: std::collections::BTreeMap<String, f32>,
     connection: crate::application::app_state::Connection,
 }
 impl BridgeApp {
@@ -98,6 +99,7 @@ impl BridgeApp {
             tests: individual::TestPanel::default(),
             sts_ui: sts::StsPanel::default(),
             pid_plot: pid_plot::Panel::default(),
+            ee_values: std::collections::BTreeMap::new(),
         }
     }
     fn request(&mut self, request: Request) {
@@ -125,6 +127,8 @@ impl BridgeApp {
     }
     fn can_apply(&self, status: &Status) -> bool {
         !status.emergency
+            && !status.sts.active
+            && !status.sts.busy
             && !status.test_active
             && !status.ai_active
             && !status.running
@@ -133,6 +137,8 @@ impl BridgeApp {
     }
     fn can_save(&self, status: &Status) -> bool {
         !status.emergency
+            && !status.sts.active
+            && !status.sts.busy
             && !status.test_active
             && !status.ai_active
             && !status.running
@@ -140,6 +146,8 @@ impl BridgeApp {
     }
     fn can_run(status: &Status) -> bool {
         !status.emergency
+            && !status.sts.active
+            && !status.sts.busy
             && !status.test_mode
             && !status.ai_active
             && !status.running
@@ -522,6 +530,7 @@ pub fn install_japanese_font(ctx: &egui::Context) {
     });
 }
 mod diagnose;
+mod ee;
 mod operate;
 mod pid;
 mod pid_plot;

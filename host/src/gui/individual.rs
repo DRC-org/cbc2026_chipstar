@@ -22,7 +22,42 @@ impl Default for TestPanel {
     }
 }
 impl BridgeApp {
+    pub(super) fn select_ee_test(&mut self, target: Target, value: f32) {
+        self.end_test_on_tab_change();
+        self.screen = Screen::Diagnose;
+        self.diagnosis_view = diagnose::DiagnosisView::Tests;
+        self.tests.board = target.board();
+        self.tests.id = match target {
+            Target::Pwm(id) | Target::Sts(id) => id,
+            _ => return,
+        };
+        self.tests.kind = Kind::Position;
+        self.tests.value = value;
+        self.request(Request {
+            flag: Some(true),
+            ..Request::new("test_mode")
+        });
+        self.request(Request {
+            axis: Some(target.key()),
+            text: Some("position".into()),
+            ..Request::new("test_select")
+        });
+    }
     pub(super) fn individual_test(&mut self, ui: &mut egui::Ui, status: &Status) {
+        ui.horizontal_wrapped(|ui| {
+            ui.label("EE単体テスト");
+            for axis in crate::machine::ee::axes(&self.shared.config().machine) {
+                if ui
+                    .add_enabled(
+                        !status.ai_active && !status.emergency,
+                        egui::Button::new(axis.label),
+                    )
+                    .clicked()
+                {
+                    self.select_ee_test(axis.target, axis.initial);
+                }
+            }
+        });
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {

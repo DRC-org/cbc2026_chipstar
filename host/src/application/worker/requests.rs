@@ -94,6 +94,7 @@ impl Runtime {
             bail!("個別テストの出力を停止してから操作してください");
         }
         match req.action.as_str() {
+            "ee" => return self.ee_request(req),
             "heartbeat" => {}
             "recover" => {
                 if self.drive.running() || self.drive.awaiting().is_some() || self.test.active {
