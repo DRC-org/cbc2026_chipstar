@@ -196,36 +196,21 @@ impl BridgeApp {
     }
 
     pub(super) fn page_navigation(&mut self, ui: &mut egui::Ui) {
-        if !matches!(self.screen, Screen::Tune | Screen::Diagnose) {
+        if self.screen != Screen::Tune {
             return;
         }
         let mut changed = false;
-        ui.horizontal(|ui| match self.screen {
-            Screen::Tune => {
-                for (view, label) in [
-                    (tune::TuneView::Axes, "アーム"),
-                    (tune::TuneView::Ee, "EE"),
-                    (tune::TuneView::Parameters, "基板"),
-                    (tune::TuneView::File, "設定ファイル"),
-                ] {
-                    changed |= ui
-                        .selectable_value(&mut self.tune_view, view, label)
-                        .changed();
-                }
+        ui.horizontal(|ui| {
+            for (view, label) in [
+                (tune::TuneView::Axes, "アーム"),
+                (tune::TuneView::Ee, "EE"),
+                (tune::TuneView::Parameters, "基板"),
+                (tune::TuneView::File, "設定ファイル"),
+            ] {
+                changed |= ui
+                    .selectable_value(&mut self.tune_view, view, label)
+                    .changed();
             }
-            Screen::Diagnose => {
-                for (view, label) in [
-                    (diagnose::DiagnosisView::Tests, "個別テスト"),
-                    (diagnose::DiagnosisView::Sts, "STS管理"),
-                    (diagnose::DiagnosisView::Connection, "接続・保守"),
-                    (diagnose::DiagnosisView::Log, "通信ログ"),
-                ] {
-                    changed |= ui
-                        .selectable_value(&mut self.diagnosis_view, view, label)
-                        .changed();
-                }
-            }
-            _ => {}
         });
         if changed {
             self.end_test_on_tab_change();

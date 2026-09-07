@@ -68,7 +68,11 @@ impl BridgeApp {
             && !status.emergency
             && !status.sts.busy;
         let mut operation = None;
-        section(ui, "STSサーボ管理", "ID設定・監視・同期移動・シーケンス");
+        section(
+            ui,
+            "STS3215を設定・動作確認",
+            "IDの確認、保存設定の変更、複数サーボの移動、状態監視を行います。",
+        );
         ui.horizontal_wrapped(|ui| {
             ui.label(&status.sts.message);
             if status.sts.active {
@@ -81,16 +85,14 @@ impl BridgeApp {
                 self.dispatch(Action::Stop);
             }
         });
-        ui.label(
-            "この画面の操作は通常操縦・個別テストと排他です。タブを離れると出力を停止します。",
-        );
+        ui.label("別の診断項目へ移動すると、STS3215への出力を停止します。");
         panel().show(ui, |ui| {
-            ui.heading("接続・内部設定");
+            ui.heading("IDと保存設定を読み書き");
             ui.add_enabled_ui(idle && !status.sts.active, |ui| {
                 ui.horizontal_wrapped(|ui| {
                     ui.label("対象ID"); ui.add(egui::DragValue::new(&mut self.sts_ui.id).range(1..=253));
                     ui.label("探索上限ID"); ui.add(egui::DragValue::new(&mut self.sts_ui.last_id).range(1..=253));
-                    if ui.button("ID探索").clicked() { operation = Some(Operation::Scan { first: 1, last: self.sts_ui.last_id }); }
+                    if ui.button("接続中のIDを探す").clicked() { operation = Some(Operation::Scan { first: 1, last: self.sts_ui.last_id }); }
                 });
                 ui.label(format!("検出ID：{:?}", status.sts.discovered));
                 ui.horizontal_wrapped(|ui| {
@@ -104,17 +106,17 @@ impl BridgeApp {
                         operation = Some(Operation::Configure { id: self.sts_ui.id, address, width, value: self.sts_ui.value, single_servo: self.sts_ui.single });
                     }
                 });
-                ui.checkbox(&mut self.sts_ui.single, "バス上に設定対象の1台だけを接続した");
+                ui.checkbox(&mut self.sts_ui.single, "設定するサーボ1台だけを接続した");
             });
-            ui.label("baudコード：0=1M / 1=500k / 2=250k / 3=128k / 4=115200 / 5=76800 / 6=57600 / 7=38400");
-            ui.label("モード0：絶対位置、1：速度、3：相対ステップ。モード3設定時は角度上下限も0へ変更します。モード0へ戻す際は上下限を設定し直してください。");
-            ui.label(RichText::new("保存設定は再通電後に読取り確認してください。オフセット変更は座標基準が変わります。").color(WARNING));
+            ui.label("通信速度コード：0=1Mbps、1=500kbps、2=250kbps、3=128kbps、4〜7はUART用速度");
+            ui.label("動作モード：0=絶対位置、1=速度、3=現在位置からの相対移動");
+            ui.label(RichText::new("ID・通信速度・動作モード・オフセットはサーボへ保存されます。再通電後に読み直して確認してください。").color(WARNING));
         });
         ui.add_space(10.0);
         panel().show(ui, |ui| {
-            ui.heading("複数台の同期移動");
+            ui.heading("複数のSTS3215を同時に動かす");
             ui.add_enabled_ui(!status.sts.active && !status.sts.busy, |ui| target_editor(ui, &mut self.sts_ui.targets, "move"));
-            ui.label("モードはサーボの保存設定と一致させます。位置は通常0〜4095、角度上下限が両方0の多回転設定では±28672。速度は±1000、相対ステップは±28672カウント。速度モードでは指令値が回転速度になります。");
+            ui.label("各行にID・動作モード・指令値を設定します。動作モードはサーボに保存した設定と一致させてください。");
             let velocity = self.sts_ui.targets.iter().any(|t| t.mode == 1);
             let response = ui.add_enabled(idle || (velocity && status.sts.active), egui::Button::new(if velocity { "押している間だけ速度出力" } else { "同期移動・保持" }));
             let held = velocity && response.is_pointer_button_down_on() && ui.input(|input| input.focused) && !status.ai_active && !status.emergency;
@@ -127,51 +129,98 @@ impl BridgeApp {
         });
         ui.add_space(10.0);
         panel().show(ui, |ui| {
-            ui.heading("シーケンス");
-            ui.label("各ステップを同期送信し、指定時間待って次へ進みます。到達判定ではありません。完了時は出力を解除します。");
+            ui.heading("複数サーボの動作手順を作る");
+            ui.label(
+                "各ステップを送信後、指定時間だけ待って次へ進みます。実際の到達は確認しません。",
+            );
             ui.add_enabled_ui(!status.sts.active && !status.sts.busy, |ui| {
                 let mut remove = None;
                 for (index, step) in self.sts_ui.steps.iter_mut().enumerate() {
                     ui.push_id(index, |ui| {
                         ui.horizontal_wrapped(|ui| {
-                            ui.label(format!("ステップ {}", index+1));
-                            ui.add(egui::DragValue::new(&mut step.wait_ms).range(100..=60000).suffix(" ms待機"));
-                            if ui.button("削除").clicked() { remove = Some(index); }
+                            ui.label(format!("ステップ {}", index + 1));
+                            ui.add(
+                                egui::DragValue::new(&mut step.wait_ms)
+                                    .range(100..=60000)
+                                    .suffix(" ms待機"),
+                            );
+                            if ui.button("削除").clicked() {
+                                remove = Some(index);
+                            }
                         });
                         target_editor(ui, &mut step.targets, "step");
                     });
                 }
-                if let Some(index) = remove { self.sts_ui.steps.remove(index); }
-                if ui.add_enabled(self.sts_ui.steps.len() < 64, egui::Button::new("現在の同期目標をステップ追加")).clicked() {
-                    self.sts_ui.steps.push(Step { wait_ms: 1000, targets: self.sts_ui.targets.clone() });
+                if let Some(index) = remove {
+                    self.sts_ui.steps.remove(index);
+                }
+                if ui
+                    .add_enabled(
+                        self.sts_ui.steps.len() < 64,
+                        egui::Button::new("上の同時移動設定を手順へ追加"),
+                    )
+                    .clicked()
+                {
+                    self.sts_ui.steps.push(Step {
+                        wait_ms: 1000,
+                        targets: self.sts_ui.targets.clone(),
+                    });
                 }
                 ui.horizontal_wrapped(|ui| {
                     ui.text_edit_singleline(&mut self.sts_ui.path);
                     if ui.button("ファイル保存").clicked() {
-                        self.sts_ui.file_message = (|| -> anyhow::Result<()> { let text = toml::to_string_pretty(&Operation::Sequence { steps: self.sts_ui.steps.clone() })?; std::fs::write(&self.sts_ui.path, text)?; Ok(()) })().map(|_| "保存しました".into()).unwrap_or_else(|e| e.to_string());
+                        self.sts_ui.file_message = (|| -> anyhow::Result<()> {
+                            let text = toml::to_string_pretty(&Operation::Sequence {
+                                steps: self.sts_ui.steps.clone(),
+                            })?;
+                            std::fs::write(&self.sts_ui.path, text)?;
+                            Ok(())
+                        })()
+                        .map(|_| "保存しました".into())
+                        .unwrap_or_else(|e| e.to_string());
                     }
                     if ui.button("ファイル読込").clicked() {
-                        self.sts_ui.file_message = (|| -> anyhow::Result<()> { let op: Operation = toml::from_str(&std::fs::read_to_string(&self.sts_ui.path)?)?; let Operation::Sequence { steps } = op else { anyhow::bail!("シーケンス形式ではありません"); }; self.sts_ui.steps = steps; Ok(()) })().map(|_| "読み込みました".into()).unwrap_or_else(|e| e.to_string());
+                        self.sts_ui.file_message = (|| -> anyhow::Result<()> {
+                            let op: Operation =
+                                toml::from_str(&std::fs::read_to_string(&self.sts_ui.path)?)?;
+                            let Operation::Sequence { steps } = op else {
+                                anyhow::bail!("シーケンス形式ではありません");
+                            };
+                            self.sts_ui.steps = steps;
+                            Ok(())
+                        })()
+                        .map(|_| "読み込みました".into())
+                        .unwrap_or_else(|e| e.to_string());
                     }
                 });
                 ui.label(&self.sts_ui.file_message);
-                if ui.add_enabled(idle && !self.sts_ui.steps.is_empty(), egui::Button::new("シーケンス実行")).clicked() { operation = Some(Operation::Sequence { steps: self.sts_ui.steps.clone() }); }
+                if ui
+                    .add_enabled(
+                        idle && !self.sts_ui.steps.is_empty(),
+                        egui::Button::new("この手順を実行"),
+                    )
+                    .clicked()
+                {
+                    operation = Some(Operation::Sequence {
+                        steps: self.sts_ui.steps.clone(),
+                    });
+                }
             });
         });
         ui.add_space(10.0);
         panel().show(ui, |ui| {
-            ui.heading("継続監視");
+            ui.heading("STS3215の状態をグラフで確認");
             ui.horizontal_wrapped(|ui| {
-                if ui.add_enabled(idle, egui::Button::new("同期目標のIDを監視")).clicked() { operation = Some(Operation::Monitor { ids: self.sts_ui.targets.iter().map(|t| t.id).collect() }); }
-                if ui.add_enabled(idle, egui::Button::new("監視終了")).clicked() { operation = Some(Operation::Monitor { ids: vec![] }); }
+                if ui.add_enabled(idle, egui::Button::new("同時移動に登録したIDを監視")).clicked() { operation = Some(Operation::Monitor { ids: self.sts_ui.targets.iter().map(|t| t.id).collect() }); }
+                if ui.add_enabled(idle, egui::Button::new("状態監視を終了")).clicked() { operation = Some(Operation::Monitor { ids: vec![] }); }
                 ui.label("表示ID"); ui.add(egui::DragValue::new(&mut self.sts_ui.id).range(1..=253));
                 egui::ComboBox::from_id_salt("sts-metric").selected_text(METRICS[self.sts_ui.metric]).show_ui(ui, |ui| { for (index, label) in METRICS.iter().enumerate() { ui.selectable_value(&mut self.sts_ui.metric, index, *label); } });
             });
             if let Some(s) = status.sts.samples.iter().rev().find(|s| s.id == self.sts_ui.id) {
-                ui.label(format!("最終受信 {} ms前 · 位置 {} · 速度 {} · 負荷 {} · {:.1} V · {} °C · 電流 {:.1} mA · moving={}", status.sts.elapsed_ms.saturating_sub(s.elapsed_ms), s.position, s.speed, s.load, s.voltage, s.temperature, s.current_ma, s.moving));
+                ui.label(format!("最終受信 {} ms前 · 位置 {} · 速度 {} · 負荷 {} · {:.1} V · {} °C · 電流 {:.1} mA · {}", status.sts.elapsed_ms.saturating_sub(s.elapsed_ms), s.position, s.speed, s.load, s.voltage, s.temperature, s.current_ma, if s.moving { "移動中" } else { "停止中" }));
             }
             plot(ui, &status.sts.samples, self.sts_ui.id, self.sts_ui.metric);
-            ui.label(RichText::new("低周期の状態監視です。電流は6.5 mA/countで換算し、負荷はサーボの報告値を表示します。サンプル時刻を横軸に表示します。").size(12.0).color(MUTED));
+            ui.label(RichText::new("電流はサーボの報告値を6.5 mA/countで換算しています。").size(12.0).color(MUTED));
         });
         if let Some(operation) = operation {
             self.sts_operation(operation);

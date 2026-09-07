@@ -57,8 +57,7 @@ impl Runtime {
                 .collect();
             self.test.peers.insert(board, Instant::now());
             self.shared.update_status(|s| {
-                s.peripherals
-                    .insert(board.into(), format!("状態応答 {data}"));
+                s.peripherals.insert(board.into(), "状態応答を受信".into());
             });
             if self.test.active
                 && let Some((target, _)) = self.test.selected

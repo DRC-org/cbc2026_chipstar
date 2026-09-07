@@ -81,7 +81,7 @@ pub fn parse(line: &str, board: Board) -> Option<InputState> {
 
 pub fn describe(state: &InputState) -> String {
     format!(
-        "INPUT raw={:06b} stable={:06b} DIP={:04b}",
+        "瞬時接点={:06b} 確定接点={:06b} DIP={:04b}",
         state.raw, state.stable, state.dip
     )
 }

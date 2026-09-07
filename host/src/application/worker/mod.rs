@@ -332,7 +332,7 @@ impl Runtime {
                     s.peripherals.insert(
                         "DCMD".into(),
                         format!(
-                            "mode={} enabled={} duty={} result={}",
+                            "動作モード={} 出力={} デューティ={} 結果コード={}",
                             status.mode, status.enabled, status.duty[0], status.result
                         ),
                     );
@@ -341,8 +341,11 @@ impl Runtime {
             if let Some(encoder) = crate::protocol::dcmd::parse_encoder(&line) {
                 self.shared.update_status(|s| {
                     s.peripherals.insert(
-                        "ボーナスENC".into(),
-                        format!("count={} index={}", encoder.count, encoder.index_count),
+                        "ボーナス機構エンコーダ".into(),
+                        format!(
+                            "位置カウント={} 原点通過回数={}",
+                            encoder.count, encoder.index_count
+                        ),
                     );
                 });
             }
@@ -355,8 +358,10 @@ impl Runtime {
                     s.peripherals.insert(
                         format!("STS3215 ID {}", servo.id),
                         format!(
-                            "position={} enabled={} error={}",
-                            servo.position, servo.enabled, servo.error
+                            "位置={} 出力={} エラーコード={}",
+                            servo.position,
+                            if servo.enabled { "有効" } else { "解除" },
+                            servo.error
                         ),
                     );
                 });
@@ -413,8 +418,10 @@ impl Runtime {
                 self.rx = Some(Instant::now());
                 if let Some(contacts) = t.contacts {
                     self.shared.update_status(|s| {
-                        s.peripherals
-                            .insert("cctl 接点".into(), format!("SW1..3 閉={contacts:03b}"));
+                        s.peripherals.insert(
+                            "cctl 接点".into(),
+                            format!("SW1〜SW3（閉=1）={contacts:03b}"),
+                        );
                     });
                 }
                 if self.test.active

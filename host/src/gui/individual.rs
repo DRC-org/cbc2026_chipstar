@@ -64,7 +64,7 @@ impl BridgeApp {
     }
     pub(super) fn individual_test(&mut self, ui: &mut egui::Ui, status: &Status) {
         ui.horizontal_wrapped(|ui| {
-            ui.label("EE単体テスト");
+            ui.label("EEを選択");
             for axis in crate::machine::ee::axes(&self.shared.config().machine) {
                 if ui
                     .add_enabled(
@@ -80,18 +80,25 @@ impl BridgeApp {
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("個別テスト").strong());
+                ui.label(RichText::new("1つの機構を動作確認").strong());
                 if ui.add_enabled(!status.emergency && !status.ai_active,
-                    egui::Button::new(if status.test_mode { "個別テストを終了" } else { "通常操縦を停止してテストに入る" })).clicked() {
+                    egui::Button::new(if status.test_mode { "動作確認を終了" } else { "通常操縦を停止して動作確認を開始" })).clicked() {
                     self.request(Request { flag: Some(!status.test_mode), ..Request::new("test_mode") });
                 }
             });
-            ui.label(RichText::new("センサ・接点は下の受信状態で確認できます。出力は1対象ずつ操作します。").size(12.0).color(MUTED));
+            ui.label(RichText::new("出力できる対象は1つだけです。対象を変えると、それまでの出力を解除します。").size(12.0).color(MUTED));
             if !status.test_mode { return; }
             ui.add_enabled_ui(!status.emergency && !status.ai_active, |ui| {
                 let mut changed = false;
                 ui.horizontal_wrapped(|ui| {
-                    egui::ComboBox::from_id_salt("test-board").selected_text(self.tests.board).show_ui(ui, |ui| {
+                    let board_label = match self.tests.board {
+                        "cctl" => "アームモータ（cctl）",
+                        "pwm" => "PWMサーボ",
+                        "sts" => "STS3215",
+                        "dc" => "DCモータ",
+                        _ => "対象未選択",
+                    };
+                    egui::ComboBox::from_id_salt("test-board").selected_text(board_label).show_ui(ui, |ui| {
                         for (key, label) in [("cctl", "cctl モータ"), ("pwm", "PWMサーボ"), ("sts", "STS3215"), ("dc", "DCモータ")] {
                             if ui.selectable_value(&mut self.tests.board, key, label).changed() {
                                 self.tests.id = if key == "sts" { 1 } else { 0 };
@@ -101,12 +108,12 @@ impl BridgeApp {
                             }
                         }
                     });
-                    ui.label("チャネル / ID");
+                    ui.label("モータ番号 / ID");
                     let range = match self.tests.board { "cctl" => 0..=2, "pwm" => 0..=3, "sts" => 1..=253, _ => 0..=0 };
                     changed |= ui.add(egui::DragValue::new(&mut self.tests.id).range(range)).changed();
                     if self.tests.board == "cctl" {
-                        changed |= ui.selectable_value(&mut self.tests.kind, Kind::Velocity, "速度").changed();
-                        changed |= ui.selectable_value(&mut self.tests.kind, Kind::Position, "位置").changed();
+                        changed |= ui.selectable_value(&mut self.tests.kind, Kind::Velocity, "速度を確認").changed();
+                        changed |= ui.selectable_value(&mut self.tests.kind, Kind::Position, "位置を確認").changed();
                     }
                 });
                 let key = format!("{}:{}", self.tests.board, self.tests.id);
