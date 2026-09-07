@@ -143,6 +143,21 @@ slotが`feedback_timeout_ms`を超えて応答しないと、FWはそのslotを�
 このbitを立てる。hostとの通信が生きていてもモータ側のCANが抜けたことを検出する
 ための経路で、復帰にはhostからの再有効化を要する。
 
+### C620のID検出とJOG拒否の診断
+
+FDCAN1で受信した標準ID `0x201..0x208` の8バイトフレームを観測し、
+1秒ごとに `C620_SCAN mask=1 configured_id=1` を送信する。
+maskのbit0..7がESC ID 1..8に対応し、直近500ms以内に応答したIDだけを含む。
+IDの自動変更や駆動は行わない。hostの診断画面の受信状態に検出IDを表示する。
+
+併せて `CANSTAT bus=1` を送る。`lec=3` はACKエラーで、送信に対する
+応答が得られていないことを示す。C620が1台も検出されない場合は、
+ID変更より先に電源、FDCAN1（J2）の配線、CAN H/L、終端を確認する。
+
+JOG拒否は `ERR code=JOG_REJECTED slot=1 mode=2 enabled=0 stale=2` のように返す。
+modeは0=SAFE、1=RUN、2=STOP、enabledとstaleはslotごとのbit mask。
+拒否時にはhostが出力を停止する。設定照合が完了していれば、その結果は維持する。
+
 ### EL05の読取り診断
 
 CCTLは250msごとに1項目、12項目を約3秒で巡回してEL05の実設定と状態を読み出す。
