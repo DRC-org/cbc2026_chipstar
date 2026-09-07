@@ -46,6 +46,10 @@ class ActuatorController {
   void flushParameters();
 
   // DMドライバのレジスタ。SAFE中だけ受理する。
+  bool takeEl05ParameterReply(uint16_t& index, uint32_t& raw) {
+    return slot0_.takeParamReply(index, raw);
+  }
+  uint8_t el05State() const { return slot0_.state(); }
   bool readDmRegister(uint8_t rid);
   bool writeDmRegister(uint8_t rid, uint32_t raw);
   bool takeDmRegisterReply(uint8_t& rid, uint32_t& raw);
@@ -82,4 +86,6 @@ class ActuatorController {
   uint32_t last_m3508_ms_ = 0;
   uint32_t last_dm_ms_ = 0;
   uint32_t last_el05_ms_ = 0;
+  uint32_t last_el05_diagnostic_ms_ = 0;
+  uint8_t el05_diagnostic_index_ = 0;
 };

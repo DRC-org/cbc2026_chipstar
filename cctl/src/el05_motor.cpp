@@ -1,4 +1,5 @@
 #include "el05_motor.hpp"
+#include <cstring>
 
 namespace {
 namespace codec = domain::el05;
@@ -76,12 +77,15 @@ bool El05Motor::onFeedback(uint32_t ext_id, const uint8_t data[8]) {
       return true;
     }
     case codec::comm::READ_PARAM: {
-      // 応答の ID にはホスト側の CAN_ID が載る。マニュアルの記載が
-      // フィードバックほど明確でないため、種別だけで受ける。
+      if (codec::targetId(ext_id) != host_id_ ||
+          static_cast<uint8_t>(codec::dataArea2(ext_id)) != motor_id_ ||
+          ((ext_id >> 16) & 0xFF) != 0) return false;
       has_param_reply_ = true;
       last_param_index_ = codec::paramReplyIndex(data);
       last_param_value_ = codec::paramReplyFloat(data);
-      return true;
+      std::memcpy(&last_param_raw_, &data[4], sizeof(last_param_raw_));
+      // 設定応答だけでは位置フィードバックの鮮度を更新しない。
+      return false;
     }
     default:
       return false;

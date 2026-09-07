@@ -53,9 +53,17 @@ class El05Motor {
   float velocity() const { return feedback_.velocity_rad_s; }
   float torque() const { return feedback_.torque_nm; }
   float temperature() const { return feedback_.temperature_c; }
+  uint8_t state() const { return feedback_.state; }
   uint8_t faultBits() const { return feedback_.fault_bits; }
 
   // 直近に届いたパラメータ応答。バス電圧などを実機から読むのに使う。
+  bool takeParamReply(uint16_t& index, uint32_t& raw) {
+    if (!has_param_reply_) return false;
+    has_param_reply_ = false;
+    index = last_param_index_;
+    raw = last_param_raw_;
+    return true;
+  }
   bool hasParamReply() const { return has_param_reply_; }
   uint16_t lastParamIndex() const { return last_param_index_; }
   float lastParamFloat() const { return last_param_value_; }
@@ -72,4 +80,5 @@ class El05Motor {
   bool has_param_reply_ = false;
   uint16_t last_param_index_ = 0;
   float last_param_value_ = 0.0f;
+  uint32_t last_param_raw_ = 0;
 };

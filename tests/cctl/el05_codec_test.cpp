@@ -122,3 +122,12 @@ TEST_CASE("運転モードの値はマニュアルどおり") {
     CHECK(static_cast<uint8_t>(RunMode::Current) == 3);
     CHECK(static_cast<uint8_t>(RunMode::PositionCsp) == 5);
 }
+
+TEST_CASE("EL05の運転状態と異常ビットを分離して読む") {
+    const uint8_t data[8] = {};
+    const auto id = buildCanId(comm::FEEDBACK, 0x897F, 0xFD);
+    const auto feedback = decodeFeedback(id, data);
+    CHECK(feedback.state == 2);
+    CHECK(feedback.fault_bits == 9);
+    CHECK(feedback.motor_id == 0x7F);
+}

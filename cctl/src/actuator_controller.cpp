@@ -285,6 +285,19 @@ void ActuatorController::update() {
     last_dm_ms_ = now;
     slot2_.sendPositionVelocity(targets_[2], parameters_.get(domain::ParamId::DmPosVelLimit));
   }
+  // 読取り専用の診断。モータのモード・目標・出力状態は変更しない。
+  if (now - last_el05_diagnostic_ms_ >= 250) {
+    last_el05_diagnostic_ms_ = now;
+    namespace p = domain::el05::param;
+    static constexpr uint16_t indices[] = {
+        p::RUN_MODE, p::LIMIT_SPD, p::LIMIT_CUR, p::LOC_KP,
+        p::LOC_REF, p::MECH_POS, p::MECH_VEL, p::IQF, p::VBUS,
+        p::SPD_KP, p::SPD_KI, p::LIMIT_TORQUE,
+    };
+    slot0_.requestParam(indices[el05_diagnostic_index_]);
+    el05_diagnostic_index_ = (el05_diagnostic_index_ + 1) %
+                             (sizeof(indices) / sizeof(indices[0]));
+  }
   if (now - last_el05_ms_ >= parameters_.getMs(domain::ParamId::El05PeriodMs)) {
     last_el05_ms_ = now;
     slot0_.setLocRef(targets_[0]);

@@ -328,6 +328,18 @@ extern "C" void loop(void) {
                                            controller.errorBits(2)));
     }
 
+    uint16_t el05_index = 0;
+    uint32_t el05_raw = 0;
+    if (controller.takeEl05ParameterReply(el05_index, el05_raw)) {
+        char text[96];
+        std::snprintf(text, sizeof(text),
+                      "EL05_PARAM index=%04X raw=%08lX state=%u fault=%u",
+                      static_cast<unsigned>(el05_index), static_cast<unsigned long>(el05_raw),
+                      static_cast<unsigned>(controller.el05State()),
+                      static_cast<unsigned>(controller.errorBits(0)));
+        sendText(text);
+    }
+
     // DMのレジスタ応答は非同期に届く。届いた時点で1行返す。
     uint8_t reg_id = 0;
     uint32_t reg_raw = 0;

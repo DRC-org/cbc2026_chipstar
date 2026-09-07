@@ -37,6 +37,7 @@ Feedback decodeFeedback(uint32_t ext_id, const uint8_t data[8]) {
     Feedback feedback;
     // フィードバックの data_area_2 には下位 8bit にモータID、上位に状態が載る。
     feedback.motor_id = static_cast<uint8_t>((ext_id >> 8) & 0xFF);
+    feedback.state = static_cast<uint8_t>((ext_id >> 22) & 0x03);
     feedback.fault_bits = static_cast<uint8_t>((ext_id >> 16) & 0x3F);
 
     const uint16_t pos_raw = (static_cast<uint16_t>(data[0]) << 8) | data[1];

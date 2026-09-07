@@ -67,6 +67,7 @@ constexpr float TORQUE_MAX = 6.0f;
 struct Feedback {
     uint8_t motor_id = 0;
     uint8_t fault_bits = 0;
+    uint8_t state = 0;  // feedback bit23..22: 0=reset, 1=calibration, 2=running
     float position_rad = 0.0f;
     float velocity_rad_s = 0.0f;
     float torque_nm = 0.0f;
