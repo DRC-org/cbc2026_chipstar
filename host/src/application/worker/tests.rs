@@ -251,3 +251,89 @@ fn save_as_changes_the_active_path_only_after_success() {
     assert_eq!(runtime.shared.config().profile_path, path);
     std::fs::remove_dir_all(directory).unwrap();
 }
+
+#[test]
+fn emergency_revokes_ai_and_requires_human_reset_without_resuming() {
+    let mut runtime = screen_runtime();
+    let token = runtime
+        .request(&Request::new("claim"), false)
+        .unwrap()
+        .token
+        .unwrap();
+    runtime
+        .request(
+            &Request {
+                token: Some(token.clone()),
+                ..Request::new("run")
+            },
+            false,
+        )
+        .unwrap();
+    runtime.tick().unwrap();
+    runtime.request(&Request::new("estop"), false).unwrap();
+    runtime.tick().unwrap();
+    assert!(runtime.emergency);
+    assert!(!runtime.authority.active());
+    assert!(!runtime.drive.running());
+    assert!(runtime.request(&Request::new("claim"), false).is_err());
+    assert!(runtime.start().is_err());
+    assert!(
+        runtime
+            .request(&Request::new("estop_reset"), false)
+            .is_err()
+    );
+    assert!(
+        runtime
+            .machine
+            .origin_states(runtime.telemetry.as_ref())
+            .iter()
+            .all(|o| o.captured)
+    );
+    let logs = runtime.shared.status_snapshot().logs;
+    for line in [
+        "TX STOP",
+        "TX CAN 2 768 0100000000000000",
+        "TX CAN 2 784 0103000000000000",
+        "TX CAN 2 800 0103000000000000",
+    ] {
+        assert!(logs.iter().any(|logged| logged == line), "missing {line}");
+    }
+    runtime.request(&Request::new("estop_reset"), true).unwrap();
+    runtime.tick().unwrap();
+    assert!(!runtime.emergency);
+    assert!(!runtime.drive.running());
+    assert_eq!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Stop);
+    assert!(
+        runtime
+            .request(
+                &Request {
+                    token: Some(token),
+                    ..Request::new("run")
+                },
+                false
+            )
+            .is_err()
+    );
+    runtime.start().unwrap();
+}
+
+#[test]
+fn output_cut_preserves_origins_but_disconnect_invalidates_them() {
+    let mut runtime = screen_runtime();
+    runtime.request(&Request::new("cut"), true).unwrap();
+    assert!(
+        runtime
+            .machine
+            .origin_states(runtime.telemetry.as_ref())
+            .iter()
+            .all(|o| o.captured)
+    );
+    runtime.fault("test disconnect".into());
+    assert!(
+        runtime
+            .machine
+            .origin_states(runtime.telemetry.as_ref())
+            .iter()
+            .all(|o| !o.captured)
+    );
+}

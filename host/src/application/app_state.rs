@@ -36,6 +36,9 @@ pub struct BridgeConfig {
 
 #[derive(Clone, Default, Serialize)]
 pub struct Status {
+    pub emergency: bool,
+    pub outputs_active: bool,
+    pub operating_state: String,
     pub simulated: bool,
     pub screen_control: bool,
     pub connected: bool,
@@ -72,6 +75,7 @@ pub struct Shared {
     status: Mutex<Status>,
     pending: Mutex<VecDeque<Pending>>,
     alive: AtomicBool,
+    emergency_pending: AtomicBool,
 }
 impl Shared {
     pub fn new(config: BridgeConfig) -> Self {
@@ -85,6 +89,7 @@ impl Shared {
             config: Mutex::new(config),
             pending: Mutex::new(VecDeque::new()),
             alive: AtomicBool::new(true),
+            emergency_pending: AtomicBool::new(false),
         }
     }
     pub fn config(&self) -> BridgeConfig {
@@ -113,6 +118,9 @@ impl Shared {
     pub fn request_stop(&self) {
         self.alive.store(false, Ordering::Release);
     }
+    pub fn take_emergency(&self) -> bool {
+        self.emergency_pending.swap(false, Ordering::AcqRel)
+    }
     pub fn take_requests(&self) -> Vec<Pending> {
         self.pending.lock().unwrap().drain(..).collect()
     }
@@ -128,12 +136,15 @@ impl Shared {
             }
             _ => {}
         }
+        if request.action == "estop" {
+            self.emergency_pending.store(true, Ordering::Release);
+        }
         let (tx, rx) = mpsc::channel();
         {
             let mut queue = self.pending.lock().unwrap();
-            if request.action == "stop" {
+            if matches!(request.action.as_str(), "stop" | "estop") {
                 for item in queue.drain(..) {
-                    let _ = item.reply.send(Reply::error("STOPにより取消"));
+                    let _ = item.reply.send(Reply::error("停止要求により取消"));
                 }
                 queue.push_front(Pending {
                     request,

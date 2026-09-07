@@ -2,6 +2,31 @@ use super::*;
 
 impl Runtime {
     pub(super) fn request(&mut self, req: &Request, manual: bool) -> Result<Reply> {
+        if req.action == "estop" {
+            self.engage_emergency()?;
+            return Ok(Reply::accepted());
+        }
+        if req.action == "estop_reset" {
+            if !manual {
+                bail!("緊停解除は人間がGUIから行ってください");
+            }
+            if !self.emergency {
+                bail!("ソフト緊停は解除済みです");
+            }
+            self.stop(true)?;
+            self.emergency = false;
+            return Ok(Reply::data(
+                "緊停を解除しました。出力停止を維持しています".into(),
+            ));
+        }
+        if self.emergency
+            && !matches!(
+                req.action.as_str(),
+                "stop" | "cut" | "safe" | "fault" | "connection"
+            )
+        {
+            bail!("ソフト緊停中です。人間が解除するまで操作できません");
+        }
         if req.action == "claim" {
             if manual || self.authority.active() {
                 bail!("操作権は使用中です");
@@ -52,10 +77,7 @@ impl Runtime {
             }
             "run" => self.start()?,
             "stop" => self.stop(false)?,
-            "cut" => {
-                self.stop(true)?;
-                self.machine.invalidate_origins();
-            }
+            "cut" => self.stop(true)?,
             "safe" => {
                 self.stop(true)?;
                 self.send("SAFE")?;

@@ -50,6 +50,7 @@ struct Runtime {
     setup: bool,
     setup_error: bool,
     drive: DriveState,
+    emergency: bool,
     authority: Authority,
     manual_input: ControllerState,
     screen_control: bool,
@@ -77,6 +78,7 @@ impl Runtime {
             setup: false,
             setup_error: false,
             drive: DriveState::Stopped,
+            emergency: false,
             authority: Authority::default(),
             manual_input: ControllerState::default(),
             gamepad_name: String::new(),
@@ -109,8 +111,9 @@ impl Runtime {
             let _ = self.send("STOP");
             let _ = self.stop_peripherals();
         } else if cut {
-            self.send("STOP")?;
-            self.stop_peripherals()?;
+            let main = self.send("STOP");
+            let peripherals = self.stop_peripherals();
+            main.and(peripherals)?;
         } else if self
             .telemetry
             .as_ref()
@@ -129,16 +132,23 @@ impl Runtime {
         Ok(())
     }
     fn stop_peripherals(&mut self) -> Result<()> {
-        if !self.cfg.machine.pwm_servos.is_empty() {
-            self.send(&crate::protocol::svmd::Command::Stop.to_cctl_line())?;
+        // 機体設定に未登録の個別テスト対象も停止する。1基板の送信失敗で残りを省略しない。
+        let mut result = Ok(());
+        for line in [
+            crate::protocol::svmd::Command::Stop.to_cctl_line(),
+            crate::protocol::dcmd::line(3, 0, 0),
+            crate::protocol::serial_svmd::Command::Stop.to_cctl_line(),
+        ] {
+            if let Err(error) = self.send(&line) {
+                result = Err(error);
+            }
         }
-        if !self.cfg.machine.dc_motors.is_empty() {
-            self.send(&crate::protocol::dcmd::line(3, 0, 0))?;
-        }
-        if self.cfg.machine.requires_serial_svmd() {
-            self.send(&crate::protocol::serial_svmd::Command::Stop.to_cctl_line())?;
-        }
-        Ok(())
+        result
+    }
+    fn engage_emergency(&mut self) -> Result<()> {
+        self.emergency = true;
+        self.authority.release();
+        self.stop(true)
     }
     fn fault(&mut self, reason: String) {
         let _ = self.stop(true);
@@ -192,6 +202,9 @@ impl Runtime {
         Ok(())
     }
     fn start(&mut self) -> Result<()> {
+        if self.emergency {
+            bail!("ソフト緊停中です");
+        }
         self.ready()?;
         let input = self.authority.input().unwrap_or(&self.manual_input);
         if input.axes.iter().any(|v| !v.is_finite() || v.abs() >= 0.1) {
@@ -395,6 +408,9 @@ impl Runtime {
                 }
             }
         }
+        if self.emergency {
+            self.stop(true)?;
+        }
         if self.fresh() {
             self.send("HEARTBEAT")?;
             if !self.cfg.machine.pwm_servos.is_empty() {
@@ -412,6 +428,26 @@ impl Runtime {
     fn publish(&self) {
         let origins = self.machine.origin_states(self.telemetry.as_ref());
         self.shared.update_status(|s| {
+            s.emergency = self.emergency;
+            s.outputs_active = self.drive.awaiting().is_some()
+                || self
+                    .telemetry
+                    .as_ref()
+                    .is_some_and(|t| t.mode == RunMode::Run && t.enabled_slots != 0);
+            s.operating_state = if self.emergency {
+                "ソフト緊停中"
+            } else if !self.fresh() {
+                "接続断 / 状態不明"
+            } else if self.drive.running() {
+                "運転中"
+            } else if self.drive.awaiting().is_some() {
+                "運転応答待ち"
+            } else if s.outputs_active {
+                "停止・保持"
+            } else {
+                "出力停止"
+            }
+            .into();
             s.simulated = self.cfg.simulate;
             s.screen_control = self.screen_control;
             s.connected = self.fresh();
@@ -464,6 +500,9 @@ pub fn run(shared: Arc<Shared>) {
     let mut previous_buttons = [0u8; 17];
     while shared.is_running() {
         let cycle = Instant::now();
+        if shared.take_emergency() {
+            let _ = runtime.engage_emergency();
+        }
         if let Some(gilrs) = gilrs.as_mut() {
             while let Some(event) = gilrs.next_event() {
                 gilrs.update(&event);
@@ -519,7 +558,16 @@ pub fn run(shared: Arc<Shared>) {
                 }
             }
         }
+        let mut cancelled = false;
         for pending in shared.take_requests() {
+            if shared.take_emergency() {
+                let _ = runtime.engage_emergency();
+                cancelled = true;
+            }
+            if cancelled && pending.request.action != "estop" {
+                let _ = pending.reply.send(Reply::error("緊停により取消"));
+                continue;
+            }
             if Instant::now() > pending.deadline {
                 let _ = pending.reply.send(Reply::error("要求の実行期限切れ"));
                 continue;
