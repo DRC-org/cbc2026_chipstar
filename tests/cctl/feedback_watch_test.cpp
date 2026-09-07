@@ -62,3 +62,29 @@ TEST_CASE("タイマの周回をまたいでも判定できる") {
     CHECK(watch.update(UINT32_MAX - 10, 0b001, 200) == 0);
     CHECK(watch.update(150, 0b001, 200) == 0b001);
 }
+
+TEST_CASE("応答切れによる出力解除後も原因を保持し実受信で解除する") {
+    FeedbackWatch watch;
+    watch.reset(0);
+    CHECK(watch.update(201, 1, 200) == 1);
+    CHECK(watch.update(202, 0, 200) == 0);
+    CHECK(watch.stale() == 1);
+    CHECK(watch.update(1000, 0, 200) == 0);
+    CHECK(watch.stale() == 1);
+    watch.markSeen(0, 1001);
+    CHECK(watch.update(1002, 0, 200) == 0);
+    CHECK(watch.stale() == 0);
+}
+
+TEST_CASE("再有効化だけでは途絶履歴を消さず再度の期限切れでも出力を落とす") {
+    FeedbackWatch watch;
+    watch.reset(0);
+    CHECK(watch.update(201, 1, 200) == 1);
+    watch.update(1000, 0, 200);
+    CHECK(watch.update(1001, 1, 200) == 0);
+    CHECK(watch.stale() == 1);
+    CHECK(watch.update(1201, 1, 200) == 1);
+    CHECK(watch.stale() == 1);
+    watch.markSeen(0, 1202);
+    CHECK(watch.stale() == 0);
+}

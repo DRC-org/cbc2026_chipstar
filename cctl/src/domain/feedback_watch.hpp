@@ -19,10 +19,15 @@ class FeedbackWatch {
     void reset(uint32_t now) {
         for (auto& stamp : last_) stamp = now;
         stale_ = 0;
+        reported_ = 0;
     }
 
     void markSeen(uint8_t slot, uint32_t now) {
-        if (slot < SLOT_COUNT) last_[slot] = now;
+        if (slot < SLOT_COUNT) {
+            last_[slot] = now;
+            stale_ = static_cast<uint8_t>(stale_ & ~(1U << slot));
+            reported_ = static_cast<uint8_t>(reported_ & ~(1U << slot));
+        }
     }
 
     // active は指令を送っているslotのbit mask。
@@ -32,16 +37,17 @@ class FeedbackWatch {
         for (uint8_t slot = 0; slot < SLOT_COUNT; ++slot) {
             const uint8_t bit = static_cast<uint8_t>(1U << slot);
             if ((active & bit) == 0) {
-                stale_ = static_cast<uint8_t>(stale_ & ~bit);
+                // 出力解除で停止原因を消さない。実際の応答が戻ればmarkSeenで解除する。
+                reported_ = static_cast<uint8_t>(reported_ & ~bit);
                 last_[slot] = now;
                 continue;
             }
             if (now - last_[slot] <= limit_ms) {
-                stale_ = static_cast<uint8_t>(stale_ & ~bit);
                 continue;
             }
-            if ((stale_ & bit) == 0) dropped = static_cast<uint8_t>(dropped | bit);
+            if ((reported_ & bit) == 0) dropped = static_cast<uint8_t>(dropped | bit);
             stale_ = static_cast<uint8_t>(stale_ | bit);
+            reported_ = static_cast<uint8_t>(reported_ | bit);
         }
         return dropped;
     }
@@ -51,6 +57,7 @@ class FeedbackWatch {
  private:
     uint32_t last_[SLOT_COUNT] = {};
     uint8_t stale_ = 0;
+    uint8_t reported_ = 0;
 };
 
 }  // namespace domain
