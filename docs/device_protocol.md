@@ -160,8 +160,11 @@ cctl以外の基板はRAMだけに保持し、電源投入で既定値へ戻る�
 ```text
 PARAM 4 0.70000
 PARAM 4
-PARAM 4 0.700
+PARAM 4 0.70000
 ```
+
+PARAMの応答値は小数5桁で返す。例えば速度ゲイン `0.0005` は `PARAM 5 0.00050`
+となる。STATEの位置表示（小数3桁）とは精度が異なる。
 
 `ERR code=OUT_OF_RANGE` は範囲外か未定義のid、`ERR code=BUSY` はRUN中に
 通信IDを変えようとした場合に返る。
