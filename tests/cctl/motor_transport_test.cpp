@@ -11,6 +11,8 @@ std::vector<domain::CanFrame> accepted;
 uint32_t tick=0, queued=0;
 bool stuck=false, fail_enqueue=false, fail_cancel=false;
 uint32_t fail_identifier=0xFFFFFFFF, cancel_calls=0;
+uint32_t last_event_control=0;
+FDCAN_TxEventFifoTypeDef completion_event{};
 void resetBus() { registers={}; accepted.clear(); tick=queued=0; stuck=fail_enqueue=fail_cancel=false;fail_identifier=0xFFFFFFFF;cancel_calls=0; }
 }
 uint32_t HAL_GetTick() { return tick++; }
@@ -23,6 +25,7 @@ uint32_t HAL_FDCAN_GetTxFifoFreeLevel(FDCAN_HandleTypeDef*) {
  return 3-queued;
 }
 int HAL_FDCAN_AddMessageToTxFifoQ(FDCAN_HandleTypeDef*,const FDCAN_TxHeaderTypeDef* header,const uint8_t* data) {
+ last_event_control=header->TxEventFifoControl;
  if(fail_enqueue||queued==3||header->Identifier==fail_identifier) return HAL_ERROR;
  domain::CanFrame frame;frame.id=header->Identifier;frame.extended=header->IdType==FDCAN_EXTENDED_ID;
  frame.length=header->DataLength;std::memcpy(frame.data,data,frame.length);accepted.push_back(frame);
@@ -137,4 +140,29 @@ TEST_CASE("同じRUNの再要求ではEnableを再送しない") {
  accepted.clear();CHECK(controller.setMode(domain::RunMode::Run));CHECK(accepted.empty());
 }
 
-int HAL_FDCAN_GetTxEvent(FDCAN_HandleTypeDef*, FDCAN_TxEventFifoTypeDef*) { return HAL_ERROR; }
+int HAL_FDCAN_GetTxEvent(FDCAN_HandleTypeDef*, FDCAN_TxEventFifoTypeDef* event) {
+  if (!registers.TXEFS) return HAL_ERROR;
+  *event = completion_event;
+  registers.TXEFS = 0;
+  return HAL_OK;
+}
+
+TEST_CASE("識別要求の受付とCAN送信完了を区別する") {
+  resetBus();
+  CanBus bus(&handle);
+  uint8_t data[8] = {};
+  REQUIRE(bus.sendExt(0xFD7F, data, 8, true));
+  CHECK(last_event_control == FDCAN_STORE_TX_EVENTS);
+  uint32_t id = 0;
+  bool extended = false;
+  CHECK_FALSE(bus.receiveTxCompletion(id, extended));
+  completion_event.Identifier = 0xFD7F;
+  completion_event.IdType = FDCAN_EXTENDED_ID;
+  registers.TXEFS = 1;
+  REQUIRE(bus.receiveTxCompletion(id, extended));
+  CHECK(id == 0xFD7F);
+  CHECK(extended);
+  CHECK_FALSE(bus.receiveTxCompletion(id, extended));
+  REQUIRE(bus.sendStd(0x200, data, 8));
+  CHECK(last_event_control == FDCAN_NO_TX_EVENTS);
+}
