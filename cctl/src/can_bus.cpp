@@ -42,7 +42,7 @@ bool CanBus::discardPending() {
   return true;
 }
 
-bool CanBus::send(uint32_t id, uint32_t id_type, const uint8_t* data, uint8_t len) {
+bool CanBus::send(uint32_t id, uint32_t id_type, const uint8_t* data, uint8_t len, bool track) {
   FDCAN_TxHeaderTypeDef tx_header = {};
   tx_header.Identifier = id;
   tx_header.IdType = id_type;
@@ -51,7 +51,7 @@ bool CanBus::send(uint32_t id, uint32_t id_type, const uint8_t* data, uint8_t le
   tx_header.ErrorStateIndicator = FDCAN_ESI_ACTIVE;
   tx_header.BitRateSwitch = FDCAN_BRS_OFF;
   tx_header.FDFormat = FDCAN_CLASSIC_CAN;
-  tx_header.TxEventFifoControl = FDCAN_NO_TX_EVENTS;
+  tx_header.TxEventFifoControl = track ? FDCAN_STORE_TX_EVENTS : FDCAN_NO_TX_EVENTS;
   tx_header.MessageMarker = 0;
 
   // 同時に複数モータへ指令すると3要素のFIFOが埋まる。待機は最大2ms。
@@ -69,12 +69,21 @@ bool CanBus::send(uint32_t id, uint32_t id_type, const uint8_t* data, uint8_t le
   return true;
 }
 
-bool CanBus::sendStd(uint16_t id, const uint8_t* data, uint8_t len) {
-  return send(id, FDCAN_STANDARD_ID, data, len);
+bool CanBus::sendStd(uint16_t id, const uint8_t* data, uint8_t len, bool track) {
+  return send(id, FDCAN_STANDARD_ID, data, len, track);
 }
 
-bool CanBus::sendExt(uint32_t id, const uint8_t* data, uint8_t len) {
-  return send(id, FDCAN_EXTENDED_ID, data, len);
+bool CanBus::sendExt(uint32_t id, const uint8_t* data, uint8_t len, bool track) {
+  return send(id, FDCAN_EXTENDED_ID, data, len, track);
+}
+
+bool CanBus::receiveTxCompletion(uint32_t& id, bool& extended) {
+  if ((hcan_->Instance->TXEFS & FDCAN_TXEFS_EFFL) == 0) return false;
+  FDCAN_TxEventFifoTypeDef event{};
+  if (HAL_FDCAN_GetTxEvent(hcan_, &event) != HAL_OK) return false;
+  id = event.Identifier;
+  extended = event.IdType == FDCAN_EXTENDED_ID;
+  return true;
 }
 
 bool CanBus::receive(domain::CanFrame& frame) {

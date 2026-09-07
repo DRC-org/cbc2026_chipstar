@@ -33,15 +33,18 @@ class CanBus {
   }
 
   // 標準ID(11bit) データフレーム送信（最大8byte）。
-  bool sendStd(uint16_t id, const uint8_t* data, uint8_t len);
+  bool sendStd(uint16_t id, const uint8_t* data, uint8_t len, bool track = false);
   // 拡張ID(29bit) データフレーム送信（最大8byte）。
-  bool sendExt(uint32_t id, const uint8_t* data, uint8_t len);
+  bool sendExt(uint32_t id, const uint8_t* data, uint8_t len, bool track = false);
+
+  // track指定で送ったフレームの送信完了IDを取り出す。相手機器の応答ではない。
+  bool receiveTxCompletion(uint32_t& id, bool& extended);
 
   // FIFO0 に受信があれば 1 フレーム取り出して true を返す。
   bool receive(domain::CanFrame& frame);
 
  private:
-  bool send(uint32_t id, uint32_t id_type, const uint8_t* data, uint8_t len);
+  bool send(uint32_t id, uint32_t id_type, const uint8_t* data, uint8_t len, bool track);
 
   FDCAN_HandleTypeDef* hcan_;
   uint32_t tx_failures_ = 0;

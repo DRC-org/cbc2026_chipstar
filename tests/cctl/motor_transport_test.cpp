@@ -136,3 +136,5 @@ TEST_CASE("同じRUNの再要求ではEnableを再送しない") {
  REQUIRE(controller.setSlotsEnabled(5,true));REQUIRE(controller.setMode(domain::RunMode::Run));
  accepted.clear();CHECK(controller.setMode(domain::RunMode::Run));CHECK(accepted.empty());
 }
+
+int HAL_FDCAN_GetTxEvent(FDCAN_HandleTypeDef*, FDCAN_TxEventFifoTypeDef*) { return HAL_ERROR; }

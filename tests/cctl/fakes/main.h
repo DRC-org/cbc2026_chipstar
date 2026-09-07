@@ -1,6 +1,6 @@
 #pragma once
 #include <cstdint>
-struct FDCAN_Registers { uint32_t PSR=0, ECR=0, CCCR=0, TXBRP=0; };
+struct FDCAN_Registers { uint32_t PSR=0, ECR=0, CCCR=0, TXBRP=0, TXEFS=0; };
 struct FDCAN_HandleTypeDef { FDCAN_Registers* Instance; };
 struct FDCAN_TxHeaderTypeDef {
  uint32_t Identifier=0,IdType=0,TxFrameType=0,DataLength=0,ErrorStateIndicator=0;
@@ -24,3 +24,7 @@ int HAL_FDCAN_AddMessageToTxFifoQ(FDCAN_HandleTypeDef*,const FDCAN_TxHeaderTypeD
 int HAL_FDCAN_AbortTxRequest(FDCAN_HandleTypeDef*,uint32_t);
 uint32_t HAL_FDCAN_GetRxFifoFillLevel(FDCAN_HandleTypeDef*,uint32_t);
 int HAL_FDCAN_GetRxMessage(FDCAN_HandleTypeDef*,uint32_t,FDCAN_RxHeaderTypeDef*,uint8_t*);
+
+struct FDCAN_TxEventFifoTypeDef { uint32_t Identifier=0, IdType=0; };
+constexpr uint32_t FDCAN_STORE_TX_EVENTS=1, FDCAN_TXEFS_EFFL=7;
+int HAL_FDCAN_GetTxEvent(FDCAN_HandleTypeDef*, FDCAN_TxEventFifoTypeDef*);

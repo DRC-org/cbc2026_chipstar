@@ -43,6 +43,8 @@ domain::DigitalInputs inputs(7);
 domain::c620::Discovery c620_discovery;
 domain::MotorDiscovery motor_discovery;
 uint32_t motor_scan_tx_failed = 0;
+uint32_t motor_scan_el05_completed = 0;
+uint32_t motor_scan_dm_completed = 0;
 uint32_t motor_standard_count = 0;
 uint32_t motor_extended_count = 0;
 uint32_t motor_last_standard = 0;
@@ -321,6 +323,12 @@ extern "C" void setup(void) {
 
 extern "C" void loop(void) {
     sampleInputs();
+    uint32_t completed_id = 0;
+    bool completed_extended = false;
+    while (motor_bus.receiveTxCompletion(completed_id, completed_extended)) {
+        if (completed_extended) ++motor_scan_el05_completed;
+        else if (completed_id == domain::dm::CONFIG_ID) ++motor_scan_dm_completed;
+    }
     domain::CanFrame frame;
     while (motor_bus.receive(frame)) {
         if (!frame.extended && frame.length == 8) c620_discovery.observe(frame.id, HAL_GetTick());
@@ -369,8 +377,8 @@ extern "C" void loop(void) {
     if (motor_discovery.next(now, controller.mode() != domain::RunMode::Run,
             controller.parameters().getU8(domain::ParamId::El05HostId), query)) {
         const bool sent = query.extended
-            ? motor_bus.sendExt(query.id, query.data, query.length)
-            : motor_bus.sendStd(static_cast<uint16_t>(query.id), query.data, query.length);
+            ? motor_bus.sendExt(query.id, query.data, query.length, true)
+            : motor_bus.sendStd(static_cast<uint16_t>(query.id), query.data, query.length, true);
         if (!sent) ++motor_scan_tx_failed;
     }
     controller.flushParameters();
@@ -422,6 +430,11 @@ extern "C" void loop(void) {
             motor_discovery.cancelled() ? 1U : 0U,
             static_cast<unsigned long>(motor_scan_tx_failed));
         sendText(rx_text);
+        char scan_text[96];
+        std::snprintf(scan_text, sizeof(scan_text), "MOTOR_SCAN_TX el05_done=%lu dm_done=%lu",
+            static_cast<unsigned long>(motor_scan_el05_completed),
+            static_cast<unsigned long>(motor_scan_dm_completed));
+        sendText(scan_text);
     }
 
     uint16_t el05_index = 0;
