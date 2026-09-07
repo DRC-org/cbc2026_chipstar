@@ -12,7 +12,11 @@ pub(super) struct Control {
 impl Runtime {
     pub(super) fn ee_request(&mut self, req: &Request) -> Result<Reply> {
         anyhow::ensure!(
-            self.drive.running() && !self.test.enabled && !self.sts.active && !self.emergency,
+            self.drive.running()
+                && !self.test.enabled
+                && !self.sts.active
+                && !self.sts.busy()
+                && !self.emergency,
             "通常運転を再開してからEEを操作してください"
         );
         self.ready()?;
@@ -137,10 +141,14 @@ impl Runtime {
             let Some(previous) = self.ee.targets.get(&axis.name).copied() else {
                 continue;
             };
-            let Some(index) = axis.input_axis else {
-                continue;
+            let value = if !self.authority.active() && !self.screen_control {
+                if !self.pad.ee_armed {
+                    continue;
+                }
+                axis.pad_value(&input)
+            } else {
+                axis.input_axis.map_or(0.0, |index| input.axes[index])
             };
-            let value = input.axes[index];
             if value.abs() < 0.1 {
                 continue;
             }

@@ -28,6 +28,22 @@ pub struct Axis {
     pub acceleration: u8,
 }
 impl Axis {
+    pub fn pad_value(&self, input: &crate::input::ControllerState) -> f32 {
+        if let Some(index) = self.input_axis {
+            return input.axes[index];
+        }
+        let pair = |positive: usize, negative: usize| {
+            f32::from(u8::from(input.buttons[positive] != 0))
+                - f32::from(u8::from(input.buttons[negative] != 0))
+        };
+        match self.name.as_str() {
+            "ee_rotation" => input.axes[2],
+            "ee_fold" => pair(11, 12),
+            "ee_grip_1" | "ee_grip_2" | "ee_grip_3" => pair(14, 13),
+            _ => 0.0,
+        }
+    }
+
     pub fn unit(&self) -> &'static str {
         if matches!(self.target, Target::Pwm(_)) {
             "µs"
@@ -115,4 +131,41 @@ pub fn axes(profile: &MachineProfile) -> Vec<Axis> {
             }
         })
         .collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[test]
+    fn standard_pad_axes_and_custom_override_are_independent() {
+        let mut axis = Axis {
+            name: "ee_rotation".into(),
+            label: "test",
+            target: Target::Sts(1),
+            min: 0.0,
+            max: 4095.0,
+            initial: 2048.0,
+            enabled: true,
+            input_axis: None,
+            sign: 1.0,
+            speed: 100.0,
+            move_speed: 100,
+            acceleration: 0,
+        };
+        let mut input = crate::input::ControllerState::default();
+        input.axes[2] = -0.75;
+        input.buttons[11] = 1;
+        input.buttons[14] = 1;
+        assert_eq!(axis.pad_value(&input), -0.75);
+        axis.name = "ee_fold".into();
+        assert_eq!(axis.pad_value(&input), 1.0);
+        input.buttons[12] = 1;
+        assert_eq!(axis.pad_value(&input), 0.0);
+        axis.name = "ee_grip_1".into();
+        assert_eq!(axis.pad_value(&input), 1.0);
+        input.buttons[13] = 1;
+        assert_eq!(axis.pad_value(&input), 0.0);
+        axis.input_axis = Some(2);
+        assert_eq!(axis.pad_value(&input), -0.75);
+    }
 }

@@ -50,6 +50,15 @@ impl BridgeApp {
                 }
             });
         });
+        if let Some(seconds) = status.homing_confirmation {
+            ui.colored_label(
+                WARNING,
+                format!(
+                    "ホーミング確認 {:.1}/1秒：EEの向き・全経路の干渉を確認。離すと取消",
+                    seconds.min(1.0)
+                ),
+            );
+        }
         ui.add_space(4.0);
         ui.allocate_ui_with_layout(
             egui::vec2(ui.available_width(), 40.0),

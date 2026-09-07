@@ -35,6 +35,7 @@ impl Runtime {
                 && self.drive.awaiting().is_none()
                 && !self.test.enabled
                 && !self.sts.active
+                && !self.sts.busy()
                 && self.homing.is_none(),
             "全操作を停止してからホーミングしてください"
         );

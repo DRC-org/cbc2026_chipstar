@@ -120,8 +120,20 @@ impl BridgeApp {
             ui.horizontal_wrapped(|ui| {
                 keycap(ui, "左スティック / 右上下");
                 ui.label(RichText::new("r・θ / z").size(12.0).color(MUTED));
+                keycap(ui, "右左右 / 十字上下 / 十字左右");
+                ui.label(
+                    RichText::new("EE回転 / 畳み / 把持3本")
+                        .size(12.0)
+                        .color(MUTED),
+                );
                 keycap(ui, "L1");
                 ui.label(RichText::new("低速20%").size(12.0).color(MUTED));
+                keycap(ui, "Create 1秒");
+                ui.label(
+                    RichText::new("停止中・姿勢確認済みでホーミング")
+                        .size(12.0)
+                        .color(MUTED),
+                );
                 keycap(ui, "Options / PS");
                 ui.label(RichText::new("再開 / 停止").size(12.0).color(MUTED));
             });

@@ -41,7 +41,7 @@ impl BridgeApp {
             "EEの割当・動作範囲",
             "出力を停止して編集 → 適用 → 単体テスト → 通常出力を許可",
         );
-        ui.label("初期候補値は機構の安全範囲を保証しません。配線・可動範囲・開始指令を確認して設定してください。開始指令はGUIの初期値で、起動時には送信しません。");
+        ui.label("初期候補値は機構の安全範囲を保証しません。配線・可動範囲・開始指令を確認して設定してください。開始指令はGUIの初期値・パッド操作開始位置です。起動時には送信しません。");
         for (name, label) in ee::ROLES {
             panel().show(ui,|ui| {
                 ui.set_width(ui.available_width());ui.heading(label);
@@ -120,9 +120,9 @@ fn input_fields(
 ) {
     ui.horizontal_wrapped(|ui| {
         egui::ComboBox::from_id_salt(ui.id().with("input"))
-            .selected_text(axis.map_or("画面のみ".into(), |i| format!("入力軸{i}")))
+            .selected_text(axis.map_or("標準パッド割当".into(), |i| format!("入力軸{i}")))
             .show_ui(ui, |ui| {
-                ui.selectable_value(axis, None, "画面のみ");
+                ui.selectable_value(axis, None, "標準パッド割当");
                 for (i, label) in [
                     "左X（θと共用）",
                     "左Y（rと共用）",
@@ -146,5 +146,5 @@ fn input_fields(
                 .suffix(format!(" {unit}")),
         );
     });
-    ui.label(RichText::new("入力はその軸へ最初の移動指令を送った後に有効になります。中立で指令位置を維持。アームと同じ入力を選ぶと同時に動きます。").size(12.0).color(MUTED));
+    ui.label(RichText::new("標準割当：回転＝右左右、畳み＝十字上下、把持3本＝十字左右。中立を経た最初の操作で開始指令へ移動し、以後は押している間だけ増減します。正転・反転と速度は各軸に適用。アームと同じ入力を選ぶと同時に動きます。").size(12.0).color(MUTED));
 }

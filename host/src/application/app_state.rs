@@ -37,6 +37,7 @@ pub struct BridgeConfig {
 #[derive(Clone, Default, Serialize)]
 pub struct Status {
     pub homing: Option<String>,
+    pub homing_confirmation: Option<f32>,
     pub ee_targets: std::collections::BTreeMap<String, f32>,
     pub sts: crate::application::sts::Status,
     pub test_mode: bool,

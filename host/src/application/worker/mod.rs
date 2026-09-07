@@ -55,6 +55,7 @@ struct Runtime {
     sts: sts_control::Control,
     ee: ee_control::Control,
     homing: Option<homing::Homing>,
+    pad: pad_control::Control,
     authority: Authority,
     manual_input: ControllerState,
     screen_control: bool,
@@ -88,6 +89,7 @@ impl Runtime {
             sts: sts_control::Control::default(),
             ee: ee_control::Control::default(),
             homing: None,
+            pad: pad_control::Control::default(),
             authority: Authority::default(),
             manual_input: ControllerState::default(),
             gamepad_name: String::new(),
@@ -122,6 +124,9 @@ impl Runtime {
             || !self.ee.targets.is_empty()
             || self.homing.is_some();
         self.homing = None;
+        self.pad.ee_armed = false;
+        self.pad.home_since = None;
+        self.pad.home_ready = false;
         self.ee = ee_control::Control::default();
         self.sts.cancel();
         self.test.restart_blocked |= self.test.active;
@@ -251,7 +256,10 @@ impl Runtime {
     }
     fn start(&mut self) -> Result<()> {
         anyhow::ensure!(self.homing.is_none(), "ホーミングを停止してください");
-        anyhow::ensure!(!self.sts.active, "STS操作を停止してください");
+        anyhow::ensure!(
+            !self.sts.active && !self.sts.busy(),
+            "STS操作を停止してください"
+        );
         if self.emergency {
             bail!("ソフト緊停中です");
         }
@@ -596,6 +604,7 @@ impl Runtime {
             s.test_mode = self.test.enabled;
             s.ee_targets = self.ee.targets.clone();
             s.homing = self.homing.as_ref().map(|h| h.label.clone());
+            s.homing_confirmation = self.pad.home_since.map(|t| t.elapsed().as_secs_f32());
             s.test_active = self.test.active;
             s.test_ready = !self.emergency
                 && self.fresh()
@@ -702,7 +711,6 @@ pub fn run(shared: Arc<Shared>) {
     let mut runtime = Runtime::new(shared.clone());
     let mut gilrs = gilrs::Gilrs::new().ok();
     let mut selected = None;
-    let mut previous_buttons = [0u8; 17];
     while shared.is_running() {
         let cycle = Instant::now();
         if shared.take_emergency() {
@@ -731,34 +739,11 @@ pub fn run(shared: Arc<Shared>) {
                 let pad = gilrs.gamepad(id);
                 if pad.is_connected() {
                     runtime.gamepad_name = pad.name().into();
-                    let input = controller::read(&pad);
-                    let buttons = input.buttons;
-                    if !runtime.screen_control {
-                        runtime.manual_input = input;
-                    }
-                    if buttons[5] != 0 && previous_buttons[5] == 0 {
-                        let _ = runtime.stop(false);
-                    }
-                    if !runtime.authority.active()
-                        && !runtime.screen_control
-                        && buttons[6] != 0
-                        && previous_buttons[6] == 0
-                        && let Err(error) = runtime.start()
-                    {
+                    if let Err(error) = runtime.read_pad(controller::read(&pad), cycle) {
                         runtime.error = error.to_string();
                     }
-                    previous_buttons = buttons;
                 } else {
-                    if !runtime.authority.active()
-                        && !runtime.screen_control
-                        && runtime.drive.running()
-                    {
-                        runtime.fault("DualSenseが切断されました".into());
-                    }
-                    runtime.gamepad_name.clear();
-                    if !runtime.screen_control {
-                        runtime.manual_input = ControllerState::default();
-                    }
+                    runtime.disconnect_pad();
                     selected = None;
                 }
             }
@@ -797,6 +782,7 @@ pub fn run(shared: Arc<Shared>) {
 
 mod ee_control;
 mod homing;
+mod pad_control;
 mod requests;
 mod sts_control;
 mod test_control;
