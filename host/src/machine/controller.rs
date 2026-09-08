@@ -1,6 +1,7 @@
 use super::profile::*;
 use crate::{input::ControllerState, protocol::telemetry::Telemetry};
 use serde::Serialize;
+use std::time::Instant;
 const STICK_DEADZONE: f32 = 0.1;
 
 /// 軸ごとの原点の状態。GUI 表示用。
@@ -27,6 +28,8 @@ pub struct MachineController {
     soft_limits: bool,
     origin_lost: Vec<bool>,
     moving: Vec<bool>,
+    jog_velocity: Vec<f32>,
+    jog_tick: Option<Instant>,
 }
 
 impl MachineController {
@@ -38,6 +41,8 @@ impl MachineController {
             soft_limits: true,
             origin_lost: vec![false; profile.axes.len()],
             moving: vec![false; profile.axes.len()],
+            jog_velocity: vec![0.0; profile.axes.len()],
+            jog_tick: None,
             profile,
             targets,
         }
@@ -131,6 +136,7 @@ impl MachineController {
     /// 非常停止で手動退避した後がとくに危ない。位置ループを有効にする直前に
     /// 目標と実測を揃えておけば、RUN してもその場を保持する。
     pub fn hold_at_measured(&mut self, telemetry: Option<&Telemetry>) {
+        self.reset_jog();
         let Some(telemetry) = telemetry else {
             return;
         };
@@ -249,6 +255,8 @@ impl MachineController {
         self.origin_captured = captured;
         self.origin_lost = lost;
         self.moving = vec![false; self.profile.axes.len()];
+        self.jog_velocity = vec![0.0; self.profile.axes.len()];
+        self.jog_tick = None;
     }
 
     fn constrain_velocity(
@@ -309,6 +317,7 @@ impl MachineController {
 
     /// 有効な軸を現在の実測座標で位置保持する指令を作る。
     pub fn hold_lines(&mut self, telemetry: &Telemetry, enabled_slots: u8) -> Vec<String> {
+        self.reset_jog();
         let mut lines = Vec::new();
         for index in 0..self.profile.axes.len() {
             let axis = &self.profile.axes[index];
@@ -323,11 +332,78 @@ impl MachineController {
         lines
     }
 
+    /// 軌道生成を除いた単位変換・保持指令の検証用。
+    #[cfg(test)]
     pub fn jog_lines(
         &mut self,
         input: &ControllerState,
         telemetry: &Telemetry,
         slow: bool,
+    ) -> Vec<String> {
+        self.jog_lines_step(input, telemetry, slow, None)
+    }
+
+    pub fn reset_jog(&mut self) {
+        self.jog_velocity.fill(0.0);
+        self.jog_tick = None;
+    }
+
+    pub fn ramped_jog_lines(
+        &mut self,
+        input: &ControllerState,
+        telemetry: &Telemetry,
+        slow: bool,
+        now: Instant,
+    ) -> Vec<String> {
+        let dt = self.jog_tick.replace(now).map_or(0.0, |previous| {
+            now.saturating_duration_since(previous)
+                .as_secs_f32()
+                .min(0.05)
+        });
+        self.jog_lines_step(input, telemetry, slow, Some(dt))
+    }
+
+    fn braking_velocity(&self, index: usize, velocity: f32, telemetry: &Telemetry) -> f32 {
+        let axis = &self.profile.axes[index];
+        let velocity = self.constrain_velocity(index, velocity, telemetry, false);
+        if !self.soft_limits {
+            return velocity;
+        }
+        if !self.origin_captured[index] {
+            return 0.0;
+        }
+        let measured = (telemetry.slots[axis.slot as usize].measured - self.origins_native[index])
+            / axis.native_per_unit;
+        let mut lo = axis.minimum;
+        let mut hi = axis.maximum;
+        if let Some(limit) = axis.limit {
+            if limit.direction > 0.0 {
+                hi = hi.min(axis.origin_position);
+            } else {
+                lo = lo.max(axis.origin_position);
+            }
+        }
+        let distance = if velocity > 0.0 {
+            hi - measured
+        } else {
+            measured - lo
+        };
+        let acceleration = axis.speed_per_second / axis.jog_ramp_seconds;
+        // 受信周期とCCTLのジョグ先行量に0.2秒分を見込んで制動を始める。
+        let delay_velocity = acceleration * 0.2;
+        let cap = ((delay_velocity * delay_velocity + 2.0 * acceleration * distance.max(0.0))
+            .sqrt()
+            - delay_velocity)
+            .max(0.0);
+        velocity.signum() * velocity.abs().min(cap)
+    }
+
+    fn jog_lines_step(
+        &mut self,
+        input: &ControllerState,
+        telemetry: &Telemetry,
+        slow: bool,
+        dt: Option<f32>,
     ) -> Vec<String> {
         let mut lines = Vec::with_capacity(self.profile.axes.len());
         for i in 0..self.profile.axes.len() {
@@ -343,7 +419,17 @@ impl MachineController {
                 * axis.input_sign
                 * self.profile.effective_axis_speed(axis)
                 * if slow { slow_scale } else { 1.0 };
-            velocity = self.constrain_velocity(i, velocity, telemetry, self.soft_limits);
+            if let Some(dt) = dt.filter(|_| axis.jog_ramp_seconds > 0.0) {
+                let desired = self.braking_velocity(i, velocity, telemetry);
+                let delta = axis.speed_per_second / axis.jog_ramp_seconds * dt;
+                let previous = self.jog_velocity[i];
+                let ramped = previous + (desired - previous).clamp(-delta, delta);
+                // スイッチ到達・接点不明・可動域外では減速途中でも進入指令を止める。
+                velocity = self.braking_velocity(i, ramped, telemetry);
+            } else {
+                velocity = self.constrain_velocity(i, velocity, telemetry, self.soft_limits);
+            }
+            self.jog_velocity[i] = velocity;
             let measured = telemetry.slots[axis.slot as usize].measured;
             if velocity != 0.0 {
                 self.targets[i] = (measured - self.origins_native[i]) / axis.native_per_unit;
@@ -384,3 +470,6 @@ mod tests;
 
 #[cfg(test)]
 mod manual_tests;
+
+#[cfg(test)]
+mod ramp_tests;

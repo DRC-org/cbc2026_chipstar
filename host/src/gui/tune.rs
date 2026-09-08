@@ -381,6 +381,12 @@ fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> b
                     "スティック最大入力時の機体速度です。低速時は上部の「低速操作率」を掛けます。",
                 ),
                 (
+                    "加減速時間",
+                    &mut axis.jog_ramp_seconds,
+                    "s",
+                    "停止から最高速度までの時間です。長いほど反転・中立時の変化が穏やかになります。0は即時変更。緊停や接点作動時は即時停止します。",
+                ),
+                (
                     "移動範囲の下限",
                     &mut axis.minimum,
                     unit.as_str(),

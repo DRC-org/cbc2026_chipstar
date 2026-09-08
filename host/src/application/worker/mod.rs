@@ -131,6 +131,7 @@ impl Runtime {
         self.rx.is_some_and(|t| t.elapsed() <= FRESH)
     }
     fn clear_drive(&mut self) {
+        self.machine.reset_jog();
         self.drive = DriveState::Stopped;
         self.authority.clear_input();
         if self.screen_control {
@@ -657,7 +658,7 @@ impl Runtime {
                     || input.buttons[9] != 0;
                 let lines = self
                     .machine
-                    .jog_lines(input, self.telemetry.as_ref().unwrap(), slow);
+                    .ramped_jog_lines(input, self.telemetry.as_ref().unwrap(), slow, now);
                 for line in lines {
                     self.send(&line)?;
                 }

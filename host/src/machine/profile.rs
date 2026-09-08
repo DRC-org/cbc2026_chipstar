@@ -44,6 +44,9 @@ pub struct AxisProfile {
     #[serde(default = "one")]
     pub input_sign: f32,
     pub speed_per_second: f32,
+    /// 通常ジョグで停止から最高速度まで加速する時間。0は速度を即時変更。
+    #[serde(default)]
+    pub jog_ramp_seconds: f32,
     /// 自動ホーミングで使う通常最高速度に対する割合[%]。
     #[serde(
         default = "default_homing_speed_percent",
@@ -369,6 +372,7 @@ impl MachineProfile {
             let numbers = [
                 axis.input_sign,
                 axis.speed_per_second,
+                axis.jog_ramp_seconds,
                 axis.homing_speed_percent,
                 axis.homing_retreat_mm(),
                 axis.native_per_unit,
@@ -382,6 +386,7 @@ impl MachineProfile {
             }
             if axis.input_sign.abs() != 1.0
                 || axis.speed_per_second < 0.0
+                || axis.jog_ramp_seconds < 0.0
                 || !(1.0..=100.0).contains(&axis.homing_speed_percent)
                 || axis.homing_retreat_mm() < 0.0
                 || axis.native_per_unit == 0.0
