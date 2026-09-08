@@ -7,6 +7,9 @@ BAUD_RATE ?= 115200
 PROFILE ?= host/config/rtheta.toml
 BOARD ?= network
 TEST_SECONDS ?= 5
+SOCKET ?=
+
+HOST_SOCKET_ARGS = $(if $(strip $(SOCKET)),--socket "$(SOCKET)")
 
 HOST_MANIFEST := host/Cargo.toml
 HOST_BIN := host/target/debug/host
@@ -25,7 +28,7 @@ PIO ?= $(PIO_DEFAULT)
 .PHONY: help build build-firmware build-host \
 	build-cctl build-dcmd build-serial-svmd build-svmd \
 	flash-cctl flash-dcmd flash-serial-svmd flash-svmd \
-	host host-sim host-headless status stop estop fw-test \
+	host host-sim host-sim-headless host-headless status stop estop fw-test \
 	test test-host test-firmware \
 	check-build-type check-stm32-programmer check-pio check-profile check-host-tools check-fw-board
 
@@ -46,6 +49,7 @@ help:
 		'' \
 		'  make host                   実機接続でGUIを起動' \
 		'  make host-sim               模擬接続でGUIを起動' \
+		'  make host-sim-headless      模擬接続でGUIなしhostを起動' \
 		'  make host-headless          実機接続でGUIなしhostを起動' \
 		'  make status                 起動中hostの状態を表示' \
 		'  make stop                   起動中hostを停止・保持' \
@@ -58,6 +62,7 @@ help:
 		'  SERIAL_DEVICE=/dev/ttyACM0  host・診断の接続先' \
 		'  BAUD_RATE=115200             シリアル通信速度' \
 		'  PROFILE=host/config/...toml  機体プロファイル' \
+		'  SOCKET=/path/to/host.sock    host・status・stop・estopの接続先（未指定時はhost既定値）' \
 		'  BOARD=network|cctl|svmd|dcmd|serial-svmd' \
 		'  TEST_SECONDS=5               診断出力の自動停止秒数（1〜30）'
 
@@ -96,22 +101,25 @@ flash-svmd: check-pio
 	"$(PIO)" run --project-dir svmd --environment uno_r4_minima --target upload
 
 host: check-profile build-host
-	"$(HOST_BIN)" --serial-device "$(SERIAL_DEVICE)" --baud-rate "$(BAUD_RATE)" --machine-profile "$(PROFILE)"
+	"$(HOST_BIN)" --serial-device "$(SERIAL_DEVICE)" --baud-rate "$(BAUD_RATE)" --machine-profile "$(PROFILE)" $(HOST_SOCKET_ARGS)
 
 host-sim: check-profile build-host
-	"$(HOST_BIN)" --simulate --machine-profile "$(PROFILE)"
+	"$(HOST_BIN)" --simulate --machine-profile "$(PROFILE)" $(HOST_SOCKET_ARGS)
+
+host-sim-headless: check-profile build-host
+	"$(HOST_BIN)" --headless --simulate --machine-profile "$(PROFILE)" $(HOST_SOCKET_ARGS)
 
 host-headless: check-profile build-host
-	"$(HOST_BIN)" --headless --serial-device "$(SERIAL_DEVICE)" --baud-rate "$(BAUD_RATE)" --machine-profile "$(PROFILE)"
+	"$(HOST_BIN)" --headless --serial-device "$(SERIAL_DEVICE)" --baud-rate "$(BAUD_RATE)" --machine-profile "$(PROFILE)" $(HOST_SOCKET_ARGS)
 
 status: check-host-tools
-	"$(HOSTCTL_BIN)" status
+	"$(HOSTCTL_BIN)" status $(HOST_SOCKET_ARGS)
 
 stop: check-host-tools
-	"$(HOSTCTL_BIN)" stop
+	"$(HOSTCTL_BIN)" stop $(HOST_SOCKET_ARGS)
 
 estop: check-host-tools
-	"$(HOSTCTL_BIN)" estop
+	"$(HOSTCTL_BIN)" estop $(HOST_SOCKET_ARGS)
 
 fw-test: check-fw-board build-host
 	"$(FW_TEST_BIN)" --board "$(BOARD)" --serial-device "$(SERIAL_DEVICE)" --baud-rate "$(BAUD_RATE)" --seconds "$(TEST_SECONDS)"
