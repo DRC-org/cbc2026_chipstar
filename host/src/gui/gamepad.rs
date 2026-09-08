@@ -210,14 +210,15 @@ mod tests {
         let profile = MachineProfile::embedded().unwrap();
         let r = profile.axes.iter().find(|axis| axis.name == "r").unwrap();
         let mut input = crate::input::ControllerState::default();
-        input.axes[1] = -0.5;
+        let input_axis = r.input_axis.unwrap();
+        input.axes[input_axis] = -0.5;
         let normal = -0.5 * r.input_sign;
         assert_eq!(
             axis_request(r, &input, false, profile.slow_speed_percent),
             normal
         );
         assert!((axis_request(r, &input, true, 40.0) - normal * 0.4).abs() < f32::EPSILON);
-        input.axes[1] = 0.09;
+        input.axes[input_axis] = 0.09;
         assert_eq!(
             axis_request(r, &input, false, profile.slow_speed_percent),
             0.0

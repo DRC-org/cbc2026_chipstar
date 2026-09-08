@@ -322,7 +322,7 @@ fn stop_hold_and_output_cut_have_distinct_safe_states() {
         .ok
     );
     host.wait(|state| {
-        state["axes"][1]
+        state["axes"][3]
             .as_float()
             .is_some_and(|value| (value + 0.7).abs() < 0.001)
     });

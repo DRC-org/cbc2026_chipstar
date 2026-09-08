@@ -13,6 +13,18 @@ fn embedded_profile_is_valid() {
     let profile = MachineProfile::embedded().unwrap();
     assert_eq!(profile.axes.len(), 3);
     assert_eq!(profile.axes[0].name, "r");
+    for (name, input_axis) in [("theta", 0), ("z", 1), ("r", 3)] {
+        assert_eq!(
+            profile
+                .axes
+                .iter()
+                .find(|axis| axis.name == name)
+                .unwrap()
+                .input_axis,
+            Some(input_axis),
+            "{name}のDualSense割り当て"
+        );
+    }
     for name in ["r", "z"] {
         let limit = profile
             .axes
@@ -89,7 +101,7 @@ fn slow_speed_percent_defaults_to_twenty_and_is_configurable() {
     let mut machine = MachineController::new(configured);
     machine.set_soft_limits(false);
     let mut input = neutral_input();
-    input.axes[1] = 1.0;
+    input.axes[axis.input_axis.unwrap()] = 1.0;
     let line = &machine.jog_lines(&input, &telemetry_with(0, [0.0; 3]), true)[0];
     let velocity: f32 = line.split_whitespace().last().unwrap().parse().unwrap();
     let expected = axis.input_sign * axis.speed_per_second * axis.native_per_unit * 0.4;
@@ -145,8 +157,8 @@ fn converts_manual_velocity_to_native_units() {
     let mut machine = MachineController::new(profile);
     machine.set_soft_limits(false);
     let mut input = neutral_input();
-    input.axes[1] = 0.5;
-    input.axes[0] = 0.5;
+    input.axes[r.input_axis.unwrap()] = 0.5;
+    input.axes[theta.input_axis.unwrap()] = 0.5;
     let lines = machine.jog_lines(&input, &telemetry_with(0, [0.0; 3]), false);
     let r_velocity: f32 = lines[0].split_whitespace().last().unwrap().parse().unwrap();
     let expected_r = 0.5 * r.input_sign * r.speed_per_second * r.native_per_unit;
@@ -168,12 +180,12 @@ fn deadzone_nonfinite_input_and_low_speed_are_bounded() {
     let t = telemetry_with(0, [0.0; 3]);
     let mut input = neutral_input();
     for value in [0.05, f32::NAN, f32::INFINITY] {
-        input.axes[1] = value;
+        input.axes[axis.input_axis.unwrap()] = value;
         let lines = machine.jog_lines(&input, &t, false);
         let velocity: f32 = lines[0].split_whitespace().last().unwrap().parse().unwrap();
         assert_eq!(velocity, 0.0);
     }
-    input.axes[1] = 2.0;
+    input.axes[axis.input_axis.unwrap()] = 2.0;
     let line = &machine.jog_lines(&input, &t, true)[0];
     let velocity: f32 = line.split_whitespace().last().unwrap().parse().unwrap();
     let expected =

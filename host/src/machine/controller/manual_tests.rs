@@ -56,6 +56,7 @@ fn displayed_position_uses_the_captured_offset() {
     let profile = MachineProfile::embedded().unwrap();
     let native_per_unit = profile.axes[0].native_per_unit;
     let origin_position = profile.axes[0].origin_position;
+    let input_axis = profile.axes[0].input_axis.unwrap();
     let mut machine = MachineController::new(profile);
     let start = telemetry(5.0);
     machine.observe(&start);
@@ -66,7 +67,7 @@ fn displayed_position_uses_the_captured_offset() {
         (machine.origin_states(Some(&moved))[0].position - (origin_position + 1.0)).abs() < 0.001
     );
     let mut input = ControllerState::default();
-    input.axes[1] = 1.0;
+    input.axes[input_axis] = 1.0;
     let restarted = telemetry(0.0);
     machine.observe(&restarted);
     assert!(machine.origin_states(Some(&restarted))[0].lost);
@@ -97,7 +98,7 @@ fn z_ten_mm_feedback_and_five_mm_per_second_command_use_rotor_degrees() {
     let moved = telemetry(1234.0 + axis.native_per_unit * 10.0);
     assert!((machine.origin_states(Some(&moved))[2].position - 10.0).abs() < 0.001);
     let mut input = ControllerState::default();
-    input.axes[3] = 1.0;
+    input.axes[axis.input_axis.unwrap()] = 1.0;
     let line = &machine.jog_lines(&input, &start, false)[2];
     let velocity: f32 = line.split_whitespace().last().unwrap().parse().unwrap();
     let expected = axis.input_sign * axis.speed_per_second * axis.native_per_unit;

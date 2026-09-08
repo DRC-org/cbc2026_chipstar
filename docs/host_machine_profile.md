@@ -15,13 +15,14 @@ slow_speed_percent = 20.0
 
 `[[axes]]`が入力とcctlのslotを対応づける。`input_axis`は
 `0=LX, 1=LY, 2=RX, 3=RY, 4=L2, 5=R2`。省略した軸の速度入力は0になる。
+現在の機体設定はLX=θ、LY=z、RY=rで、RXはEE全体回転に使用する。
 
 ```toml
 [[axes]]
 name = "r"
 unit = "mm"
 slot = 0
-input_axis = 1
+input_axis = 3
 input_sign = 1.0
 speed_per_second = 10.0
 homing_speed_percent = 20.0
