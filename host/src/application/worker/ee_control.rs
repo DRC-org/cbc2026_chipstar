@@ -153,7 +153,15 @@ impl Runtime {
                 continue;
             }
             let next = (previous
-                + value * axis.sign * axis.speed * dt * if slow { 0.2 } else { 1.0 })
+                + value
+                    * axis.sign
+                    * axis.speed
+                    * dt
+                    * if slow {
+                        self.cfg.machine.slow_speed_percent * 0.01
+                    } else {
+                        1.0
+                    })
             .clamp(axis.min, axis.max);
             if self.ee.sent.get(&axis.name).is_none_or(|(value, sent)| {
                 *value != next.round() && now.duration_since(*sent) >= Duration::from_millis(50)

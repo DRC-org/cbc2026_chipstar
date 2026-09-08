@@ -44,6 +44,12 @@ pub struct AxisProfile {
     #[serde(default = "one")]
     pub input_sign: f32,
     pub speed_per_second: f32,
+    /// 自動ホーミングで使う通常最高速度に対する割合[%]。
+    #[serde(
+        default = "default_homing_speed_percent",
+        skip_serializing_if = "is_default_homing_speed_percent"
+    )]
+    pub homing_speed_percent: f32,
     pub native_per_unit: f32,
     pub minimum: f32,
     pub maximum: f32,
@@ -103,6 +109,22 @@ fn yes() -> bool {
     true
 }
 
+fn default_homing_speed_percent() -> f32 {
+    20.0
+}
+
+fn is_default_homing_speed_percent(value: &f32) -> bool {
+    *value == default_homing_speed_percent()
+}
+
+fn default_slow_speed_percent() -> f32 {
+    20.0
+}
+
+fn is_default_slow_speed_percent(value: &f32) -> bool {
+    *value == default_slow_speed_percent()
+}
+
 /// cctlの実行時パラメータ。名前とidの対応は device_protocol.md の表に従う。
 /// FWを書き直さずに実機調整を終えるため、調整対象はすべてここへ書く。
 /// パラメータ名から値への対応。名前は device_protocol.md の表に従う。
@@ -156,6 +178,12 @@ pub const PARAMETER_NAMES: [&str; 43] = [
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct MachineProfile {
+    /// L1・画面操作・原点調整で使う通常最高速度に対する割合[%]。
+    #[serde(
+        default = "default_slow_speed_percent",
+        skip_serializing_if = "is_default_slow_speed_percent"
+    )]
+    pub slow_speed_percent: f32,
     #[serde(default)]
     pub dc_motors: Vec<super::dc_motor::MotorProfile>,
     pub protocol_version: u8,
@@ -189,6 +217,10 @@ impl MachineProfile {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if !self.slow_speed_percent.is_finite() || !(1.0..=100.0).contains(&self.slow_speed_percent)
+        {
+            bail!("slow_speed_percentは1..100で指定してください");
+        }
         super::dc_motor::validate(&self.dc_motors)?;
         if self.protocol_version != 1 {
             bail!(
@@ -296,6 +328,7 @@ impl MachineProfile {
             let numbers = [
                 axis.input_sign,
                 axis.speed_per_second,
+                axis.homing_speed_percent,
                 axis.native_per_unit,
                 axis.minimum,
                 axis.maximum,
@@ -307,6 +340,7 @@ impl MachineProfile {
             }
             if axis.input_sign.abs() != 1.0
                 || axis.speed_per_second < 0.0
+                || !(1.0..=100.0).contains(&axis.homing_speed_percent)
                 || axis.native_per_unit == 0.0
                 || axis.minimum >= axis.maximum
                 || !(axis.minimum..=axis.maximum).contains(&axis.initial)

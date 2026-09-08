@@ -54,7 +54,7 @@ pub(super) fn monitor(ui: &mut egui::Ui, status: &Status, profile: &MachineProfi
                         } else {
                             &axis.name
                         },
-                        axis_request(axis, input, slow),
+                        axis_request(axis, input, slow, profile.slow_speed_percent),
                         true,
                     );
                 }
@@ -64,7 +64,11 @@ pub(super) fn monitor(ui: &mut egui::Ui, status: &Status, profile: &MachineProfi
                         axis.label,
                         normalized(axis.pad_value(input))
                             * axis.sign
-                            * if slow { 0.2 } else { 1.0 },
+                            * if slow {
+                                profile.slow_speed_percent * 0.01
+                            } else {
+                                1.0
+                            },
                         axis.enabled,
                     );
                 }
@@ -107,9 +111,14 @@ fn axis_request(
     axis: &crate::machine::AxisProfile,
     input: &crate::input::ControllerState,
     slow: bool,
+    slow_speed_percent: f32,
 ) -> f32 {
     axis.input_axis
-        .map(|index| normalized(input.axes[index]) * axis.input_sign * if slow { 0.2 } else { 1.0 })
+        .map(|index| {
+            normalized(input.axes[index])
+                * axis.input_sign
+                * if slow { slow_speed_percent * 0.01 } else { 1.0 }
+        })
         .unwrap_or(0.0)
 }
 
@@ -202,9 +211,16 @@ mod tests {
         let r = profile.axes.iter().find(|axis| axis.name == "r").unwrap();
         let mut input = crate::input::ControllerState::default();
         input.axes[1] = -0.5;
-        assert_eq!(axis_request(r, &input, false), 0.5);
-        assert_eq!(axis_request(r, &input, true), 0.1);
+        let normal = -0.5 * r.input_sign;
+        assert_eq!(
+            axis_request(r, &input, false, profile.slow_speed_percent),
+            normal
+        );
+        assert!((axis_request(r, &input, true, 40.0) - normal * 0.4).abs() < f32::EPSILON);
         input.axes[1] = 0.09;
-        assert_eq!(axis_request(r, &input, false), 0.0);
+        assert_eq!(
+            axis_request(r, &input, false, profile.slow_speed_percent),
+            0.0
+        );
     }
 }

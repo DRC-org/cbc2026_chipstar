@@ -198,7 +198,8 @@ impl Runtime {
             h.phase = Phase::AwaitStop;
             h.since = now;
         } else {
-            let speed = (axis.speed_per_second * 0.2).min(if name == "z" { 5.0 } else { 10.0 });
+            let speed = (axis.speed_per_second * axis.homing_speed_percent * 0.01)
+                .min(if name == "z" { 5.0 } else { 10.0 });
             let timeout = home.timeout_seconds;
             anyhow::ensure!(
                 now.duration_since(home.axis_started).as_secs_f32() < timeout,
@@ -220,6 +221,26 @@ mod tests {
     #[test]
     fn homes_z_then_r_without_theta_and_keeps_stop() {
         let mut r = crate::application::worker::tests::screen_runtime();
+        let z = r
+            .cfg
+            .machine
+            .axes
+            .iter_mut()
+            .find(|a| a.name == "z")
+            .unwrap();
+        z.speed_per_second = 20.0;
+        z.homing_speed_percent = 10.0;
+        z.native_per_unit = 2.0;
+        let radial = r
+            .cfg
+            .machine
+            .axes
+            .iter_mut()
+            .find(|a| a.name == "r")
+            .unwrap();
+        radial.speed_per_second = 40.0;
+        radial.homing_speed_percent = 25.0;
+        radial.native_per_unit = 0.5;
         assert!(r.begin_homing(false, true, 180.0).is_err());
         assert!(r.begin_homing(true, false, 180.0).is_err());
         r.begin_homing(true, true, 180.0).unwrap();
@@ -228,7 +249,7 @@ mod tests {
         {
             let t = r.telemetry.as_mut().unwrap();
             t.mode = RunMode::Stop;
-            t.contacts = Some(7);
+            t.contacts = Some(0);
         }
         r.tick_homing(now).unwrap();
         {
@@ -238,7 +259,7 @@ mod tests {
         }
         r.tick_homing(now + Duration::from_millis(50)).unwrap();
         r.tick_homing(now + Duration::from_millis(100)).unwrap();
-        r.telemetry.as_mut().unwrap().contacts = Some(5);
+        r.telemetry.as_mut().unwrap().contacts = Some(2);
         r.tick_homing(now + Duration::from_millis(150)).unwrap();
         r.telemetry.as_mut().unwrap().mode = RunMode::Stop;
         r.tick_homing(now + Duration::from_millis(200)).unwrap();
@@ -250,15 +271,15 @@ mod tests {
         }
         r.tick_homing(now + Duration::from_millis(300)).unwrap();
         r.tick_homing(now + Duration::from_millis(350)).unwrap();
-        r.telemetry.as_mut().unwrap().contacts = Some(4);
+        r.telemetry.as_mut().unwrap().contacts = Some(3);
         r.tick_homing(now + Duration::from_millis(400)).unwrap();
         r.telemetry.as_mut().unwrap().mode = RunMode::Stop;
         r.tick_homing(now + Duration::from_millis(450)).unwrap();
         assert!(r.homing.is_none());
         assert!(!r.drive.running());
         let logs = r.shared.status_snapshot().logs;
-        assert!(logs.iter().any(|l| l.contains("JOG 2 -")));
-        assert!(logs.iter().any(|l| l.contains("JOG 0 0.08000")));
+        assert!(logs.iter().any(|l| l.contains("JOG 2 -4.00000")));
+        assert!(logs.iter().any(|l| l.contains("JOG 0 5.00000")));
         assert!(
             !logs
                 .iter()
@@ -292,7 +313,7 @@ mod tests {
             let t = r.telemetry.as_mut().unwrap();
             t.mode = RunMode::Run;
             t.enabled_slots = 4;
-            t.contacts = Some(7);
+            t.contacts = Some(0);
         }
         assert!(
             r.tick_homing(Instant::now())

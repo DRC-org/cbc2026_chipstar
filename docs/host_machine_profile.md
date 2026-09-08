@@ -4,6 +4,13 @@ PC上のTOMLファイルを機体設定の正とする。既定の読込先は�
 `host/config/rtheta.toml`。`--machine-profile`で別のファイルを指定できる。
 起動手順と操作APIは[host操作ガイド](host_operation.md)を参照。
 
+```toml
+slow_speed_percent = 20.0
+```
+
+`slow_speed_percent`はL1保持、画面操作、原点調整、個別速度テストで使う
+通常最高速度に対する割合。範囲は1〜100%、省略時は20%。EE操作にも適用する。
+
 ## 手動速度操作
 
 `[[axes]]`が入力とcctlのslotを対応づける。`input_axis`は
@@ -17,6 +24,7 @@ slot = 0
 input_axis = 1
 input_sign = 1.0
 speed_per_second = 10.0
+homing_speed_percent = 20.0
 native_per_unit = 0.04
 minimum = 0.0
 maximum = 120.0
@@ -26,8 +34,11 @@ origin_position = 0.0
 
 スティック値×`input_sign`×`speed_per_second`が機体単位の速度になる。
 `native_per_unit`を掛けて`JOG <slot> <速度>`として送る。
-位置目標をhostで積み上げない。入力の絶対値0.1未満は中立、L1は速度を20%にする。
+位置目標をhostで積み上げない。入力の絶対値0.1未満は中立、L1は設定した低速率にする。
 FWの速度上限でも制限されるため、実速度は負荷・ゲイン・上限に依存する。
+`homing_speed_percent`はr・z自動ホーミング時の速度を、各軸の
+`speed_per_second`に対する割合で指定する。範囲は1〜100%、省略時は20%。
+ホーミング処理ではさらにr=10mm/s、z=5mm/sを上限とする。
 
 slotは0..2で重複不可。機体座標の可動域は原点採用後に有効となり、境界までの距離に
 応じて速度を下げる。原点未採用では通常運転を開始できない。

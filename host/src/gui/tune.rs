@@ -128,6 +128,19 @@ impl BridgeApp {
                 let label = if name == "theta" { "θ" } else { name };
                 ui.selectable_value(&mut self.tune_axis, name.clone(), label);
             }
+            ui.separator();
+            let description =
+                "L1保持・画面操作・原点調整・個別速度テストで使う、通常最高速度に対する割合です。";
+            ui.label("低速操作率").on_hover_text(description);
+            edited |= ui
+                .add(
+                    egui::DragValue::new(&mut self.edit.slow_speed_percent)
+                        .speed(1.0)
+                        .range(1.0..=100.0)
+                        .suffix(" %"),
+                )
+                .on_hover_text(description)
+                .changed();
             if let Some(origin) = status
                 .origins
                 .iter()
@@ -355,7 +368,7 @@ fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> b
                     "最高速度",
                     &mut axis.speed_per_second,
                     unit.as_str(),
-                    "スティック最大入力時の機体速度です。低速操作ではこの20%になります。",
+                    "スティック最大入力時の機体速度です。低速時は上部の「低速操作率」を掛けます。",
                 ),
                 (
                     "移動範囲の下限",
@@ -388,6 +401,22 @@ fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> b
                         egui::DragValue::new(value)
                             .speed(0.1)
                             .suffix(format!(" {suffix}")),
+                    )
+                    .on_hover_text(description)
+                    .changed();
+                ui.label("ⓘ").on_hover_text(description);
+                ui.end_row();
+            }
+            if axis.limit.is_some() {
+                let description =
+                    "r・z自動ホーミングで使う速度です。最高速度に対する1〜100%で指定し、rは10 mm/s、zは5 mm/sを超えません。";
+                ui.label("ホーミング速度率").on_hover_text(description);
+                edited |= ui
+                    .add(
+                        egui::DragValue::new(&mut axis.homing_speed_percent)
+                            .speed(1.0)
+                            .range(1.0..=100.0)
+                            .suffix(" %"),
                     )
                     .on_hover_text(description)
                     .changed();

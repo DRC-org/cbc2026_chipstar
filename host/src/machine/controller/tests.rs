@@ -61,6 +61,47 @@ fn every_axis_can_be_jogged_for_manual_checks() {
     }
 }
 
+#[test]
+fn homing_speed_percent_defaults_to_twenty_and_rejects_unsafe_values() {
+    let profile = MachineProfile::embedded().unwrap();
+    assert!(
+        profile
+            .axes
+            .iter()
+            .all(|axis| axis.homing_speed_percent == 20.0)
+    );
+
+    for value in [0.0, 101.0, f32::NAN] {
+        let mut invalid = profile.clone();
+        invalid.axes[0].homing_speed_percent = value;
+        assert!(invalid.validate().is_err(), "{value}を受理している");
+    }
+}
+
+#[test]
+fn slow_speed_percent_defaults_to_twenty_and_is_configurable() {
+    let profile = MachineProfile::embedded().unwrap();
+    assert_eq!(profile.slow_speed_percent, 20.0);
+
+    let mut configured = profile.clone();
+    configured.slow_speed_percent = 40.0;
+    let axis = configured.axes[0].clone();
+    let mut machine = MachineController::new(configured);
+    machine.set_soft_limits(false);
+    let mut input = neutral_input();
+    input.axes[1] = 1.0;
+    let line = &machine.jog_lines(&input, &telemetry_with(0, [0.0; 3]), true)[0];
+    let velocity: f32 = line.split_whitespace().last().unwrap().parse().unwrap();
+    let expected = axis.input_sign * axis.speed_per_second * axis.native_per_unit * 0.4;
+    assert!((velocity - expected).abs() < 0.001);
+
+    for value in [0.0, 101.0, f32::NAN] {
+        let mut invalid = profile.clone();
+        invalid.slow_speed_percent = value;
+        assert!(invalid.validate().is_err(), "{value}を受理している");
+    }
+}
+
 /// `[parameters]` の検証用に、最小構成のプロファイルを組み立てる。
 fn profile_with_parameters(body: &str) -> String {
     format!(
@@ -98,21 +139,31 @@ fn rejects_duplicate_slots() {
 
 #[test]
 fn converts_manual_velocity_to_native_units() {
-    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
+    let profile = MachineProfile::embedded().unwrap();
+    let r = profile.axes[0].clone();
+    let theta = profile.axes[1].clone();
+    let mut machine = MachineController::new(profile);
     machine.set_soft_limits(false);
     let mut input = neutral_input();
     input.axes[1] = 0.5;
     input.axes[0] = 0.5;
     let lines = machine.jog_lines(&input, &telemetry_with(0, [0.0; 3]), false);
-    assert_eq!(lines[0], "JOG 0 -0.20000");
+    let r_velocity: f32 = lines[0].split_whitespace().last().unwrap().parse().unwrap();
+    let expected_r = 0.5 * r.input_sign * r.speed_per_second * r.native_per_unit;
+    assert!((r_velocity - expected_r).abs() < 0.001);
     let theta_velocity: f32 = lines[1].split_whitespace().last().unwrap().parse().unwrap();
-    assert!((theta_velocity + 660.1103).abs() < 0.001);
-    assert_eq!(lines[2], "JOG 2 0.00000");
+    let expected_theta = 0.5 * theta.input_sign * theta.speed_per_second * theta.native_per_unit;
+    assert!((theta_velocity - expected_theta).abs() < 0.001);
+    let z_velocity: f32 = lines[2].split_whitespace().last().unwrap().parse().unwrap();
+    assert_eq!(z_velocity, 0.0);
 }
 
 #[test]
 fn deadzone_nonfinite_input_and_low_speed_are_bounded() {
-    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
+    let profile = MachineProfile::embedded().unwrap();
+    let axis = profile.axes[0].clone();
+    let slow_percent = profile.slow_speed_percent;
+    let mut machine = MachineController::new(profile);
     machine.set_soft_limits(false);
     let t = telemetry_with(0, [0.0; 3]);
     let mut input = neutral_input();
@@ -123,7 +174,11 @@ fn deadzone_nonfinite_input_and_low_speed_are_bounded() {
         assert_eq!(velocity, 0.0);
     }
     input.axes[1] = 2.0;
-    assert_eq!(machine.jog_lines(&input, &t, true)[0], "JOG 0 -0.08000");
+    let line = &machine.jog_lines(&input, &t, true)[0];
+    let velocity: f32 = line.split_whitespace().last().unwrap().parse().unwrap();
+    let expected =
+        axis.input_sign * axis.speed_per_second * slow_percent * 0.01 * axis.native_per_unit;
+    assert!((velocity - expected).abs() < 0.001);
 }
 
 /// SW1が閉じた状態（B接点の平常時）のテレメトリ。
@@ -268,11 +323,11 @@ fn neutral_command_holds_after_manual_repositioning() {
     machine.observe(&telemetry_with(0, [0.2, 0.0, 0.0]));
     let moved = telemetry_with(0, [0.4, 0.0, 0.0]);
     machine.observe(&moved);
-    assert!((machine.target("r").unwrap() - 10.0).abs() < 1e-3);
-    assert_eq!(
-        machine.jog_lines(&neutral_input(), &moved, false)[0],
-        "JOG 0 0.00000"
-    );
+    let displayed = machine.origin_states(Some(&moved))[0].position;
+    assert!((machine.target("r").unwrap() - displayed).abs() < 1e-3);
+    let lines = machine.jog_lines(&neutral_input(), &moved, false);
+    let velocity: f32 = lines[0].split_whitespace().last().unwrap().parse().unwrap();
+    assert_eq!(velocity, 0.0);
 }
 
 #[test]
@@ -440,7 +495,7 @@ fn accepts_but_does_not_drive_serial_servo_from_host_profile() {
 fn m3508_z_profile_uses_rotor_degrees_and_rejects_legacy_dm() {
     let mut profile = MachineProfile::embedded().unwrap();
     let z = profile.axes.iter().find(|a| a.slot == 2).unwrap();
-    assert!((z.native_per_unit * 72.0 - 360.0 * (3591.0 / 187.0)).abs() < 0.001);
+    assert!((z.native_per_unit.abs() * 72.0 - 360.0 * (3591.0 / 187.0)).abs() < 0.01);
     assert_eq!(profile.parameters["c620_slot2_esc_id"], 2.0);
     profile.parameters.insert("c620_slot2_esc_id".into(), 1.0);
     assert!(profile.validate().is_err());

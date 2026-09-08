@@ -210,8 +210,11 @@ impl MachineController {
                 } else {
                     0.0
                 };
-                let mut velocity =
-                    raw * axis.input_sign * axis.speed_per_second * if slow { 0.2 } else { 1.0 };
+                let slow_scale = self.profile.slow_speed_percent * 0.01;
+                let mut velocity = raw
+                    * axis.input_sign
+                    * axis.speed_per_second
+                    * if slow { slow_scale } else { 1.0 };
                 if let Some(limit) = axis.limit
                     && (telemetry.contacts.is_none()
                         || telemetry

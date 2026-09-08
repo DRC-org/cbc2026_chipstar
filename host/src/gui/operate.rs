@@ -7,7 +7,11 @@ impl BridgeApp {
         ui.horizontal(|ui| {
             ui.label(RichText::new("機体を操縦").size(20.0).strong());
             if status.slow {
-                chip(ui, "低速 20%", ACCENT);
+                chip(
+                    ui,
+                    &format!("低速 {:.0}%", config.machine.slow_speed_percent),
+                    ACCENT,
+                );
             }
             ui.label(
                 RichText::new(format!(

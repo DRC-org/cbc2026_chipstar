@@ -102,7 +102,11 @@ impl Target {
                     .iter()
                     .find(|a| a.slot == slot)
                     .context("軸設定がありません")?;
-                let cap = (axis.speed_per_second * axis.native_per_unit * 0.2).abs();
+                let cap = (axis.speed_per_second
+                    * axis.native_per_unit
+                    * profile.slow_speed_percent
+                    * 0.01)
+                    .abs();
                 (
                     -cap,
                     cap,

@@ -2,6 +2,7 @@ use super::*;
 
 impl BridgeApp {
     pub(super) fn manual_controls(&mut self, ui: &mut egui::Ui, status: &Status) {
+        let slow_speed_percent = self.shared.config().machine.slow_speed_percent;
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
@@ -9,8 +10,10 @@ impl BridgeApp {
                 ui.add_enabled_ui(
                     !status.emergency && !status.test_mode && !status.ai_active && !status.running,
                     |ui| {
-                        for (screen, label) in [(false, "DualSense"), (true, "画面操作 · 低速20%")]
-                        {
+                        for (screen, label) in [
+                            (false, "DualSense".to_owned()),
+                            (true, format!("画面操作 · 低速{slow_speed_percent:.0}%")),
+                        ] {
                             if ui
                                 .selectable_label(status.screen_control == screen, label)
                                 .clicked()
