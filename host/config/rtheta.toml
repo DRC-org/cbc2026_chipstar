@@ -18,7 +18,7 @@ origin_position = 120.0
 [axes.limit]
 input = 0
 direction = 1.0
-normally_closed = true
+normally_closed = false
 
 [[axes]]
 name = "theta"
@@ -49,7 +49,7 @@ origin_position = 0.0
 [axes.limit]
 input = 1
 direction = -1.0
-normally_closed = true
+normally_closed = false
 
 [[serial_svmd.servos]]
 name = "ee_rotation"

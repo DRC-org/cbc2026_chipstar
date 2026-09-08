@@ -45,11 +45,12 @@ slotは0..2で重複不可。機体座標の可動域は原点採用後に有効
 [axes.limit]
 input = 0
 direction = 1.0
-normally_closed = true
+normally_closed = false
 ```
 
 `input`はSW1=0、SW2=1、SW3=2。`direction`は到達する向きで1または-1。
-`normally_closed=true`は常閉接点。押下・断線で到達側に変わる。
+`normally_closed=false`は常開接点。未押下で0、押下で1になり、押下時を到達と扱う。
+常閉接点を使う構成では`normally_closed=true`にする。
 到達への変化で原点を自動採用し、到達中は近づく方向だけ止める。接点情報が欠けている
 場合は、その接点を使う軸の入力を止める。スイッチ未確認の既定構成では設定を無効にしている。
 

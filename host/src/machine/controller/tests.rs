@@ -13,6 +13,20 @@ fn embedded_profile_is_valid() {
     let profile = MachineProfile::embedded().unwrap();
     assert_eq!(profile.axes.len(), 3);
     assert_eq!(profile.axes[0].name, "r");
+    for name in ["r", "z"] {
+        let limit = profile
+            .axes
+            .iter()
+            .find(|axis| axis.name == name)
+            .and_then(|axis| axis.limit)
+            .unwrap();
+        assert!(!limit.normally_closed, "{name}のリミットはNO接点");
+        assert!(!limit.reached(0), "{name}の未押下を到達扱いしている");
+        assert!(
+            limit.reached(1 << limit.input),
+            "{name}の押下を検出できない"
+        );
+    }
 }
 
 #[test]
