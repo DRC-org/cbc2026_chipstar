@@ -174,6 +174,30 @@ TEST_CASE("EL05速度上限はPP用のVEL_MAXへ書く") {
  float value=0;std::memcpy(&value,&accepted[0].data[4],4);CHECK(value==doctest::Approx(0.75));
 }
 
+TEST_CASE("EL05は出力を有効化するたびにPPモードと制限値を復元する") {
+ resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ REQUIRE(controller.setSlotsEnabled(1,true));accepted.clear();
+ REQUIRE(controller.setMode(domain::RunMode::Run));
+ auto countRunModeWrites=[] {
+  unsigned count=0;
+  for(const auto& frame:accepted) {
+   if(frame.extended && domain::el05::commType(frame.id)==domain::el05::comm::WRITE_PARAM &&
+      frame.data[0]==0x05 && frame.data[1]==0x70 && frame.data[4]==1) ++count;
+  }
+  return count;
+ };
+ CHECK(countRunModeWrites()==1);
+
+ // 他軸の有効状態を変えただけなら、動作中のEL05を再初期化しない。
+ accepted.clear();REQUIRE(controller.setSlotsEnabled(2,true));
+ CHECK(countRunModeWrites()==0);
+
+ // STOP中にEL05だけ再通電された場合も、次のRUNで設定を復元する。
+ REQUIRE(controller.setMode(domain::RunMode::Stop));accepted.clear();
+ REQUIRE(controller.setMode(domain::RunMode::Run));
+ CHECK(countRunModeWrites()==1);
+}
+
 TEST_CASE("周期指令と再初期化の送信失敗も停止側へ戻す") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
  REQUIRE(controller.setSlotsEnabled(1,true));REQUIRE(controller.setMode(domain::RunMode::Run));
