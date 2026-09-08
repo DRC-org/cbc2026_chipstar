@@ -41,6 +41,7 @@ impl Control {
         self.wait_until = None;
         self.lease = None;
         self.sequence = false;
+        self.last_poll = Some(Instant::now());
     }
     fn command(&mut self, op: u8, id: u8, args: [u8; 4], expected: Option<u16>) {
         let tag = self.tag();
@@ -88,6 +89,14 @@ impl Control {
     pub fn busy(&self) -> bool {
         self.pending.is_some() || !self.queue.is_empty() || self.wait_until.is_some()
     }
+    pub fn control_busy(&self) -> bool {
+        !self.queue.is_empty()
+            || self.wait_until.is_some()
+            || self
+                .pending
+                .as_ref()
+                .is_some_and(|(c, _)| c.packet[1] != 24)
+    }
     pub fn elapsed_ms(&self) -> u64 {
         self.epoch
             .map_or(0, |epoch| epoch.elapsed().as_millis() as u64)
@@ -112,7 +121,13 @@ impl Runtime {
             !self.drive.running() && self.drive.awaiting().is_none() && !self.test.enabled,
             "通常運転と個別テストを終了してください"
         );
-        anyhow::ensure!(!self.sts.busy(), "STS操作の完了を待つか停止してください");
+        anyhow::ensure!(
+            !self.sts.control_busy(),
+            "STS操作の完了を待つか停止してください"
+        );
+        // 監視READの遅延応答はtagで識別できるため、操作要求を優先できる。
+        self.sts.pending = None;
+        self.sts.parts = 0;
         self.sts.interested = true;
         self.send("CAN 2 800 0100000000000000")?;
         match operation {
@@ -461,6 +476,32 @@ mod tests {
             true,
         )
         .unwrap();
+    }
+    #[test]
+    fn monitoring_read_does_not_block_motion_or_accept_its_late_reply() {
+        let mut r = runtime();
+        r.sts.monitor = vec![1];
+        r.poll_sts_monitor(Instant::now()).unwrap();
+        let old = r.sts.pending.as_ref().unwrap().0.packet;
+        assert!(r.sts.busy());
+        assert!(!r.sts.control_busy());
+        request(
+            &mut r,
+            Operation::Move {
+                targets: vec![Target::default()],
+            },
+        );
+        assert!(r.sts.control_busy());
+        let reply = [1, 24, old[2], old[3], 0, 0, 0, 0];
+        r.observe_sts(&format!(
+            "CAN_RX bus=2 id=806 data={}",
+            reply.iter().map(|b| format!("{b:02X}")).collect::<String>()
+        ))
+        .unwrap();
+        assert!(r.sts.control_busy());
+        assert!(r.sts.active);
+        r.stop(true).unwrap();
+        assert!(!r.sts.control_busy());
     }
     #[test]
     fn scan_configure_new_id_and_readback_use_simulator() {
