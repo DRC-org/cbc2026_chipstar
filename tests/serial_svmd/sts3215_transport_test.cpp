@@ -14,7 +14,9 @@ std::array<uint8_t,256> regs;
 std::vector<std::vector<uint8_t>> sent;
 bool silent=false, noise=false, ignore_write=false;
 uint8_t fault=0;
-void reset() { regs.fill(0);regs[56]=0x34;regs[57]=0x08;sent.clear();ticks=0;silent=noise=ignore_write=false;fault=0;uart.ErrorCode=0; }
+bool receiver_stalled=false, fail_start=false, receive_error=false;
+unsigned receiver_starts=0;
+void reset() { regs.fill(0);regs[56]=0x34;regs[57]=0x08;sent.clear();ticks=0;silent=noise=ignore_write=false;fault=0;uart.ErrorCode=0;receiver_stalled=fail_start=receive_error=false;receiver_starts=0; }
 void append(const std::vector<uint8_t>& bytes) { for(auto b:bytes) {rx[head]=b;head=(head+1)%size;} dma.count=size-head; }
 void status(uint8_t id, const std::vector<uint8_t>& data, uint8_t error=0) {
  std::vector<uint8_t> p{255,255,id,static_cast<uint8_t>(data.size()+2),error};
@@ -24,11 +26,17 @@ void status(uint8_t id, const std::vector<uint8_t>& data, uint8_t error=0) {
 }
 uint32_t HAL_GetTick() { return ticks++/100; }
 void HAL_Delay(uint32_t ms) { ticks += ms * 100; }
-HAL_StatusTypeDef HAL_UART_Receive_DMA(UART_HandleTypeDef*,uint8_t* data,uint16_t n) {rx=data;size=n;head=0;dma.count=n;return HAL_OK;}
+HAL_StatusTypeDef HAL_UART_Receive_DMA(UART_HandleTypeDef*,uint8_t* data,uint16_t n) {
+ ++receiver_starts;
+ if(fail_start)return HAL_ERROR;
+ receiver_stalled=false;rx=data;size=n;head=0;dma.count=n;return HAL_OK;
+}
 HAL_StatusTypeDef HAL_UART_AbortReceive(UART_HandleTypeDef*) {uart.ErrorCode=0;return HAL_OK;}
 HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef*,uint8_t*,uint16_t,uint32_t) {return HAL_TIMEOUT;}
 HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef*,uint8_t* p,uint16_t n,uint32_t) {
  sent.emplace_back(p,p+n);
+ if(receive_error) {uart.ErrorCode=1;return HAL_OK;}
+ if(receiver_stalled)return HAL_OK;
  if(silent) return HAL_OK;
  if(p[4]==0x83) {
   if(!ignore_write) std::memcpy(regs.data()+p[5],p+8,p[6]);
@@ -44,6 +52,27 @@ HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef*,uint8_t* p,uint16_t n,ui
 TEST_CASE("循環DMAで位置応答を読み古いACKと他IDを読み飛ばす") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
  for(unsigned i=0;i<50;++i) {noise=true;uint16_t position=0;REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);CHECK(position==2100);}
+}
+TEST_CASE("受信停止のタイムアウト後はDMAを張り直し再開失敗も再試行する") {
+ reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ receiver_stalled=true;uint16_t position=0;
+ CHECK(bus.readPosition(1,position)==Sts3215::Result::Timeout);
+ CHECK(bus.lastHalStatus()==HAL_TIMEOUT);
+ fail_start=true;const auto transmissions=sent.size();
+ CHECK(bus.readPosition(1,position)==Sts3215::Result::HalError);
+ CHECK(sent.size()==transmissions);
+ fail_start=false;
+ REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
+ CHECK(position==2100);CHECK(receiver_starts==3);
+}
+TEST_CASE("受信UART異常はHAL成功と誤表示せず次の読取りで復旧する") {
+ reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ receive_error=true;uint16_t position=0;
+ CHECK(bus.readPosition(1,position)==Sts3215::Result::HalError);
+ CHECK(bus.lastHalStatus()==HAL_ERROR);
+ receive_error=false;
+ REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
+ CHECK(receiver_starts==2);CHECK(position==2100);
 }
 TEST_CASE("応答なしや読戻し不一致を送信成功として扱わない") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);

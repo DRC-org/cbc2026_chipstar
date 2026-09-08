@@ -16,6 +16,7 @@ Sts3215::Result Sts3215::startReceiver() {
   rx_tail_ = 0;
   last_hal_status_ = HAL_UART_Receive_DMA(huart_, rx_buffer_, RX_BUFFER_SIZE);
   dma_rx_ = last_hal_status_ == HAL_OK;
+  rx_restart_pending_ = !dma_rx_;
   if (dma_rx_) __HAL_DMA_DISABLE_IT(huart_->hdmarx, DMA_IT_HT | DMA_IT_TC);
   return dma_rx_ ? Result::Ok : Result::HalError;
 }
@@ -23,6 +24,7 @@ Sts3215::Result Sts3215::startReceiver() {
 void Sts3215::stopReceiver() {
   if (dma_rx_) HAL_UART_AbortReceive(huart_);
   dma_rx_ = false;
+  rx_restart_pending_ = false;
 }
 
 void Sts3215::flushRx() {
@@ -45,9 +47,14 @@ Sts3215::Result Sts3215::receiveExact(uint8_t* data, uint16_t length, uint32_t s
   for (uint16_t i = 0; i < length;) {
     if (remainingTimeout(start_ms, timeout_ms_) == 0) {
       last_hal_status_ = HAL_TIMEOUT;
+      rx_restart_pending_ = true;
       return Result::Timeout;
     }
-    if (huart_->ErrorCode != HAL_UART_ERROR_NONE) return Result::HalError;
+    if (huart_->ErrorCode != HAL_UART_ERROR_NONE) {
+      last_hal_status_ = HAL_ERROR;
+      rx_restart_pending_ = true;
+      return Result::HalError;
+    }
     const uint16_t head = (RX_BUFFER_SIZE - __HAL_DMA_GET_COUNTER(huart_->hdmarx)) % RX_BUFFER_SIZE;
     if (head == rx_tail_) continue;
     data[i++] = reinterpret_cast<volatile uint8_t*>(rx_buffer_)[rx_tail_];
@@ -62,7 +69,9 @@ Sts3215::Result Sts3215::sendInstruction(uint8_t id, uint8_t instruction,
                                          uint8_t parameter_count) {
   if (huart_ == nullptr || id == 0xFF) return Result::ArgumentError;
   last_servo_error_ = 0;
-  if (dma_rx_ && huart_->ErrorCode != HAL_UART_ERROR_NONE) {
+  if (rx_restart_pending_ || (dma_rx_ && huart_->ErrorCode != HAL_UART_ERROR_NONE)) {
+    // DMA停止や応答途中のタイムアウト後は、再送前に受信を張り直す。
+    // 再開失敗時も次の命令で再試行し、ポーリング受信へ暗黙に移行しない。
     stopReceiver();
     if (startReceiver() != Result::Ok) return Result::HalError;
   }

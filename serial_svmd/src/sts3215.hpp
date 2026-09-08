@@ -91,6 +91,7 @@ class Sts3215 {
   uint8_t rx_buffer_[RX_BUFFER_SIZE] = {};
   uint16_t rx_tail_ = 0;
   bool dma_rx_ = false;
+  bool rx_restart_pending_ = false;
 
   UART_HandleTypeDef* huart_;
   uint32_t timeout_ms_;
