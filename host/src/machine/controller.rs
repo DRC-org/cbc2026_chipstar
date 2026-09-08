@@ -8,7 +8,7 @@ const STICK_DEADZONE: f32 = 0.1;
 pub struct OriginState {
     pub name: String,
     pub unit: String,
-    /// 採用済みだった原点を、フィードバックの途切れや飛びで失ったか。
+    /// 採用済みだった原点を、通信やフィードバックの途切れで失ったか。
     pub lost: bool,
     /// 原点を採用済みか。未採用の間は可動域のクランプを行わない。
     pub captured: bool,
@@ -26,10 +26,7 @@ pub struct MachineController {
     origin_captured: Vec<bool>,
     soft_limits: bool,
     origin_lost: Vec<bool>,
-    /// 実測値の前回値。電源再投入による飛びを見つけるために持つ。
-    last_measured: Vec<Option<f32>>,
-    /// 接点の前回値。立ち上がりの検出に使う。
-    last_contacts: Option<u8>,
+    moving: Vec<bool>,
 }
 
 impl MachineController {
@@ -40,8 +37,7 @@ impl MachineController {
             origin_captured: vec![false; profile.axes.len()],
             soft_limits: true,
             origin_lost: vec![false; profile.axes.len()],
-            last_measured: vec![None; profile.axes.len()],
-            last_contacts: None,
+            moving: vec![false; profile.axes.len()],
             profile,
             targets,
         }
@@ -75,38 +71,22 @@ impl MachineController {
             .collect()
     }
 
-    /// 原点が信用できなくなった軸を見つける。
-    ///
-    /// EL05の再通電やCCTLの再起動で座標基準を失うことがある。hostが持っている
-    /// 機体座標との対応はそこで崩れるが、実測値は何事もなかったように0付近を
-    /// 返すため、気づかないとソフトリミットが実際とずれたまま動いてしまう。
-    ///
-    /// 検出は2つ。RUN中の応答途絶（FWが `stale` で通知する）と、1周期では
-    /// ありえない実測値の飛び。どちらも起きたら原点を捨て、採り直しを求める。
+    /// CCTLが応答途絶を報告した軸だけ原点を失効する。
+    /// CCTL再起動と通信断はworker側で全軸を失効する。
     fn check_feedback_continuity(&mut self, telemetry: Option<&Telemetry>) {
         let Some(telemetry) = telemetry else {
             return;
         };
         for index in 0..self.profile.axes.len() {
             let axis = &self.profile.axes[index];
-            let Some(slot) = telemetry.slots.get(axis.slot as usize) else {
-                continue;
-            };
-            let measured = slot.measured;
-            // ジョグ0.2秒ぶんを超える移動は、テレメトリ1周期(50ms)では起こらない。
-            // 通常のジョグは1周期あたり0.05秒ぶんしか進まないので4倍の余裕がある。
-            let jump_limit = (axis.speed_per_second * axis.native_per_unit * 0.2).abs();
-            let jumped = self.last_measured[index].is_some_and(|previous| {
-                jump_limit > 0.0 && (measured - previous).abs() > jump_limit
-            });
             let stale = telemetry.stale_slots & (1 << axis.slot) != 0;
-            if (jumped || stale) && self.origin_captured[index] {
+            if stale && self.origin_captured[index] {
+                let measured = telemetry.slots[axis.slot as usize].measured;
                 self.origin_captured[index] = false;
                 self.origin_lost[index] = true;
                 self.origins_native[index] = measured;
                 self.targets[index] = 0.0;
             }
-            self.last_measured[index] = Some(measured);
         }
     }
 
@@ -130,6 +110,21 @@ impl MachineController {
         )
     }
 
+    /// 機体座標の位置目標を保持目標として記録し、ネイティブ位置へ変換する。
+    pub fn set_position_target(&mut self, slot: u8, position: f32) -> Option<f32> {
+        let index = self
+            .profile
+            .axes
+            .iter()
+            .position(|axis| axis.slot == slot)?;
+        if !self.origin_captured[index] || !position.is_finite() {
+            return None;
+        }
+        self.targets[index] = position;
+        self.moving[index] = false;
+        Some(self.origins_native[index] + position * self.profile.axes[index].native_per_unit)
+    }
+
     /// いまの実測位置を目標として取り込む。
     ///
     /// 目標を過去の値のまま RUN すると、機体がその位置まで戻ろうとして跳ねる。
@@ -149,6 +144,7 @@ impl MachineController {
                 continue;
             }
             self.targets[index] = value;
+            self.moving[index] = false;
         }
     }
 
@@ -168,91 +164,209 @@ impl MachineController {
         if !slot.measured.is_finite() || telemetry.stale_slots & (1 << axis.slot) != 0 {
             return false;
         }
-        self.last_measured[index] = Some(slot.measured);
         self.origins_native[index] = slot.measured - axis.origin_position * axis.native_per_unit;
         self.targets[index] = axis.origin_position;
         self.origin_captured[index] = true;
         self.origin_lost[index] = false;
+        self.moving[index] = false;
         true
     }
 
     /// 実測値と接点から原点状態だけを更新する。出力指令は生成しない。
+    ///
+    /// 出力中の軸は保持目標を実測へ追従させない。負荷で位置がずれたときに
+    /// 目標まで一緒にずれると、位置制御が落下を止められないためである。
     pub fn observe(&mut self, telemetry: &Telemetry) {
         self.check_feedback_continuity(Some(telemetry));
-        let contacts = telemetry.contacts;
-        if let (Some(contacts), Some(previous)) = (contacts, self.last_contacts) {
-            for index in 0..self.profile.axes.len() {
-                let Some(limit) = self.profile.axes[index].limit else {
-                    continue;
-                };
-                if limit.reached(contacts) && !limit.reached(previous) {
-                    self.capture_origin(index, Some(telemetry));
-                }
+        for index in 0..self.profile.axes.len() {
+            let axis = &self.profile.axes[index];
+            if telemetry.mode == crate::protocol::telemetry::RunMode::Run
+                && telemetry.enabled_slots & (1 << axis.slot) != 0
+            {
+                continue;
+            }
+            let slot = &telemetry.slots[axis.slot as usize];
+            let value = (slot.measured - self.origins_native[index]) / axis.native_per_unit;
+            if value.is_finite() {
+                self.targets[index] = value;
+                self.moving[index] = false;
             }
         }
-        if contacts.is_some() {
-            self.last_contacts = contacts;
-        }
-        self.hold_at_measured(Some(telemetry));
     }
 
     pub fn invalidate_origins(&mut self) {
         for i in 0..self.profile.axes.len() {
             self.origin_lost[i] |= self.origin_captured[i];
             self.origin_captured[i] = false;
-            self.last_measured[i] = None;
+            self.moving[i] = false;
         }
-        self.last_contacts = None;
+    }
+
+    pub fn invalidate_origin(&mut self, index: usize) {
+        if index < self.origin_captured.len() {
+            self.origin_lost[index] |= self.origin_captured[index];
+            self.origin_captured[index] = false;
+            self.moving[index] = false;
+        }
+    }
+
+    /// 設定変更後も座標定義が同じ軸の原点オフセットを引き継ぐ。
+    pub fn reconfigure(&mut self, profile: MachineProfile) {
+        let mut targets = profile
+            .axes
+            .iter()
+            .map(|axis| axis.initial)
+            .collect::<Vec<_>>();
+        let mut origins_native = vec![0.0; profile.axes.len()];
+        let mut captured = vec![false; profile.axes.len()];
+        let mut lost = vec![false; profile.axes.len()];
+        for (new_index, new_axis) in profile.axes.iter().enumerate() {
+            let Some(old_index) = self
+                .profile
+                .axes
+                .iter()
+                .position(|old_axis| old_axis.name == new_axis.name)
+            else {
+                continue;
+            };
+            let old_axis = &self.profile.axes[old_index];
+            let compatible = old_axis.unit == new_axis.unit
+                && old_axis.slot == new_axis.slot
+                && old_axis.native_per_unit == new_axis.native_per_unit
+                && old_axis.origin_position == new_axis.origin_position;
+            if compatible {
+                targets[new_index] = self.targets[old_index];
+                origins_native[new_index] = self.origins_native[old_index];
+                captured[new_index] = self.origin_captured[old_index];
+                lost[new_index] = self.origin_lost[old_index];
+            } else {
+                lost[new_index] = self.origin_captured[old_index] || self.origin_lost[old_index];
+            }
+        }
+        self.profile = profile;
+        self.targets = targets;
+        self.origins_native = origins_native;
+        self.origin_captured = captured;
+        self.origin_lost = lost;
+        self.moving = vec![false; self.profile.axes.len()];
+    }
+
+    fn constrain_velocity(
+        &self,
+        index: usize,
+        mut velocity: f32,
+        telemetry: &Telemetry,
+        soft_limits: bool,
+    ) -> f32 {
+        let axis = &self.profile.axes[index];
+        if let Some(limit) = axis.limit
+            && (telemetry.contacts.is_none()
+                || telemetry.contacts.is_some_and(|contacts| {
+                    limit.reached(contacts) && velocity * limit.direction > 0.0
+                }))
+        {
+            velocity = 0.0;
+        }
+        let measured = (telemetry.slots[axis.slot as usize].measured - self.origins_native[index])
+            / axis.native_per_unit;
+        if soft_limits {
+            if !self.origin_captured[index] {
+                return 0.0;
+            }
+            if velocity > 0.0 {
+                velocity = velocity.min(((axis.maximum - measured) / 0.2).max(0.0));
+            }
+            if velocity < 0.0 {
+                velocity = velocity.max(((axis.minimum - measured) / 0.2).min(0.0));
+            }
+        }
+        velocity
+    }
+
+    /// 個別速度テストにも通常操縦と同じ接点・可動域制限を適用する。
+    /// 原点未採用時は接点制限だけを適用し、原点調整用の診断を妨げない。
+    pub fn constrain_test_velocity(
+        &self,
+        slot: u8,
+        native_velocity: f32,
+        telemetry: &Telemetry,
+    ) -> Option<f32> {
+        let index = self
+            .profile
+            .axes
+            .iter()
+            .position(|axis| axis.slot == slot)?;
+        let axis = &self.profile.axes[index];
+        let machine_velocity = native_velocity / axis.native_per_unit;
+        let constrained = self.constrain_velocity(
+            index,
+            machine_velocity,
+            telemetry,
+            self.origin_captured[index],
+        );
+        Some(constrained * axis.native_per_unit)
+    }
+
+    /// 有効な軸を現在の実測座標で位置保持する指令を作る。
+    pub fn hold_lines(&mut self, telemetry: &Telemetry, enabled_slots: u8) -> Vec<String> {
+        let mut lines = Vec::new();
+        for index in 0..self.profile.axes.len() {
+            let axis = &self.profile.axes[index];
+            if enabled_slots & (1 << axis.slot) == 0 {
+                continue;
+            }
+            let measured = telemetry.slots[axis.slot as usize].measured;
+            self.targets[index] = (measured - self.origins_native[index]) / axis.native_per_unit;
+            self.moving[index] = false;
+            lines.push(format!("TARGET {} {measured:.5}", axis.slot));
+        }
+        lines
     }
 
     pub fn jog_lines(
-        &self,
+        &mut self,
         input: &ControllerState,
         telemetry: &Telemetry,
         slow: bool,
     ) -> Vec<String> {
-        self.profile
-            .axes
-            .iter()
-            .enumerate()
-            .map(|(i, axis)| {
-                let raw = axis.input_axis.map(|n| input.axes[n]).unwrap_or(0.0);
-                let raw = if raw.is_finite() && raw.abs() >= STICK_DEADZONE {
-                    raw.clamp(-1.0, 1.0)
+        let mut lines = Vec::with_capacity(self.profile.axes.len());
+        for i in 0..self.profile.axes.len() {
+            let axis = &self.profile.axes[i];
+            let raw = axis.input_axis.map(|n| input.axes[n]).unwrap_or(0.0);
+            let raw = if raw.is_finite() && raw.abs() >= STICK_DEADZONE {
+                raw.clamp(-1.0, 1.0)
+            } else {
+                0.0
+            };
+            let slow_scale = self.profile.slow_speed_percent * 0.01;
+            let mut velocity = raw
+                * axis.input_sign
+                * self.profile.effective_axis_speed(axis)
+                * if slow { slow_scale } else { 1.0 };
+            velocity = self.constrain_velocity(i, velocity, telemetry, self.soft_limits);
+            let measured = telemetry.slots[axis.slot as usize].measured;
+            if velocity != 0.0 {
+                self.targets[i] = (measured - self.origins_native[i]) / axis.native_per_unit;
+                self.moving[i] = true;
+                lines.push(format!(
+                    "JOG {} {:.5}",
+                    axis.slot,
+                    velocity * axis.native_per_unit
+                ));
+            } else {
+                if self.moving[i] {
+                    self.targets[i] = (measured - self.origins_native[i]) / axis.native_per_unit;
+                    self.moving[i] = false;
+                }
+                let target = if self.origin_captured[i] {
+                    self.origins_native[i] + self.targets[i] * axis.native_per_unit
                 } else {
-                    0.0
+                    measured
                 };
-                let slow_scale = self.profile.slow_speed_percent * 0.01;
-                let mut velocity = raw
-                    * axis.input_sign
-                    * axis.speed_per_second
-                    * if slow { slow_scale } else { 1.0 };
-                if let Some(limit) = axis.limit
-                    && (telemetry.contacts.is_none()
-                        || telemetry
-                            .contacts
-                            .is_some_and(|c| limit.reached(c) && velocity * limit.direction > 0.0))
-                {
-                    velocity = 0.0;
-                }
-                let measured = (telemetry.slots[axis.slot as usize].measured
-                    - self.origins_native[i])
-                    / axis.native_per_unit;
-                if self.soft_limits {
-                    if !self.origin_captured[i] {
-                        velocity = 0.0;
-                    }
-                    // FWの先行距離100msと通信周期を含め、境界付近では減速する。
-                    if velocity > 0.0 {
-                        velocity = velocity.min(((axis.maximum - measured) / 0.2).max(0.0));
-                    }
-                    if velocity < 0.0 {
-                        velocity = velocity.max(((axis.minimum - measured) / 0.2).min(0.0));
-                    }
-                }
-                format!("JOG {} {:.5}", axis.slot, velocity * axis.native_per_unit)
-            })
-            .collect()
+                lines.push(format!("TARGET {} {target:.5}", axis.slot));
+            }
+        }
+        lines
     }
 
     #[cfg(test)]

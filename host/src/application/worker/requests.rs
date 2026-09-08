@@ -245,13 +245,13 @@ impl Runtime {
                     .machine
                     .axes
                     .iter()
-                    .find(|a| Some(&a.name) == req.axis.as_ref())
+                    .position(|a| Some(&a.name) == req.axis.as_ref())
                     .context("軸名が不正です")?;
-                let mask = 1 << axis.slot;
+                let mask = 1 << self.cfg.machine.axes[axis].slot;
                 self.stop(true)?;
                 self.send("SAFE")?;
                 self.send(&format!("REINIT {mask}"))?;
-                self.machine.invalidate_origins();
+                self.machine.invalidate_origin(axis);
             }
             "apply" => {
                 if self.drive.running() || self.drive.awaiting().is_some() {
@@ -265,7 +265,7 @@ impl Runtime {
                 }
                 self.cfg.machine = profile;
                 self.shared.set_config(self.cfg.clone());
-                self.machine = MachineController::new(self.cfg.machine.clone());
+                self.machine.reconfigure(self.cfg.machine.clone());
                 self.machine.set_soft_limits(!self.adjustment);
                 self.settings = Settings::new(&self.cfg.machine);
                 self.setup = self.fresh();

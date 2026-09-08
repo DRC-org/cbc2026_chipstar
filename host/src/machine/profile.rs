@@ -216,6 +216,23 @@ impl MachineProfile {
         Ok(profile)
     }
 
+    /// 操作速度とモータ側保護上限のうち、小さい方を機体単位で返す。
+    pub fn effective_axis_speed(&self, axis: &AxisProfile) -> f32 {
+        let motor_limit = match axis.slot {
+            0 => self.parameters.get("el05_limit_spd").copied(),
+            1 => self.parameters.get("m3508_max_rpm").map(|rpm| rpm * 6.0),
+            2 => self
+                .parameters
+                .get("m3508_slot2_max_rpm")
+                .map(|rpm| rpm * 6.0),
+            _ => None,
+        }
+        .map(|native_per_second| native_per_second / axis.native_per_unit.abs());
+        motor_limit.map_or(axis.speed_per_second, |limit| {
+            axis.speed_per_second.min(limit)
+        })
+    }
+
     pub fn validate(&self) -> Result<()> {
         if !self.slow_speed_percent.is_finite() || !(1.0..=100.0).contains(&self.slow_speed_percent)
         {

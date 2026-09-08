@@ -136,7 +136,8 @@ impl Runtime {
                 }
                 let value = req.value.context("指令値が必要です")?;
                 target.validate(kind, value, &self.cfg.machine)?;
-                let command_value = if let (Target::Cctl(slot), Kind::Position) = (target, kind) {
+                let mut command_value = if let (Target::Cctl(slot), Kind::Position) = (target, kind)
+                {
                     self.machine
                         .native_position(slot, value)
                         .context("機体座標の原点を採用してから位置テストを実行してください")?
@@ -151,13 +152,24 @@ impl Runtime {
                     {
                         bail!("M3508×2台対応のcctl FWが必要です");
                     }
-                    let t = self.telemetry.as_ref().unwrap();
+                    let t = self.telemetry.as_ref().unwrap().clone();
                     let Target::Cctl(slot) = target else {
                         unreachable!()
                     };
                     let error = t.error_bits[slot as usize];
                     if t.buses & 1 == 0 || t.stale_slots & (1 << slot) != 0 || error != 0 {
                         bail!("対象モータの応答・異常を確認してください");
+                    }
+                    if kind == Kind::Velocity {
+                        let constrained = self
+                            .machine
+                            .constrain_test_velocity(slot, command_value, &t)
+                            .context("対象軸の設定がありません")?;
+                        if command_value != 0.0 && constrained == 0.0 {
+                            self.stop(true)?;
+                            bail!("リミット接点または機体座標の移動端に到達しています");
+                        }
+                        command_value = constrained;
                     }
                 } else if self.telemetry.as_ref().unwrap().buses & 2 == 0
                     || !self

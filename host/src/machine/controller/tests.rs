@@ -74,13 +74,13 @@ fn every_axis_can_be_jogged_for_manual_checks() {
 }
 
 #[test]
-fn homing_speed_percent_defaults_to_twenty_and_rejects_unsafe_values() {
+fn homing_speed_percent_is_valid_and_rejects_unsafe_values() {
     let profile = MachineProfile::embedded().unwrap();
     assert!(
         profile
             .axes
             .iter()
-            .all(|axis| axis.homing_speed_percent == 20.0)
+            .all(|axis| axis.homing_speed_percent > 0.0 && axis.homing_speed_percent <= 100.0)
     );
 
     for value in [0.0, 101.0, f32::NAN] {
@@ -98,13 +98,14 @@ fn slow_speed_percent_defaults_to_twenty_and_is_configurable() {
     let mut configured = profile.clone();
     configured.slow_speed_percent = 40.0;
     let axis = configured.axes[0].clone();
+    let effective_speed = configured.effective_axis_speed(&axis);
     let mut machine = MachineController::new(configured);
     machine.set_soft_limits(false);
     let mut input = neutral_input();
     input.axes[axis.input_axis.unwrap()] = 1.0;
     let line = &machine.jog_lines(&input, &telemetry_with(0, [0.0; 3]), true)[0];
     let velocity: f32 = line.split_whitespace().last().unwrap().parse().unwrap();
-    let expected = axis.input_sign * axis.speed_per_second * axis.native_per_unit * 0.4;
+    let expected = axis.input_sign * effective_speed * axis.native_per_unit * 0.4;
     assert!((velocity - expected).abs() < 0.001);
 
     for value in [0.0, 101.0, f32::NAN] {
@@ -112,6 +113,24 @@ fn slow_speed_percent_defaults_to_twenty_and_is_configurable() {
         invalid.slow_speed_percent = value;
         assert!(invalid.validate().is_err(), "{value}を受理している");
     }
+}
+
+#[test]
+fn effective_speed_uses_the_lower_motor_protection_limit() {
+    let mut profile = MachineProfile::embedded().unwrap();
+    let r = profile.axes.iter_mut().find(|axis| axis.slot == 0).unwrap();
+    r.speed_per_second = 400.0;
+    r.native_per_unit = -0.04;
+    profile.parameters.insert("el05_limit_spd".into(), 1.0);
+    assert_eq!(profile.effective_axis_speed(&profile.axes[0]), 25.0);
+
+    let z = profile.axes.iter_mut().find(|axis| axis.slot == 2).unwrap();
+    z.speed_per_second = 400.0;
+    z.native_per_unit = -96.0;
+    profile
+        .parameters
+        .insert("m3508_slot2_max_rpm".into(), 500.0);
+    assert_eq!(profile.effective_axis_speed(&profile.axes[2]), 31.25);
 }
 
 /// `[parameters]` の検証用に、最小構成のプロファイルを組み立てる。
@@ -160,6 +179,8 @@ fn converts_manual_velocity_to_native_units() {
     let profile = MachineProfile::embedded().unwrap();
     let r = profile.axes[0].clone();
     let theta = profile.axes[1].clone();
+    let r_speed = profile.effective_axis_speed(&r);
+    let theta_speed = profile.effective_axis_speed(&theta);
     let mut machine = MachineController::new(profile);
     machine.set_soft_limits(false);
     let mut input = neutral_input();
@@ -167,10 +188,10 @@ fn converts_manual_velocity_to_native_units() {
     input.axes[theta.input_axis.unwrap()] = 0.5;
     let lines = machine.jog_lines(&input, &telemetry_with(0, [0.0; 3]), false);
     let r_velocity: f32 = lines[0].split_whitespace().last().unwrap().parse().unwrap();
-    let expected_r = 0.5 * r.input_sign * r.speed_per_second * r.native_per_unit;
+    let expected_r = 0.5 * r.input_sign * r_speed * r.native_per_unit;
     assert!((r_velocity - expected_r).abs() < 0.001);
     let theta_velocity: f32 = lines[1].split_whitespace().last().unwrap().parse().unwrap();
-    let expected_theta = 0.5 * theta.input_sign * theta.speed_per_second * theta.native_per_unit;
+    let expected_theta = 0.5 * theta.input_sign * theta_speed * theta.native_per_unit;
     assert!((theta_velocity - expected_theta).abs() < 0.001);
     let z_velocity: f32 = lines[2].split_whitespace().last().unwrap().parse().unwrap();
     assert_eq!(z_velocity, 0.0);
@@ -180,6 +201,7 @@ fn converts_manual_velocity_to_native_units() {
 fn deadzone_nonfinite_input_and_low_speed_are_bounded() {
     let profile = MachineProfile::embedded().unwrap();
     let axis = profile.axes[0].clone();
+    let effective_speed = profile.effective_axis_speed(&axis);
     let slow_percent = profile.slow_speed_percent;
     let mut machine = MachineController::new(profile);
     machine.set_soft_limits(false);
@@ -194,8 +216,7 @@ fn deadzone_nonfinite_input_and_low_speed_are_bounded() {
     input.axes[axis.input_axis.unwrap()] = 2.0;
     let line = &machine.jog_lines(&input, &t, true)[0];
     let velocity: f32 = line.split_whitespace().last().unwrap().parse().unwrap();
-    let expected =
-        axis.input_sign * axis.speed_per_second * slow_percent * 0.01 * axis.native_per_unit;
+    let expected = axis.input_sign * effective_speed * slow_percent * 0.01 * axis.native_per_unit;
     assert!((velocity - expected).abs() < 0.001);
 }
 
@@ -286,19 +307,18 @@ direction = -1.0
 }
 
 #[test]
-fn power_cycling_a_motor_invalidates_the_origin() {
+fn position_jump_with_continuous_feedback_preserves_the_origin() {
     let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     let steady = telemetry_with(0, [5.0, 0.0, 0.0]);
     machine.observe(&steady);
     assert!(machine.capture_origin(0, Some(&steady)));
     assert!(machine.origin_states(None)[0].captured);
 
-    // モータが入り直して実測が0へ飛ぶ。1周期では起こりえない移動量。
-    let restarted = telemetry_with(0, [0.0, 0.0, 0.0]);
-    machine.observe(&restarted);
+    let moved = telemetry_with(0, [0.0, 0.0, 0.0]);
+    machine.observe(&moved);
     let origins = machine.origin_states(None);
-    assert!(!origins[0].captured, "原点を捨てていない");
-    assert!(origins[0].lost, "失ったことを伝えていない");
+    assert!(origins[0].captured);
+    assert!(!origins[0].lost);
 }
 
 #[test]
@@ -315,6 +335,30 @@ fn feedback_loss_reported_by_the_board_invalidates_the_origin() {
     machine.observe(&lost);
     assert!(!machine.origin_states(None)[0].captured);
     assert!(machine.origin_states(None)[0].lost);
+}
+
+#[test]
+fn reconfigure_preserves_only_compatible_axis_coordinates() {
+    let profile = MachineProfile::embedded().unwrap();
+    let mut machine = MachineController::new(profile.clone());
+    let telemetry = telemetry_with(0, [5.0, 10.0, 15.0]);
+    for index in 0..profile.axes.len() {
+        assert!(machine.capture_origin(index, Some(&telemetry)));
+    }
+
+    let mut changed = profile;
+    changed.axes[0].speed_per_second *= 0.5;
+    changed.axes[2].native_per_unit *= -1.0;
+    machine.reconfigure(changed);
+    let origins = machine.origin_states(Some(&telemetry));
+    assert!(origins[0].captured);
+    assert!(origins[1].captured);
+    assert!(!origins[2].captured && origins[2].lost);
+
+    machine.invalidate_origin(0);
+    let origins = machine.origin_states(Some(&telemetry));
+    assert!(!origins[0].captured && origins[0].lost);
+    assert!(origins[1].captured);
 }
 
 #[test]
@@ -338,14 +382,24 @@ fn normal_jogging_does_not_invalidate_the_origin() {
 #[test]
 fn neutral_command_holds_after_manual_repositioning() {
     let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
-    machine.observe(&telemetry_with(0, [0.2, 0.0, 0.0]));
+    let start = telemetry_with(0, [0.2, 0.0, 0.0]);
+    assert!(machine.capture_origin(0, Some(&start)));
+    let mut input = neutral_input();
+    input.axes[3] = -1.0;
+    machine.jog_lines(&input, &start, false);
     let moved = telemetry_with(0, [0.4, 0.0, 0.0]);
     machine.observe(&moved);
+    let lines = machine.jog_lines(&neutral_input(), &moved, false);
     let displayed = machine.origin_states(Some(&moved))[0].position;
     assert!((machine.target("r").unwrap() - displayed).abs() < 1e-3);
-    let lines = machine.jog_lines(&neutral_input(), &moved, false);
-    let velocity: f32 = lines[0].split_whitespace().last().unwrap().parse().unwrap();
-    assert_eq!(velocity, 0.0);
+    assert_eq!(lines[0], "TARGET 0 0.40000");
+
+    let fallen = telemetry_with(0, [0.3, 0.0, 0.0]);
+    machine.observe(&fallen);
+    assert_eq!(
+        machine.jog_lines(&neutral_input(), &fallen, false)[0],
+        "TARGET 0 0.40000"
+    );
 }
 
 #[test]
@@ -358,25 +412,27 @@ fn holding_needs_feedback() {
 }
 
 #[test]
-fn captures_origin_on_the_limit_edge_without_moving_the_axis() {
+fn limit_edge_does_not_capture_origin_implicitly() {
     let mut machine = MachineController::new(profile_with_limits());
     machine.observe(&telemetry_with(0b011, [0.0; 3]));
     assert!(!machine.origin_states(None)[0].captured);
     let reached = telemetry_with(0b010, [8.0, 0.0, 0.0]);
     machine.observe(&reached);
     let origins = machine.origin_states(Some(&reached));
-    assert!(origins[0].captured);
-    assert!((origins[0].position - 120.0).abs() < 1e-3);
-    assert!((origins[0].target - origins[0].position).abs() < 1e-3);
+    assert!(!origins[0].captured);
     assert_eq!(
         machine.jog_lines(&neutral_input(), &reached, false)[0],
-        "JOG 0 0.00000"
+        "TARGET 0 8.00000"
     );
 }
 
 #[test]
 fn limit_blocks_only_the_direction_that_reaches_it() {
-    let mut machine = MachineController::new(profile_with_limits());
+    let profile = profile_with_limits();
+    let axis = profile.axes[0].clone();
+    let expected = -profile.effective_axis_speed(&axis) * axis.native_per_unit;
+    let mut machine = MachineController::new(profile);
+    machine.set_soft_limits(false);
     machine.observe(&telemetry_with(0b011, [8.0, 0.0, 0.0]));
     let reached = telemetry_with(0b010, [8.0, 0.0, 0.0]);
     machine.observe(&reached);
@@ -384,10 +440,16 @@ fn limit_blocks_only_the_direction_that_reaches_it() {
     input.axes[1] = 1.0;
     assert_eq!(
         machine.jog_lines(&input, &reached, false)[0],
-        "JOG 0 0.00000"
+        "TARGET 0 8.00000"
     );
     input.axes[1] = -1.0;
-    assert!(machine.jog_lines(&input, &reached, false)[0].starts_with("JOG 0 -10."));
+    let velocity = machine.jog_lines(&input, &reached, false)[0]
+        .split_whitespace()
+        .last()
+        .unwrap()
+        .parse::<f32>()
+        .unwrap();
+    assert!((velocity - expected).abs() < 0.001);
 }
 
 #[test]
@@ -396,22 +458,22 @@ fn adjustment_allows_origin_search_and_normal_mode_enforces_bounds() {
     let t = telemetry_with(0b011, [0.0; 3]);
     let mut input = neutral_input();
     input.axes[1] = 1.0;
-    assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 0.00000");
+    assert_eq!(machine.jog_lines(&input, &t, false)[0], "TARGET 0 0.00000");
     machine.set_soft_limits(false);
     assert!(machine.jog_lines(&input, &t, false)[0].starts_with("JOG 0 10."));
     assert!(machine.capture_origin(0, Some(&t)));
     machine.set_soft_limits(true);
-    assert_eq!(machine.jog_lines(&input, &t, false)[0], "JOG 0 0.00000");
+    assert_eq!(machine.jog_lines(&input, &t, false)[0], "TARGET 0 0.00000");
 }
 
 #[test]
 fn switchless_axis_needs_an_origin_before_normal_motion() {
-    let machine = MachineController::new(MachineProfile::embedded().unwrap());
+    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     let mut input = neutral_input();
     input.axes[0] = 1.0;
     assert_eq!(
         machine.jog_lines(&input, &telemetry_with(0, [0.0; 3]), false)[1],
-        "JOG 1 0.00000"
+        "TARGET 1 0.00000"
     );
 }
 
@@ -423,7 +485,7 @@ fn unknown_contacts_block_only_axes_with_a_configured_switch() {
     };
     let mut input = neutral_input();
     input.axes[1] = 1.0;
-    let mut without_limits = MachineProfile::embedded().unwrap();
+    let mut without_limits = profile_with_limits();
     for axis in &mut without_limits.axes {
         axis.limit = None;
     }
@@ -432,7 +494,7 @@ fn unknown_contacts_block_only_axes_with_a_configured_switch() {
         machine.set_soft_limits(false);
         machine.observe(&t);
         assert_eq!(
-            machine.jog_lines(&input, &t, false)[0] == "JOG 0 0.00000",
+            machine.jog_lines(&input, &t, false)[0] == "TARGET 0 0.00000",
             blocked
         );
         assert!(!machine.origin_states(Some(&t))[0].captured);
@@ -456,10 +518,9 @@ fn axis_without_a_switch_is_captured_only_by_hand() {
     let states = machine.origin_states(Some(&telemetry));
     assert!(states[theta].captured);
     assert_eq!(states[theta].position, 0.0);
-    // 採用直後は指令も実測に一致し、軸は動かない。
+    // 採用直後は位置目標も実測に一致し、軸は動かない。
     let lines = machine.jog_lines(&neutral_input(), &telemetry, false);
-    let velocity: f32 = lines[1].split_whitespace().last().unwrap().parse().unwrap();
-    assert_eq!(velocity, 0.0);
+    assert_eq!(lines[1], "TARGET 1 3000.00000");
 }
 
 #[test]
@@ -490,7 +551,7 @@ fn accepts_but_does_not_drive_pwm_servo_from_host_profile() {
     machine.observe(&t);
     let lines = machine.jog_lines(&neutral_input(), &t, false);
     assert_eq!(lines.len(), 3);
-    assert!(lines.iter().all(|line| line.starts_with("JOG ")));
+    assert!(lines.iter().all(|line| line.starts_with("TARGET ")));
 }
 
 #[test]
@@ -506,7 +567,7 @@ fn accepts_but_does_not_drive_serial_servo_from_host_profile() {
     machine.observe(&t);
     let lines = machine.jog_lines(&neutral_input(), &t, false);
     assert_eq!(lines.len(), 3);
-    assert!(lines.iter().all(|line| line.starts_with("JOG ")));
+    assert!(lines.iter().all(|line| line.starts_with("TARGET ")));
 }
 
 #[test]

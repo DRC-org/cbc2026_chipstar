@@ -451,7 +451,7 @@ fn emergency_revokes_ai_and_requires_human_reset_without_resuming() {
 }
 
 #[test]
-fn output_cut_preserves_origins_but_disconnect_invalidates_them() {
+fn output_cut_and_generic_fault_preserve_origins() {
     let mut runtime = screen_runtime();
     runtime.request(&Request::new("cut"), true).unwrap();
     assert!(
@@ -467,7 +467,7 @@ fn output_cut_preserves_origins_but_disconnect_invalidates_them() {
             .machine
             .origin_states(runtime.telemetry.as_ref())
             .iter()
-            .all(|o| !o.captured)
+            .all(|o| o.captured)
     );
 }
 
@@ -806,7 +806,7 @@ fn individual_fault_blocks_held_requests_until_explicit_release() {
 }
 
 #[test]
-fn explicit_position_update_preserves_output_and_requires_origin_after_a_fault() {
+fn explicit_position_update_preserves_output_and_origin_after_a_fault() {
     let mut runtime = screen_runtime();
     select_test(&mut runtime, "cctl:0", "position");
     let output = Request {
@@ -821,12 +821,13 @@ fn explicit_position_update_preserves_output_and_requires_origin_after_a_fault()
     assert_eq!(runtime.test.started, started);
     runtime.fault("test fault".into());
     assert!(runtime.test.restart_blocked);
-    assert!(runtime.request(&output, true).is_err());
     assert!(!runtime.test.active);
     assert!(
         runtime
             .machine
-            .capture_origin(0, runtime.telemetry.as_ref())
+            .origin_states(runtime.telemetry.as_ref())
+            .iter()
+            .all(|origin| origin.captured)
     );
     runtime.request(&output, true).unwrap();
     assert!(runtime.test.active);

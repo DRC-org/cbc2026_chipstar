@@ -270,7 +270,7 @@ fn settings_are_temporary_until_explicitly_saved() {
 }
 
 #[test]
-fn rejected_drive_recovery_stays_stopped_and_requires_origin_again() {
+fn rejected_drive_recovery_stays_stopped_and_preserves_origins() {
     let host = Host::new();
     let token = host.claim();
     assert!(
@@ -291,18 +291,15 @@ fn rejected_drive_recovery_stays_stopped_and_requires_origin_again() {
     assert_eq!(rejected["configured"].as_bool(), Some(true));
     assert_eq!(rejected["running"].as_bool(), Some(false));
     assert_eq!(rejected["outputs_active"].as_bool(), Some(false));
-    assert!(all_origins(&rejected, false));
-    assert!(!host.request("run", &token).ok);
+    assert!(all_origins(&rejected, true));
     assert!(host.request("recover", &token).ok);
     let recovered = host.wait(|s| {
         s["configured"].as_bool() == Some(true) && s["error"].as_str().is_some_and(str::is_empty)
     });
     assert_eq!(recovered["running"].as_bool(), Some(false));
-    assert_eq!(recovered["outputs_active"].as_bool(), Some(false));
-    assert!(all_origins(&recovered, false));
-    assert!(!host.request("run", &token).ok);
-    host.origins(&token);
+    assert!(all_origins(&recovered, true));
     host.run(&token);
+    host.wait(|state| state["running"].as_bool() == Some(true));
 }
 
 #[test]
@@ -445,14 +442,13 @@ fn running_rejects_configuration_and_mode_switches_without_side_effects() {
 }
 
 #[test]
-fn telemetry_faults_stop_outputs_invalidate_origins_and_block_restart() {
+fn telemetry_faults_stop_outputs_and_invalidate_only_lost_coordinates() {
     for (fault, expected_error) in [
         ("mode_stop", "運転状態または原点"),
         ("disable_slot0", "運転状態または原点"),
         ("stale_slot0", "運転状態または原点"),
         ("error_slot0", "モータ応答・異常状態"),
         ("restart", "基板の再起動"),
-        ("jump_slot0", "運転状態または原点"),
     ] {
         let host = Host::new();
         let token = host.claim();
@@ -481,8 +477,23 @@ fn telemetry_faults_stop_outputs_invalidate_origins_and_block_restart() {
             Some(false),
             "fault={fault}"
         );
-        assert!(all_origins(&stopped, false), "fault={fault}");
-        assert!(!host.request("run", &token).ok, "fault={fault}");
+        let captured = |name: &str| {
+            stopped["origins"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|axis| axis["name"].as_str() == Some(name))
+                .and_then(|axis| axis["captured"].as_bool())
+                .unwrap()
+        };
+        match fault {
+            "restart" => assert!(all_origins(&stopped, false), "fault={fault}"),
+            "stale_slot0" => {
+                assert!(!captured("r"), "fault={fault}");
+                assert!(captured("theta") && captured("z"), "fault={fault}");
+            }
+            _ => assert!(all_origins(&stopped, true), "fault={fault}"),
+        }
     }
 }
 

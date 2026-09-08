@@ -170,8 +170,10 @@ impl Runtime {
             .as_ref()
             .is_some_and(|t| t.mode == RunMode::Run)
         {
-            for axis in self.cfg.machine.axes.clone() {
-                self.send(&format!("JOG {} 0", axis.slot))?;
+            let enabled_slots = self.telemetry.as_ref().unwrap().enabled_slots;
+            let telemetry = self.telemetry.as_ref().unwrap().clone();
+            for line in self.machine.hold_lines(&telemetry, enabled_slots) {
+                self.send(&line)?;
             }
         }
         self.reason = if cut {
@@ -208,7 +210,6 @@ impl Runtime {
     }
     fn fault(&mut self, reason: String) {
         let _ = self.stop(true);
-        self.machine.invalidate_origins();
         self.reason = reason.clone();
         self.error = reason;
     }
@@ -230,6 +231,17 @@ impl Runtime {
         self.reason = "通信失敗。再接続と原点確認が必要です".into();
     }
     fn ready(&self) -> Result<()> {
+        self.axes_ready(true)?;
+        let device = self.device.as_ref().unwrap();
+        let t = self.telemetry.as_ref().unwrap();
+        if self.cfg.machine.requires_can_bus_2()
+            && (!device.can_buses.contains(&2) || t.buses & 2 == 0)
+        {
+            bail!("周辺基板のCAN接続がありません");
+        }
+        Ok(())
+    }
+    fn axes_ready(&self, require_origins: bool) -> Result<()> {
         if self.cfg.machine.axes.is_empty() {
             bail!("操縦するcctlの軸を指定してください");
         }
@@ -258,15 +270,23 @@ impl Runtime {
             bail!("M3508×2台対応のcctl FWが必要です");
         }
         let t = self.telemetry.as_ref().unwrap();
-        if t.stale_slots != 0 || t.buses & 1 == 0 || t.error_bits.iter().any(|&e| e != 0) {
+        let mask = self
+            .cfg
+            .machine
+            .axes
+            .iter()
+            .fold(0u8, |mask, axis| mask | 1 << axis.slot);
+        let axis_error = self
+            .cfg
+            .machine
+            .axes
+            .iter()
+            .any(|axis| t.error_bits[usize::from(axis.slot)] != 0);
+        if t.stale_slots & mask != 0 || t.buses & 1 == 0 || axis_error {
             bail!("モータ応答・異常状態を確認してください");
         }
-        if self.cfg.machine.requires_can_bus_2()
-            && (!device.can_buses.contains(&2) || t.buses & 2 == 0)
-        {
-            bail!("周辺基板のCAN接続がありません");
-        }
-        if !self.adjustment
+        if require_origins
+            && !self.adjustment
             && self
                 .machine
                 .origin_states(Some(t))
@@ -459,6 +479,7 @@ impl Runtime {
                     t.uptime_ms < old.uptime_ms
                         && old.uptime_ms.wrapping_sub(t.uptime_ms) < 0x80000000
                 }) {
+                    self.machine.invalidate_origins();
                     self.fault("基板の再起動を検出しました".into());
                     self.setup = false;
                     self.setup_error = false;

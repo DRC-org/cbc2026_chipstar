@@ -205,8 +205,14 @@ impl BridgeApp {
                             "低速固定中。機体座標による移動範囲の制限は無効です。",
                         );
                     }
+                    let effective_speed = self
+                        .edit
+                        .axes
+                        .iter()
+                        .find(|axis| axis.name == name)
+                        .map(|axis| self.edit.effective_axis_speed(axis));
                     if let Some(axis) = self.edit.axes.iter_mut().find(|axis| axis.name == name) {
-                        edited |= axis_settings(ui, axis);
+                        edited |= axis_settings(ui, axis, effective_speed);
                     }
                     if name == "theta" {
                         ui.colored_label(
@@ -354,7 +360,11 @@ impl BridgeApp {
     }
 }
 
-fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> bool {
+fn axis_settings(
+    ui: &mut egui::Ui,
+    axis: &mut crate::machine::AxisProfile,
+    effective_speed: Option<f32>,
+) -> bool {
     let mut edited = false;
     let unit = axis.unit.clone();
     ui.add_space(8.0);
@@ -424,5 +434,16 @@ fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> b
                 ui.end_row();
             }
         });
+    if let Some(effective) = effective_speed
+        && effective + f32::EPSILON < axis.speed_per_second
+    {
+        ui.colored_label(
+            WARNING,
+            format!(
+                "実効最高速度はモータ保護上限により {:.2} {} です。低速率とホーミング速度率はこの値に掛かります。",
+                effective, axis.unit
+            ),
+        );
+    }
     edited
 }
