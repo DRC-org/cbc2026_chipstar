@@ -124,6 +124,16 @@ impl Simulator {
                 "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=default jog=1 motors=el05,m3508,m3508"
                     .into(),
             ),
+            ["CANSTAT"] => {
+                self.rx.push_back(
+                    "CANSTAT bus=1 started=1 busoff=0 lec=0 tec=0 rec=0 cel=0 tx_failed=0"
+                        .into(),
+                );
+                self.rx.push_back(
+                    "CANSTAT bus=2 started=1 busoff=0 lec=0 tec=0 rec=0 cel=0 tx_failed=0"
+                        .into(),
+                );
+            }
             ["HEARTBEAT"] => self.contact = Instant::now(),
             ["STOP"] | ["SAFE"] => {
                 self.mode = if line == "STOP" { "STOP" } else { "SAFE" };

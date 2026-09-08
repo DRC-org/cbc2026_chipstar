@@ -1,4 +1,5 @@
 pub mod board;
+pub mod can;
 pub mod dcmd;
 pub mod device;
 pub mod inputs;

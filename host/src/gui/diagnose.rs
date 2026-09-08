@@ -48,20 +48,29 @@ impl BridgeApp {
                     },
                     if status.configured { ACCENT } else { WARNING },
                 );
-                let mut boards = std::collections::BTreeSet::new();
-                for board in status.peripherals.keys() {
-                    if let Some(label) = peripheral_group(board) {
-                        boards.insert(label);
-                    }
+                for bus in &status.can_buses {
+                    chip(
+                        ui,
+                        &format!("{} {}", bus.label, health_label(bus.health)),
+                        health_color(bus.health),
+                    );
                 }
-                for board in boards {
-                    chip(ui, &format!("{board} 受信中"), ACCENT);
-                }
-                if status.peripherals.is_empty() {
-                    ui.label(
-                        RichText::new("周辺基板からの応答なし")
-                            .size(12.0)
-                            .color(MUTED),
+                let healthy = status
+                    .can_devices
+                    .iter()
+                    .filter(|device| {
+                        device.health == crate::application::app_state::CommunicationHealth::Healthy
+                    })
+                    .count();
+                if !status.can_devices.is_empty() {
+                    chip(
+                        ui,
+                        &format!("機器 {healthy}/{} 正常", status.can_devices.len()),
+                        if healthy == status.can_devices.len() {
+                            ACCENT
+                        } else {
+                            WARNING
+                        },
                     );
                 }
                 if !status.error.is_empty() && ui.button("異常ログを開く").clicked() {
@@ -82,7 +91,7 @@ impl BridgeApp {
                 for (item, label) in [
                     (DiagnosisView::Tests, "個別に動作確認"),
                     (DiagnosisView::Sts, "STS3215の設定"),
-                    (DiagnosisView::Connection, "接続と再初期化"),
+                    (DiagnosisView::Connection, "通信・再初期化"),
                     (DiagnosisView::Log, "通信ログ"),
                 ] {
                     ui.selectable_value(&mut view, item, label);
@@ -121,9 +130,11 @@ impl BridgeApp {
             DiagnosisView::Connection => {
                 section(
                     ui,
-                    "接続と再初期化",
-                    "hostの接続先変更と、再通電したモータの初期化を行います。",
+                    "通信状態と再初期化",
+                    "CANバスと各機器の応答を確認してから、必要な機器を再初期化します。",
                 );
+                self.can_communication_panel(ui, &status);
+                ui.add_space(12.0);
                 ui.columns(2, |columns| {
                     panel().show(&mut columns[0], |ui| {
                         ui.set_width(ui.available_width());
@@ -311,17 +322,128 @@ impl BridgeApp {
         });
         self.switch_diagnosis_view(view);
     }
+
+    fn can_communication_panel(&self, ui: &mut egui::Ui, status: &Status) {
+        panel().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new("CANバス").strong());
+            ui.label(
+                RichText::new("使用可否とエラーカウンタはcctlから1秒周期で取得します。")
+                    .size(12.0)
+                    .color(MUTED),
+            );
+            ui.add_space(8.0);
+            ui.columns(2, |columns| {
+                for (index, bus) in status.can_buses.iter().enumerate() {
+                    let ui = &mut columns[index.min(1)];
+                    egui::Frame::new()
+                        .fill(BG)
+                        .stroke(egui::Stroke::new(1.0, BORDER))
+                        .corner_radius(7)
+                        .inner_margin(10.0)
+                        .show(ui, |ui| {
+                            ui.horizontal(|ui| {
+                                ui.label(RichText::new(&bus.label).strong());
+                                chip(ui, health_label(bus.health), health_color(bus.health));
+                            });
+                            ui.label(&bus.detail);
+                            ui.label(
+                                RichText::new(format!(
+                                    "started={}  bus-off={}  LEC={}  TEC={}  REC={}  CEL={}  送信失敗={}  更新={}",
+                                    optional_bool(bus.started),
+                                    optional_bool(bus.bus_off),
+                                    optional_number(bus.lec),
+                                    optional_number(bus.tec),
+                                    optional_number(bus.rec),
+                                    optional_number(bus.cel),
+                                    bus.tx_failed.map_or_else(|| "—".into(), |v| v.to_string()),
+                                    age_label(bus.age_ms),
+                                ))
+                                .monospace()
+                                .size(11.0)
+                                .color(MUTED),
+                            );
+                        });
+                }
+            });
+            ui.add_space(14.0);
+            ui.label(RichText::new("基板・アクチュエータ").strong());
+            ui.label(
+                RichText::new(
+                    "バスが正常でも、対象機器の応答が途絶えていれば個別に異常表示します。",
+                )
+                .size(12.0)
+                .color(MUTED),
+            );
+            ui.add_space(6.0);
+            egui::ScrollArea::horizontal()
+                .id_salt("can-device-health")
+                .show(ui, |ui| {
+                    egui::Grid::new("can-device-health-grid")
+                        .num_columns(5)
+                        .striped(true)
+                        .spacing([18.0, 8.0])
+                        .min_col_width(90.0)
+                        .show(ui, |ui| {
+                            for heading in ["状態", "機器", "経路", "最終更新", "詳細"] {
+                                ui.label(RichText::new(heading).strong().color(MUTED));
+                            }
+                            ui.end_row();
+                            for device in &status.can_devices {
+                                chip(
+                                    ui,
+                                    health_label(device.health),
+                                    health_color(device.health),
+                                );
+                                ui.label(RichText::new(&device.name).strong());
+                                ui.label(format!("FDCAN{} · {}", device.bus, device.address));
+                                ui.label(age_label(device.age_ms));
+                                ui.label(&device.detail);
+                                ui.end_row();
+                            }
+                        });
+                });
+        });
+    }
 }
 
-fn peripheral_group(board: &str) -> Option<&'static str> {
-    match board {
-        "cctl 接点" => None,
-        "pwm" => Some("PWMサーボ基板"),
-        "dc" | "DCMD" | "dcmd 接点" => Some("DCモータ基板"),
-        "sts" | "serial_svmd 接点" => Some("STS3215基板"),
-        name if name.starts_with("STS3215 ID ") => Some("STS3215"),
-        name if name.starts_with("C620 ") => Some("C620"),
-        _ => Some("周辺基板"),
+fn health_label(health: crate::application::app_state::CommunicationHealth) -> &'static str {
+    use crate::application::app_state::CommunicationHealth::*;
+    match health {
+        Healthy => "正常",
+        Warning => "要確認",
+        Fault => "異常",
+        Unknown => "不明",
+    }
+}
+
+fn health_color(health: crate::application::app_state::CommunicationHealth) -> Color32 {
+    use crate::application::app_state::CommunicationHealth::*;
+    match health {
+        Healthy => ACCENT,
+        Warning => WARNING,
+        Fault => DANGER,
+        Unknown => MUTED,
+    }
+}
+
+fn optional_bool(value: Option<bool>) -> &'static str {
+    match value {
+        Some(true) => "1",
+        Some(false) => "0",
+        None => "—",
+    }
+}
+
+fn optional_number<T: ToString>(value: Option<T>) -> String {
+    value.map_or_else(|| "—".into(), |value| value.to_string())
+}
+
+fn age_label(age_ms: Option<u64>) -> String {
+    match age_ms {
+        Some(age) if age < 1000 => format!("{age} ms前"),
+        Some(age) => format!("{:.1} s前", age as f32 / 1000.0),
+        None => "未受信".into(),
     }
 }
 

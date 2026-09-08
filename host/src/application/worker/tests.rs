@@ -103,6 +103,83 @@ fn status_keeps_dualsense_input_separate_from_the_active_ai_input() {
     assert!(runtime.shared.status_snapshot().gamepad_input.is_none());
 }
 
+#[test]
+fn can_status_separates_bus_off_from_c620_id_mismatch() {
+    let mut runtime = screen_runtime();
+    runtime.can_diagnostics.insert(
+        1,
+        (
+            crate::protocol::can::Diagnostics {
+                bus: 1,
+                started: true,
+                bus_off: false,
+                lec: 0,
+                tec: 0,
+                rec: 0,
+                cel: 42,
+                tx_failed: 9,
+            },
+            Instant::now(),
+        ),
+    );
+    runtime.c620_scan = Some((0b0000_0001, Instant::now()));
+
+    let devices = runtime.can_device_statuses();
+    let theta = devices
+        .iter()
+        .find(|device| device.name.starts_with("theta軸"))
+        .unwrap();
+    let z = devices
+        .iter()
+        .find(|device| device.name.starts_with("z軸"))
+        .unwrap();
+    assert_eq!(theta.health, CommunicationHealth::Healthy);
+    assert_eq!(z.health, CommunicationHealth::Fault);
+    assert!(z.detail.contains("設定ID"));
+
+    runtime.can_diagnostics.get_mut(&1).unwrap().0.bus_off = true;
+    runtime.can_diagnostics.get_mut(&1).unwrap().0.tec = 255;
+    let buses = runtime.can_bus_statuses();
+    assert_eq!(buses[0].health, CommunicationHealth::Fault);
+    assert!(buses[0].detail.contains("bus-off"));
+    assert_eq!(buses[0].tec, Some(255));
+}
+
+#[test]
+fn can_status_distinguishes_serial_svmd_board_from_servo_feedback() {
+    let mut runtime = screen_runtime();
+    runtime.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
+    runtime.test.peers.insert("sts", Instant::now());
+
+    let waiting = runtime.can_device_statuses();
+    let board = waiting
+        .iter()
+        .find(|device| device.name == "STS3215基板")
+        .unwrap();
+    let servo = waiting
+        .iter()
+        .find(|device| device.name.contains("STS3215") && device.name != "STS3215基板")
+        .unwrap();
+    assert_eq!(board.health, CommunicationHealth::Healthy);
+    assert_eq!(servo.health, CommunicationHealth::Fault);
+    assert!(servo.detail.contains("サーボ個体"));
+
+    runtime.servo_feedback.insert(
+        1,
+        ServoFeedback {
+            seen: Instant::now(),
+            error: 0,
+            detail: "位置=2048、出力=解除、エラー=0x00".into(),
+        },
+    );
+    let responding = runtime.can_device_statuses();
+    let servo = responding
+        .iter()
+        .find(|device| device.name.contains("STS3215") && device.name != "STS3215基板")
+        .unwrap();
+    assert_eq!(servo.health, CommunicationHealth::Healthy);
+}
+
 pub(super) fn screen_runtime() -> Runtime {
     let mut profile = MachineProfile::embedded().unwrap();
     profile.pwm_servos.clear();

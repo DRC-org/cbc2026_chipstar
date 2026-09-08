@@ -34,6 +34,42 @@ pub struct BridgeConfig {
     pub simulate: bool,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CommunicationHealth {
+    Healthy,
+    Warning,
+    Fault,
+    #[default]
+    Unknown,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct CanBusStatus {
+    pub bus: u8,
+    pub label: String,
+    pub health: CommunicationHealth,
+    pub detail: String,
+    pub age_ms: Option<u64>,
+    pub started: Option<bool>,
+    pub bus_off: Option<bool>,
+    pub lec: Option<u8>,
+    pub tec: Option<u8>,
+    pub rec: Option<u8>,
+    pub cel: Option<u8>,
+    pub tx_failed: Option<u32>,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct CanDeviceStatus {
+    pub name: String,
+    pub bus: u8,
+    pub address: String,
+    pub health: CommunicationHealth,
+    pub detail: String,
+    pub age_ms: Option<u64>,
+}
+
 #[derive(Clone, Default, Serialize)]
 pub struct Status {
     pub homing: Option<String>,
@@ -69,6 +105,8 @@ pub struct Status {
     pub parameters_expected: usize,
     pub configuration: String,
     pub peripherals: std::collections::BTreeMap<String, String>,
+    pub can_buses: Vec<CanBusStatus>,
+    pub can_devices: Vec<CanDeviceStatus>,
     pub saved: bool,
     pub logs: VecDeque<String>,
 }

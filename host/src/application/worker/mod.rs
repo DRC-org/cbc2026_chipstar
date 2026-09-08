@@ -1,7 +1,9 @@
 //! 機体接続と操作権を単一ワーカーが所有する。
 use super::authority::Authority;
 use crate::{
-    application::app_state::{BridgeConfig, Shared},
+    application::app_state::{
+        BridgeConfig, CanBusStatus, CanDeviceStatus, CommunicationHealth, Shared,
+    },
     application::command::{Reply, Request},
     application::settings::Settings,
     input::{ControllerState, controller},
@@ -67,6 +69,18 @@ struct Runtime {
     reason: String,
     error: String,
     communication_error: Option<String>,
+    can_diagnostics: std::collections::BTreeMap<u8, (crate::protocol::can::Diagnostics, Instant)>,
+    c620_scan: Option<(u8, Instant)>,
+    servo_feedback: std::collections::BTreeMap<u8, ServoFeedback>,
+    last_servo_health_poll: Option<Instant>,
+    servo_health_poll_index: usize,
+}
+
+#[derive(Clone)]
+struct ServoFeedback {
+    seen: Instant,
+    error: u8,
+    detail: String,
 }
 impl Runtime {
     fn new(shared: Arc<Shared>) -> Self {
@@ -100,6 +114,11 @@ impl Runtime {
             reason: "接続待ち".into(),
             error: String::new(),
             communication_error: None,
+            can_diagnostics: std::collections::BTreeMap::new(),
+            c620_scan: None,
+            servo_feedback: std::collections::BTreeMap::new(),
+            last_servo_health_poll: None,
+            servo_health_poll_index: 0,
         }
     }
     fn send(&mut self, line: &str) -> Result<()> {
@@ -326,6 +345,14 @@ impl Runtime {
             }
             self.shared.log(format!("RX {line}"));
             if let Some((id, detail)) = crate::protocol::serial_svmd::parse_diagnostic(&line) {
+                self.servo_feedback.insert(
+                    id,
+                    ServoFeedback {
+                        seen: Instant::now(),
+                        error: 0xFF,
+                        detail: detail.clone(),
+                    },
+                );
                 self.shared.update_status(|s| {
                     s.peripherals
                         .insert(format!("STS3215 ID {id} 通信診断"), detail);
@@ -354,6 +381,19 @@ impl Runtime {
                 });
             }
             if let Some(servo) = crate::protocol::serial_svmd::parse_state(&line) {
+                self.servo_feedback.insert(
+                    servo.id,
+                    ServoFeedback {
+                        seen: Instant::now(),
+                        error: servo.error,
+                        detail: format!(
+                            "位置={}、出力={}、エラー=0x{:02X}",
+                            servo.position,
+                            if servo.enabled { "有効" } else { "解除" },
+                            servo.error
+                        ),
+                    },
+                );
                 self.shared.update_status(|s| {
                     if servo.error == 0 {
                         s.peripherals
@@ -376,6 +416,7 @@ impl Runtime {
                     .next()
                     .and_then(|v| v.parse::<u8>().ok())
             {
+                self.c620_scan = Some((mask, Instant::now()));
                 let ids = (1..=8)
                     .filter(|id| mask & (1 << (id - 1)) != 0)
                     .map(|id| id.to_string())
@@ -391,6 +432,10 @@ impl Runtime {
                         },
                     );
                 });
+            }
+            if let Some(diagnostics) = crate::protocol::can::parse_diagnostics(&line) {
+                self.can_diagnostics
+                    .insert(diagnostics.bus, (diagnostics, Instant::now()));
             }
             if line.starts_with("ERR ") {
                 // 駆動拒否でも停止するが、照合済みの設定まで失敗扱いにしない。
@@ -515,6 +560,8 @@ impl Runtime {
         if self.last_hello.elapsed() > Duration::from_secs(1) {
             self.last_hello = Instant::now();
             self.send("HELLO 1")?;
+            // 読取り専用の診断。FDCAN1/2の状態を同じ周期でGUIへ反映する。
+            self.send("CANSTAT")?;
             if !self.cfg.machine.dc_motors.is_empty() {
                 self.send(&crate::protocol::dcmd::line(0, 0, 0))?;
             }
@@ -592,6 +639,7 @@ impl Runtime {
                 .update_status(|s| s.sts.message = error.to_string());
             self.fault(error.to_string());
         }
+        self.poll_servo_health(now)?;
         if self.emergency {
             self.stop(true)?;
         }
@@ -609,8 +657,330 @@ impl Runtime {
         }
         Ok(())
     }
+
+    fn poll_servo_health(&mut self, now: Instant) -> Result<()> {
+        let Some(board) = self.cfg.machine.serial_svmd.as_ref() else {
+            return Ok(());
+        };
+        if board.servos.is_empty()
+            || !self.fresh()
+            || self.sts.busy()
+            || self.sts.active
+            || self.test.active
+            || !self.ee.targets.is_empty()
+            || !self
+                .telemetry
+                .as_ref()
+                .is_some_and(|telemetry| telemetry.buses & 2 != 0)
+            || !self
+                .test
+                .peers
+                .get("sts")
+                .is_some_and(|seen| now.saturating_duration_since(*seen) < Duration::from_secs(2))
+            || self.last_servo_health_poll.is_some_and(|last| {
+                now.saturating_duration_since(last) < Duration::from_millis(250)
+            })
+        {
+            return Ok(());
+        }
+        let id = board.servos[self.servo_health_poll_index % board.servos.len()].id;
+        self.servo_health_poll_index = (self.servo_health_poll_index + 1) % board.servos.len();
+        self.last_servo_health_poll = Some(now);
+        self.send(&crate::protocol::serial_svmd::Command::Read { id }.to_cctl_line())
+    }
+
+    fn can_bus_statuses(&self) -> Vec<CanBusStatus> {
+        let telemetry = self.telemetry.as_ref();
+        (1..=2)
+            .map(|bus| {
+                let available = self.fresh()
+                    && telemetry.is_some_and(|state| state.buses & (1 << (bus - 1)) != 0);
+                let diagnostic = self.can_diagnostics.get(&bus);
+                let age_ms = diagnostic
+                    .map(|(_, seen)| seen.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
+                let health = if !self.fresh() {
+                    CommunicationHealth::Unknown
+                } else if diagnostic.is_some_and(|(value, _)| !value.started || value.bus_off)
+                    || !available
+                {
+                    CommunicationHealth::Fault
+                } else if diagnostic.is_some_and(|(value, _)| value.tec >= 128 || value.rec >= 96) {
+                    CommunicationHealth::Warning
+                } else {
+                    CommunicationHealth::Healthy
+                };
+                let detail = if !self.fresh() {
+                    "cctlの状態応答待ち".into()
+                } else if let Some((value, _)) = diagnostic {
+                    if !value.started {
+                        "CANコントローラ未起動".into()
+                    } else if value.bus_off {
+                        "bus-off：配線・終端・通信速度・ID重複を確認".into()
+                    } else if !available {
+                        "cctlが使用不可と判定".into()
+                    } else {
+                        "通信可能".into()
+                    }
+                } else if available {
+                    "通信可能・詳細応答待ち".into()
+                } else {
+                    "使用不可".into()
+                };
+                CanBusStatus {
+                    bus,
+                    label: if bus == 1 {
+                        "FDCAN1（モータ）".into()
+                    } else {
+                        "FDCAN2（周辺基板）".into()
+                    },
+                    health,
+                    detail,
+                    age_ms,
+                    started: diagnostic.map(|(value, _)| value.started),
+                    bus_off: diagnostic.map(|(value, _)| value.bus_off),
+                    lec: diagnostic.map(|(value, _)| value.lec),
+                    tec: diagnostic.map(|(value, _)| value.tec),
+                    rec: diagnostic.map(|(value, _)| value.rec),
+                    cel: diagnostic.map(|(value, _)| value.cel),
+                    tx_failed: diagnostic.map(|(value, _)| value.tx_failed),
+                }
+            })
+            .collect()
+    }
+
+    fn can_device_statuses(&self) -> Vec<CanDeviceStatus> {
+        let mut devices = Vec::new();
+        let telemetry = self.telemetry.as_ref();
+        let motor_bus = self.fresh()
+            && telemetry.is_some_and(|value| value.buses & 1 != 0)
+            && !self
+                .can_diagnostics
+                .get(&1)
+                .is_some_and(|(value, _)| !value.started || value.bus_off);
+        let telemetry_age = self
+            .rx
+            .map(|seen| seen.elapsed().as_millis().min(u128::from(u64::MAX)) as u64);
+        let scan = self
+            .c620_scan
+            .filter(|(_, seen)| seen.elapsed() < Duration::from_secs(2));
+        for axis in &self.cfg.machine.axes {
+            let (kind, id) = match axis.slot {
+                0 => (
+                    "EL05",
+                    self.cfg.machine.parameters.get("el05_motor_id").copied(),
+                ),
+                1 => (
+                    "M3508 + C620",
+                    self.cfg.machine.parameters.get("c620_esc_id").copied(),
+                ),
+                2 => (
+                    "M3508 + C620",
+                    self.cfg
+                        .machine
+                        .parameters
+                        .get("c620_slot2_esc_id")
+                        .copied(),
+                ),
+                _ => ("モータ", None),
+            };
+            let address = id.map_or_else(
+                || format!("slot {}", axis.slot),
+                |id| format!("slot {} / ID {}", axis.slot, id as u8),
+            );
+            let (health, detail) = if !self.fresh() {
+                (CommunicationHealth::Unknown, "cctlの状態応答待ち".into())
+            } else if !motor_bus {
+                (CommunicationHealth::Fault, "FDCAN1が使用不可".into())
+            } else if let Some(state) = telemetry.and_then(|t| t.slots.get(axis.slot as usize)) {
+                let stale = telemetry.is_some_and(|t| t.stale_slots & (1 << axis.slot) != 0);
+                let error = telemetry.map_or(0, |t| t.error_bits[axis.slot as usize]);
+                let missing_c620 = axis.slot > 0
+                    && id.is_some_and(|id| {
+                        scan.is_some_and(|(mask, _)| mask & (1 << (id as u8 - 1)) == 0)
+                    });
+                if stale {
+                    (
+                        CommunicationHealth::Fault,
+                        format!("フィードバック途絶 / error=0x{error:02X}"),
+                    )
+                } else if error != 0 {
+                    (
+                        CommunicationHealth::Fault,
+                        format!("モータ異常 / error=0x{error:02X}"),
+                    )
+                } else if missing_c620 {
+                    (CommunicationHealth::Fault, "設定IDへのC620応答なし".into())
+                } else {
+                    (
+                        CommunicationHealth::Healthy,
+                        format!("フィードバック正常 / 実測 {:.3}", state.measured),
+                    )
+                }
+            } else {
+                (CommunicationHealth::Unknown, "slot状態なし".into())
+            };
+            devices.push(CanDeviceStatus {
+                name: format!("{}軸 · {kind}", axis.name),
+                bus: 1,
+                address,
+                health,
+                detail,
+                age_ms: telemetry_age,
+            });
+        }
+
+        let peripheral_bus = self.fresh()
+            && telemetry.is_some_and(|value| value.buses & 2 != 0)
+            && !self
+                .can_diagnostics
+                .get(&2)
+                .is_some_and(|(value, _)| !value.started || value.bus_off);
+        if !self.cfg.machine.pwm_servos.is_empty() || !self.cfg.machine.svmd_parameters.is_empty() {
+            devices.push(self.peripheral_board_status(
+                "PWMサーボ基板",
+                "pwm",
+                "応答 0x301",
+                peripheral_bus,
+            ));
+            for servo in &self.cfg.machine.pwm_servos {
+                let board = self.peripheral_health("pwm", peripheral_bus);
+                devices.push(CanDeviceStatus {
+                    name: format!("{} · PWMサーボ", servo.name),
+                    bus: 2,
+                    address: format!("channel {}", servo.channel),
+                    health: if board == CommunicationHealth::Healthy {
+                        CommunicationHealth::Warning
+                    } else {
+                        board
+                    },
+                    detail: if board == CommunicationHealth::Healthy {
+                        "基板応答あり・サーボ個体の応答は取得不可".into()
+                    } else {
+                        "PWMサーボ基板の応答なし".into()
+                    },
+                    age_ms: self.peer_age("pwm"),
+                });
+            }
+        }
+        if !self.cfg.machine.dc_motors.is_empty() || !self.cfg.machine.dcmd_parameters.is_empty() {
+            devices.push(self.peripheral_board_status(
+                "DCモータ基板",
+                "dc",
+                "応答 0x311",
+                peripheral_bus,
+            ));
+            for motor in &self.cfg.machine.dc_motors {
+                let board = self.peripheral_health("dc", peripheral_bus);
+                devices.push(CanDeviceStatus {
+                    name: format!("{} · DCモータ", motor.name),
+                    bus: 2,
+                    address: format!("channel {}", motor.channel),
+                    health: if board == CommunicationHealth::Healthy {
+                        CommunicationHealth::Warning
+                    } else {
+                        board
+                    },
+                    detail: if board == CommunicationHealth::Healthy {
+                        "基板応答あり・モータ個体の応答は取得不可".into()
+                    } else {
+                        "DCモータ基板の応答なし".into()
+                    },
+                    age_ms: self.peer_age("dc"),
+                });
+            }
+        }
+        if let Some(board) = &self.cfg.machine.serial_svmd {
+            let board_health = self.peripheral_health("sts", peripheral_bus);
+            devices.push(self.peripheral_board_status(
+                "STS3215基板",
+                "sts",
+                "応答 0x321",
+                peripheral_bus,
+            ));
+            for servo in &board.servos {
+                let feedback = self.servo_feedback.get(&servo.id);
+                let fresh =
+                    feedback.is_some_and(|value| value.seen.elapsed() < Duration::from_secs(2));
+                let (health, detail, age_ms) = if board_health != CommunicationHealth::Healthy {
+                    (board_health, "STS3215基板の応答なし".into(), None)
+                } else if let Some(feedback) = feedback.filter(|_| fresh) {
+                    (
+                        if feedback.error == 0 {
+                            CommunicationHealth::Healthy
+                        } else {
+                            CommunicationHealth::Fault
+                        },
+                        feedback.detail.clone(),
+                        Some(feedback.seen.elapsed().as_millis() as u64),
+                    )
+                } else {
+                    (
+                        CommunicationHealth::Fault,
+                        "サーボ個体から応答なし".into(),
+                        feedback.map(|value| value.seen.elapsed().as_millis() as u64),
+                    )
+                };
+                devices.push(CanDeviceStatus {
+                    name: format!("{} · STS3215", servo.name),
+                    bus: 2,
+                    address: format!("servo ID {}", servo.id),
+                    health,
+                    detail,
+                    age_ms,
+                });
+            }
+        }
+        devices
+    }
+
+    fn peer_age(&self, key: &str) -> Option<u64> {
+        self.test
+            .peers
+            .get(key)
+            .map(|seen| seen.elapsed().as_millis().min(u128::from(u64::MAX)) as u64)
+    }
+
+    fn peripheral_health(&self, key: &str, bus_available: bool) -> CommunicationHealth {
+        if !self.fresh() {
+            CommunicationHealth::Unknown
+        } else if !bus_available {
+            CommunicationHealth::Fault
+        } else if self.peer_age(key).is_some_and(|age| age < 2000) {
+            CommunicationHealth::Healthy
+        } else if self.setup {
+            CommunicationHealth::Fault
+        } else {
+            CommunicationHealth::Unknown
+        }
+    }
+
+    fn peripheral_board_status(
+        &self,
+        name: &str,
+        key: &str,
+        address: &str,
+        bus_available: bool,
+    ) -> CanDeviceStatus {
+        let health = self.peripheral_health(key, bus_available);
+        CanDeviceStatus {
+            name: name.into(),
+            bus: 2,
+            address: address.into(),
+            health,
+            detail: match health {
+                CommunicationHealth::Healthy => "状態応答を受信".into(),
+                CommunicationHealth::Fault if !bus_available => "FDCAN2が使用不可".into(),
+                CommunicationHealth::Fault => "状態応答が2秒以上ありません".into(),
+                _ => "応答待ち".into(),
+            },
+            age_ms: self.peer_age(key),
+        }
+    }
+
     fn publish(&self) {
         let origins = self.machine.origin_states(self.telemetry.as_ref());
+        let can_buses = self.can_bus_statuses();
+        let can_devices = self.can_device_statuses();
         self.shared.update_status(|s| {
             s.test_mode = self.test.enabled;
             s.ee_targets = self.ee.targets.clone();
@@ -718,6 +1088,8 @@ impl Runtime {
                 "反映確認待ち"
             }
             .into();
+            s.can_buses = can_buses;
+            s.can_devices = can_devices;
         });
     }
 }
