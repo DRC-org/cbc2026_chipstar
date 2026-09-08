@@ -24,6 +24,23 @@
 
 HAL 非依存ロジックのホスト側テストは [tests/](tests/README.md) にある。
 
+## よく使う開発コマンド
+
+リポジトリ直下のMakefileから、基板FWのビルド・書込み、host起動、診断、テストを実行できる。
+
+```sh
+make help
+make flash-cctl
+make host
+make host-sim
+make fw-test BOARD=network
+make test
+```
+
+書込み先は基板ごとに明示する。接続先や機体プロファイルを変える場合は、例えば
+`make host SERIAL_DEVICE=/dev/ttyACM1 PROFILE=host/config/dcmd.toml`と指定する。
+使用可能なターゲットと変数の一覧は`make help`に表示される。
+
 ## 手動操縦と模擬接続
 
 ```sh
