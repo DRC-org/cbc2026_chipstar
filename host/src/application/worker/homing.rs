@@ -80,6 +80,15 @@ impl Runtime {
             "接点情報が取得できません"
         );
         self.stop(true)?;
+        self.send("SAFE")?;
+        let homing_slots = self
+            .cfg
+            .machine
+            .axes
+            .iter()
+            .filter(|axis| axis.name == "r" || axis.name == "z")
+            .fold(0u8, |mask, axis| mask | 1 << axis.slot);
+        self.send(&format!("REINIT {homing_slots}"))?;
         let now = Instant::now();
         self.homing = Some(Homing {
             timeout_seconds,
@@ -445,6 +454,7 @@ mod tests {
         assert!(!r.drive.running());
         let logs = r.shared.status_snapshot().logs;
         assert!(logs.iter().any(|l| l.contains("JOG 2 -20.00000")));
+        assert!(logs.iter().any(|l| l.contains("TX REINIT 5")));
         assert!(logs.iter().any(|l| l.contains("TARGET 2 100.00000")));
         assert!(logs.iter().any(|l| l.contains("JOG 0 12.50000")));
         assert!(logs.iter().any(|l| l.contains("ENABLE 1 0")));

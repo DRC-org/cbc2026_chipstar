@@ -24,7 +24,7 @@ class El05Motor {
   bool setRunMode(RunMode mode);
 
   // ---- モードごとの目標値 -----------------------------------------------
-  // 位置モード: 目標位置[rad]（LOC_REF）。
+  // CSP位置モード: 周期的に更新する目標位置[rad]（LOC_REF）。
   bool setLocRef(float pos_rad);
   // 速度モード: 目標速度[rad/s]（SPD_REF）。
   bool setSpeedRef(float vel_rad_s);

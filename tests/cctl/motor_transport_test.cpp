@@ -239,15 +239,15 @@ TEST_CASE("ESC IDは重複と小数を拒否し別グループにも同時送信
  }
  CHECK(mask==3);CHECK_FALSE(c.setParameter(id,6));
 }
-TEST_CASE("EL05速度上限はPP用のVEL_MAXへ書く") {
+TEST_CASE("EL05速度上限はCSP用のLIMIT_SPDへ書く") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();accepted.clear();
  REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::El05LimitSpd),0.75f));
  REQUIRE(accepted.size()==1);
- CHECK(accepted[0].data[0]==0x24);CHECK(accepted[0].data[1]==0x70);
+ CHECK(accepted[0].data[0]==0x17);CHECK(accepted[0].data[1]==0x70);
  float value=0;std::memcpy(&value,&accepted[0].data[4],4);CHECK(value==doctest::Approx(0.75));
 }
 
-TEST_CASE("EL05は出力を有効化するたびにPPモードと制限値を復元する") {
+TEST_CASE("EL05は出力を有効化するたびにCSPモードと制限値を復元する") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
  el05Position(controller,0);
  REQUIRE(controller.setSlotsEnabled(1,true));accepted.clear();
@@ -256,7 +256,7 @@ TEST_CASE("EL05は出力を有効化するたびにPPモードと制限値を復
   unsigned count=0;
   for(const auto& frame:accepted) {
    if(frame.extended && domain::el05::commType(frame.id)==domain::el05::comm::WRITE_PARAM &&
-      frame.data[0]==0x05 && frame.data[1]==0x70 && frame.data[4]==1) ++count;
+      frame.data[0]==0x05 && frame.data[1]==0x70 && frame.data[4]==5) ++count;
   }
   return count;
  };

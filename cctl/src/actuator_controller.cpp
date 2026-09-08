@@ -39,9 +39,11 @@ void ActuatorController::initMotor(uint8_t slot) {
     case 0:
       slot0_.disable(true);
       HAL_Delay(50);
-      slot0_.setRunMode(El05Motor::RunMode::Position);
+      // hostの速度入力を20ms周期の位置目標へ積分するため、連続位置指令用の
+      // CSPを使う。PPは目標更新のたびに内部軌道を作り直すためジョグに向かない。
+      slot0_.setRunMode(El05Motor::RunMode::PositionCsp);
       HAL_Delay(20);
-      slot0_.writeParamFloat(domain::el05::param::VEL_MAX,
+      slot0_.writeParamFloat(domain::el05::param::LIMIT_SPD,
                              parameters_.get(domain::ParamId::El05LimitSpd));
       HAL_Delay(20);
       slot0_.writeParamFloat(domain::el05::param::LIMIT_CUR,
@@ -53,6 +55,9 @@ void ActuatorController::initMotor(uint8_t slot) {
       // comm_type=2の位置は±12.57 radで折り返す。現在の多回転位置を先に
       // 読み、再RUN時の保持目標を別周回へ飛ばさない。
       slot0_.requestParam(domain::el05::param::MECH_POS);
+      // 直後のLOC_REF・Enable・C620指令と合わせて4フレームになる。
+      // 3要素のFDCAN Tx FIFOを超えないよう、読出し要求の送信完了を待つ。
+      HAL_Delay(20);
       break;
     case 1:
       // C620に設定はない。積算角の目標だけ現在位置に置き直す。
@@ -429,7 +434,7 @@ void ActuatorController::applyParameter(uint8_t id) {
       slot0_.writeParamFloat(domain::el05::param::LOC_KP, parameters_.get(ParamId::El05LocKp));
       break;
     case ParamId::El05LimitSpd:
-      slot0_.writeParamFloat(domain::el05::param::VEL_MAX,
+      slot0_.writeParamFloat(domain::el05::param::LIMIT_SPD,
                              parameters_.get(ParamId::El05LimitSpd));
       break;
     case ParamId::El05LimitCur:
