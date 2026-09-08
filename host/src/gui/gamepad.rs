@@ -163,7 +163,7 @@ fn stick(ui: &mut egui::Ui, title: &str, raw_x: f32, raw_y: f32, x_name: &str, y
         );
         painter.circle_stroke(center, radius * 0.1, egui::Stroke::new(1.0, WARNING));
         painter.circle_filled(
-            center + egui::vec2(x * radius, y * radius),
+            center + egui::vec2(x * radius, -y * radius),
             5.0,
             if normalized(x).abs() > 0.0 || normalized(y).abs() > 0.0 {
                 ACCENT
