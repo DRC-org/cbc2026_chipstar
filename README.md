@@ -50,3 +50,9 @@ cargo run --locked --manifest-path host/Cargo.toml --bin host -- --simulate
 GUIは操縦・調整・診断・文書の4画面。起動済みhostには`hostctl`から接続できる。
 操作権、停止復帰、設定保存の手順は[host操作ガイド](docs/host_operation.md)、
 開発時の責務分担と拡張先は[hostアーキテクチャ](docs/host_architecture.md)を参照。
+
+## 並行開発
+
+複数のエージェントで同時に変更する場合は、変更ごとに Git worktree とブランチを分ける。
+作業ディレクトリの作成、シミュレータの同時起動、変更の統合は
+[並行開発手順](docs/parallel_development.md)を参照。
