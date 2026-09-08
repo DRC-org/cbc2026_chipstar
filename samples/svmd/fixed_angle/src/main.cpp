@@ -2,8 +2,6 @@
 #include <Servo.h>
 
 constexpr uint8_t SERVO_PINS[] = {3, 6, 10, 9};
-constexpr uint8_t SERVO_CHANNEL = 0;
-constexpr uint8_t SERVO_PIN = SERVO_PINS[SERVO_CHANNEL];
 
 constexpr float SERVO_MIN_ANGLE = 0.0f;
 constexpr float SERVO_MAX_ANGLE = 180.0f;
@@ -11,7 +9,7 @@ constexpr float SERVO_MAX_ANGLE = 180.0f;
 constexpr int SERVO_MIN_PULSE_US = 500;
 constexpr int SERVO_MAX_PULSE_US = 2500;
 
-Servo servo;
+Servo servos[4];
 
 int angleToPulse(float angle)
 {
@@ -27,18 +25,23 @@ int angleToPulse(float angle)
     );
 }
 
-void setServoAngle(float angle)
+void setServoAngle(float angle, uint8_t channel)
 {
-    servo.writeMicroseconds(angleToPulse(angle));
+    servos[channel].writeMicroseconds(angleToPulse(angle));
 }
 
 void setup()
 {
     Serial.begin(115200);
 
-    servo.attach(SERVO_PIN);
+    servos[0].attach(SERVO_PINS[0]);
+    servos[1].attach(SERVO_PINS[1]);
+    servos[2].attach(SERVO_PINS[2]);
+    servos[3].attach(SERVO_PINS[3]);
 
-    setServoAngle(0.0f);
+    setServoAngle(0.0f, 1);
+    setServoAngle(0.0f, 2);
+    setServoAngle(0.0f, 3);
 }
 
 void loop()
@@ -49,7 +52,9 @@ void loop()
         if (angle >= SERVO_MIN_ANGLE &&
             angle <= SERVO_MAX_ANGLE) {
 
-            setServoAngle(angle);
+            setServoAngle(angle, 1);
+            setServoAngle(angle, 2);
+            setServoAngle(angle, 3);
 
             Serial.print("angle = ");
             Serial.println(angle);
