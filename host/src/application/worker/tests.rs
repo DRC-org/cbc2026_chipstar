@@ -180,6 +180,27 @@ fn can_status_distinguishes_serial_svmd_board_from_servo_feedback() {
     assert_eq!(servo.health, CommunicationHealth::Healthy);
 }
 
+#[test]
+fn can_status_lists_a_detected_board_without_machine_configuration() {
+    let mut runtime = screen_runtime();
+    assert!(
+        runtime
+            .can_device_statuses()
+            .iter()
+            .all(|device| device.name != "DCモータ基板")
+    );
+
+    runtime.test.peers.insert("dc", Instant::now());
+    let devices = runtime.can_device_statuses();
+    let dcmd = devices
+        .iter()
+        .find(|device| device.name == "DCモータ基板")
+        .unwrap();
+    assert_eq!(dcmd.health, CommunicationHealth::Warning);
+    assert_eq!(dcmd.detail, "状態応答あり・機体設定なし");
+    assert!(dcmd.age_ms.is_some_and(|age| age < 2000));
+}
+
 pub(super) fn screen_runtime() -> Runtime {
     let mut profile = MachineProfile::embedded().unwrap();
     profile.pwm_servos.clear();

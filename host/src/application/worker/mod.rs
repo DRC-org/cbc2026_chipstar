@@ -835,13 +835,18 @@ impl Runtime {
                 .can_diagnostics
                 .get(&2)
                 .is_some_and(|(value, _)| !value.started || value.bus_off);
-        if !self.cfg.machine.pwm_servos.is_empty() || !self.cfg.machine.svmd_parameters.is_empty() {
+        let pwm_configured =
+            !self.cfg.machine.pwm_servos.is_empty() || !self.cfg.machine.svmd_parameters.is_empty();
+        if pwm_configured || self.test.peers.contains_key("pwm") {
             devices.push(self.peripheral_board_status(
                 "PWMサーボ基板",
                 "pwm",
                 "応答 0x301",
                 peripheral_bus,
+                pwm_configured,
             ));
+        }
+        if pwm_configured {
             for servo in &self.cfg.machine.pwm_servos {
                 let board = self.peripheral_health("pwm", peripheral_bus);
                 devices.push(CanDeviceStatus {
@@ -862,13 +867,18 @@ impl Runtime {
                 });
             }
         }
-        if !self.cfg.machine.dc_motors.is_empty() || !self.cfg.machine.dcmd_parameters.is_empty() {
+        let dc_configured =
+            !self.cfg.machine.dc_motors.is_empty() || !self.cfg.machine.dcmd_parameters.is_empty();
+        if dc_configured || self.test.peers.contains_key("dc") {
             devices.push(self.peripheral_board_status(
                 "DCモータ基板",
                 "dc",
                 "応答 0x311",
                 peripheral_bus,
+                dc_configured,
             ));
+        }
+        if dc_configured {
             for motor in &self.cfg.machine.dc_motors {
                 let board = self.peripheral_health("dc", peripheral_bus);
                 devices.push(CanDeviceStatus {
@@ -889,14 +899,19 @@ impl Runtime {
                 });
             }
         }
-        if let Some(board) = &self.cfg.machine.serial_svmd {
-            let board_health = self.peripheral_health("sts", peripheral_bus);
+        let sts_configured = self.cfg.machine.serial_svmd.is_some()
+            || !self.cfg.machine.serial_svmd_parameters.is_empty();
+        if sts_configured || self.test.peers.contains_key("sts") {
             devices.push(self.peripheral_board_status(
                 "STS3215基板",
                 "sts",
                 "応答 0x321",
                 peripheral_bus,
+                sts_configured,
             ));
+        }
+        if let Some(board) = &self.cfg.machine.serial_svmd {
+            let board_health = self.peripheral_health("sts", peripheral_bus);
             for servo in &board.servos {
                 let feedback = self.servo_feedback.get(&servo.id);
                 let fresh =
@@ -960,20 +975,35 @@ impl Runtime {
         key: &str,
         address: &str,
         bus_available: bool,
+        configured: bool,
     ) -> CanDeviceStatus {
-        let health = self.peripheral_health(key, bus_available);
+        let age_ms = self.peer_age(key);
+        let health = if configured {
+            self.peripheral_health(key, bus_available)
+        } else if !self.fresh() {
+            CommunicationHealth::Unknown
+        } else if !bus_available {
+            CommunicationHealth::Fault
+        } else if age_ms.is_some_and(|age| age < 2000) {
+            CommunicationHealth::Warning
+        } else {
+            CommunicationHealth::Unknown
+        };
         CanDeviceStatus {
             name: name.into(),
             bus: 2,
             address: address.into(),
             health,
-            detail: match health {
-                CommunicationHealth::Healthy => "状態応答を受信".into(),
-                CommunicationHealth::Fault if !bus_available => "FDCAN2が使用不可".into(),
-                CommunicationHealth::Fault => "状態応答が2秒以上ありません".into(),
-                _ => "応答待ち".into(),
+            detail: match (configured, health) {
+                (false, CommunicationHealth::Warning) => "状態応答あり・機体設定なし".into(),
+                (false, CommunicationHealth::Fault) => "検出済み・FDCAN2が使用不可".into(),
+                (false, _) => "以前検出・機体設定なし".into(),
+                (true, CommunicationHealth::Healthy) => "状態応答を受信".into(),
+                (true, CommunicationHealth::Fault) if !bus_available => "FDCAN2が使用不可".into(),
+                (true, CommunicationHealth::Fault) => "状態応答が2秒以上ありません".into(),
+                (true, _) => "応答待ち".into(),
             },
-            age_ms: self.peer_age(key),
+            age_ms,
         }
     }
 
