@@ -158,14 +158,7 @@ impl BridgeApp {
             .on_hover_text(
                 "EEがシューティングボックスの反対側を向き、z下降・設定量の上昇・r前進・設定量の後退の全経路に干渉がないことを確認してください",
             );
-            let can_start = self.homing_confirmed
-                && status.connected
-                && status.configured
-                && !status.running
-                && !status.outputs_active
-                && !status.test_mode
-                && !status.ai_active
-                && !status.emergency;
+            let can_start = self.homing_confirmed && status.homing_ready;
             if ui
                 .add_enabled(can_start, egui::Button::new("自動設定を開始"))
                 .on_hover_text("zを下端へ移動した後、rを前端へ移動して原点座標を設定します")

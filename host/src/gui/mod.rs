@@ -647,6 +647,26 @@ mod workflow_tests {
     }
 
     #[test]
+    fn gui_can_start_homing_after_run_and_hold() {
+        let mut harness = Harness::new();
+        harness.capture_origins();
+        harness.run();
+        assert!(!harness.shared.status_snapshot().homing_ready);
+        harness.app.dispatch(Action::Stop);
+        let held = harness.wait(|s| !s.running && s.outputs_active && s.homing_ready);
+        assert_eq!(held.operating_state, "停止・保持");
+        harness.app.request(Request {
+            flag: Some(true),
+            value: Some(180.0),
+            ..Request::new("home")
+        });
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        harness.wait(|s| s.homing.is_some() && !s.homing_ready);
+        harness.app.dispatch(Action::Stop);
+        harness.wait(|s| s.homing.is_none() && s.homing_ready);
+    }
+
+    #[test]
     fn gui_emergency_reset_keeps_outputs_stopped_until_explicit_run() {
         let mut harness = Harness::new();
         harness.capture_origins();

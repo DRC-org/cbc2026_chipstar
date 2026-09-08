@@ -1058,6 +1058,9 @@ impl Runtime {
             s.test_mode = self.test.enabled;
             s.ee_targets = self.ee.targets.clone();
             s.homing = self.homing.as_ref().map(|h| h.label.clone());
+            s.homing_ready = self.homing_idle()
+                && !self.authority.active()
+                && self.axes_ready(false).is_ok();
             s.homing_confirmation = self.pad.home_since.map(|t| t.elapsed().as_secs_f32());
             s.test_active = self.test.active;
             s.test_ready = !self.emergency

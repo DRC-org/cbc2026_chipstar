@@ -23,6 +23,16 @@ pub(super) struct Homing {
     timeout_seconds: f32,
 }
 impl Runtime {
+    pub(super) fn homing_idle(&self) -> bool {
+        !self.emergency
+            && !self.drive.running()
+            && self.drive.awaiting().is_none()
+            && !self.test.enabled
+            && !self.sts.active
+            && !self.sts.busy()
+            && self.homing.is_none()
+    }
+
     pub(super) fn begin_homing(
         &mut self,
         human: bool,
@@ -38,13 +48,7 @@ impl Runtime {
             "人間がθ姿勢とz下降・r前進経路の干渉を確認してください"
         );
         anyhow::ensure!(
-            !self.emergency
-                && !self.drive.running()
-                && self.drive.awaiting().is_none()
-                && !self.test.enabled
-                && !self.sts.active
-                && !self.sts.busy()
-                && self.homing.is_none(),
+            self.homing_idle(),
             "全操作を停止してからホーミングしてください"
         );
         self.axes_ready(false)?;
@@ -569,6 +573,11 @@ mod tests {
             origins.iter().find(|a| a.name == "z").unwrap().target,
             z_distance
         );
+        r.publish();
+        assert!(r.shared.status_snapshot().homing_ready);
+        r.stop(false).unwrap();
+        r.begin_homing(true, true, 180.0).unwrap();
+        assert!(r.homing.is_some());
     }
     #[test]
     fn stop_cancels_and_stale_or_timeout_fails() {

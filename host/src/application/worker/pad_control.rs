@@ -34,12 +34,7 @@ impl Runtime {
             self.pad.ee_armed = false;
             return Ok(());
         }
-        let stopped = !self.drive.running()
-            && self.drive.awaiting().is_none()
-            && !self.test.enabled
-            && !self.sts.active
-            && !self.sts.busy()
-            && self.homing.is_none()
+        let stopped = self.homing_idle()
             && self.fresh()
             && self.settings.ready();
         // 停止状態で両ボタンを離してから確認する。接続時の押しっぱなしでは始めない。
