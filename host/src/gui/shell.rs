@@ -63,7 +63,7 @@ impl BridgeApp {
         });
         ui.add_space(4.0);
         ui.allocate_ui_with_layout(
-            egui::vec2(ui.available_width(), 32.0),
+            egui::vec2(ui.available_width(), 30.0),
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 for (screen, label) in [
@@ -73,19 +73,7 @@ impl BridgeApp {
                     (Screen::Documents, "4  文書"),
                 ] {
                     let selected = self.screen == screen;
-                    if ui
-                        .add_sized(
-                            [82.0, 30.0],
-                            egui::Button::new(RichText::new(label).color(if selected {
-                                ACCENT
-                            } else {
-                                MUTED
-                            }))
-                            .fill(if selected { SURFACE } else { BG })
-                            .stroke(egui::Stroke::new(1.0, if selected { ACCENT } else { BG })),
-                        )
-                        .clicked()
-                    {
+                    if top_level_tab(ui, label, selected).clicked() {
                         self.switch_screen(screen);
                     }
                 }
@@ -220,4 +208,34 @@ impl BridgeApp {
             self.tune_actions(ui);
         }
     }
+}
+
+fn top_level_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(82.0, 30.0), egui::Sense::click());
+    let hovered = response.hovered();
+    ui.painter()
+        .rect_filled(rect, 4.0, if selected || hovered { SURFACE } else { BG });
+    ui.painter().rect_stroke(
+        rect,
+        4.0,
+        egui::Stroke::new(
+            1.0,
+            if selected {
+                ACCENT
+            } else if hovered {
+                MUTED
+            } else {
+                BORDER
+            },
+        ),
+        egui::StrokeKind::Inside,
+    );
+    ui.painter().text(
+        rect.center(),
+        egui::Align2::CENTER_CENTER,
+        label,
+        egui::FontId::proportional(14.0),
+        if selected { ACCENT } else { MUTED },
+    );
+    response.on_hover_cursor(egui::CursorIcon::PointingHand)
 }
