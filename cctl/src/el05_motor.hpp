@@ -49,7 +49,11 @@ class El05Motor {
   bool onFeedback(uint32_t ext_id, const uint8_t data[8]);
 
   // ---- 状態 -------------------------------------------------------------
-  float position() const { return feedback_.position_rad; }
+  // 周期フィードバックの位置は±12.57 radで折り返す。MECH_POSで絶対位置を
+  // 確立した後は、周期差分を連続化した多回転位置を返す。
+  float position() const { return position_rad_; }
+  bool positionReady() const { return position_ready_; }
+  void invalidatePosition() { position_ready_ = false; }
   float velocity() const { return feedback_.velocity_rad_s; }
   float torque() const { return feedback_.torque_nm; }
   float temperature() const { return feedback_.temperature_c; }
@@ -81,4 +85,9 @@ class El05Motor {
   uint16_t last_param_index_ = 0;
   float last_param_value_ = 0.0f;
   uint32_t last_param_raw_ = 0;
+
+  float position_rad_ = 0.0f;
+  uint16_t last_position_raw_ = 0;
+  bool has_wrapped_position_ = false;
+  bool position_ready_ = false;
 };

@@ -155,6 +155,11 @@ bit7..0   : target_id(8bit)
 pos `±12.57 rad`, vel `±50 rad/s`, tau `±6 N·m`（各uint16→線形）、temp = raw/10 [℃]。
 拡張IDの `bit16..` に fault_bits、`bit15..8` に発信元のモータID。
 
+comm_type 2 のposは約25.14 radごとに折り返すため、その値を多回転の絶対位置として
+直接使わない。CCTLは起動・再初期化時に`mechPos`を読み、その周回へ周期posを接続した後、
+16bit生値の差分を積算して連続位置を作る。通信途絶後は`mechPos`を再取得するまで
+EL05を含むRUN遷移を拒否する。
+
 ---
 
 ## θ・z軸: DJI M3508 + C620（標準ID）

@@ -50,6 +50,9 @@ void ActuatorController::initMotor(uint8_t slot) {
       slot0_.writeParamFloat(domain::el05::param::LOC_KP,
                              parameters_.get(domain::ParamId::El05LocKp));
       HAL_Delay(20);
+      // comm_type=2の位置は±12.57 radで折り返す。現在の多回転位置を先に
+      // 読み、再RUN時の保持目標を別周回へ飛ばさない。
+      slot0_.requestParam(domain::el05::param::MECH_POS);
       break;
     case 1:
       // C620に設定はない。積算角の目標だけ現在位置に置き直す。
@@ -92,7 +95,10 @@ bool ActuatorController::reinitialize(uint8_t slots) {
   if (mode_ != domain::RunMode::Safe) return false;
   const uint32_t failures = bus_.txFailures();
   for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
-    if ((slots & (1U << slot)) != 0) initMotor(slot);
+    if ((slots & (1U << slot)) != 0) {
+      if (slot == 0) slot0_.invalidatePosition();
+      initMotor(slot);
+    }
   }
   if (bus_.txFailures() != failures) {
     stopAfterTxFailure();
@@ -225,7 +231,10 @@ void ActuatorController::checkFeedback(uint32_t now) {
   const uint8_t dropped =
       feedback_.update(now, active, parameters_.getMs(domain::ParamId::FeedbackTimeoutMs));
   // 出力を切る。復帰にはhostからの再有効化を要求する。
-  if (dropped != 0) setSlotsEnabled(dropped, false);
+  if (dropped != 0) {
+    if ((dropped & domain::slot_bit::SLOT0) != 0) slot0_.invalidatePosition();
+    setSlotsEnabled(dropped, false);
+  }
 }
 
 bool ActuatorController::slotActive(uint8_t bit) const {
@@ -280,6 +289,7 @@ bool ActuatorController::setMode(domain::RunMode mode) {
   slot2_.setTargetMotorDeg(targets_[2]);
   if (mode == domain::RunMode::Run &&
       (enabled_slots_ & domain::slot_bit::SLOT0) != 0) {
+    if (!slot0_.positionReady()) return false;
     // EL05だけ再通電されても、全軸が停止しているRUN遷移前なら必ず
     // 無効状態でPPモードと制限値を復元できる。動作中のC620への周期送信を
     // 初期化待ちで止めないため、slot有効化だけでは再設定しない。
@@ -379,8 +389,8 @@ void ActuatorController::update() {
     last_el05_diagnostic_ms_ = now;
     namespace p = domain::el05::param;
     static constexpr uint16_t indices[] = {
-        p::RUN_MODE, p::LIMIT_SPD, p::LIMIT_CUR, p::LOC_KP,
-        p::LOC_REF, p::MECH_POS, p::MECH_VEL, p::IQF, p::VBUS,
+        p::MECH_POS, p::RUN_MODE, p::LIMIT_SPD, p::LIMIT_CUR, p::LOC_KP,
+        p::LOC_REF, p::MECH_VEL, p::IQF, p::VBUS,
         p::SPD_KP, p::SPD_KI, p::LIMIT_TORQUE,
     };
     slot0_.requestParam(indices[el05_diagnostic_index_]);

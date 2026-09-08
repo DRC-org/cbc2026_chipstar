@@ -25,21 +25,28 @@ fn frozen_feedback_does_not_accumulate_a_manual_position_target() {
     machine.observe(&t);
     assert!(machine.capture_origin(0, Some(&t)));
     let mut input = ControllerState::default();
-    input.axes[1] = 0.5;
+    let input_axis = axis.input_axis.unwrap();
+    // r原点は可動域上端なので、そこから内側へ進む入力を使う。
+    let stick = -0.5 * axis.input_sign;
+    input.axes[input_axis] = stick;
     for _ in 0..1000 {
         machine.observe(&t);
         let line = &machine.jog_lines(&input, &t, false)[0];
         let velocity: f32 = line.split_whitespace().last().unwrap().parse().unwrap();
-        let expected = 0.5 * axis.input_sign * axis.speed_per_second * axis.native_per_unit;
+        let expected = stick * axis.input_sign * axis.speed_per_second * axis.native_per_unit;
         assert!((velocity - expected).abs() < 0.001);
     }
-    assert!((machine.origin_states(Some(&t))[0].position - 120.0).abs() < 0.001);
+    assert!((machine.origin_states(Some(&t))[0].position - axis.origin_position).abs() < 0.001);
     let line = &machine.jog_lines(&input, &t, true)[0];
     let velocity: f32 = line.split_whitespace().last().unwrap().parse().unwrap();
-    let expected =
-        0.5 * axis.input_sign * axis.speed_per_second * slow_percent * 0.01 * axis.native_per_unit;
+    let expected = stick
+        * axis.input_sign
+        * axis.speed_per_second
+        * slow_percent
+        * 0.01
+        * axis.native_per_unit;
     assert!((velocity - expected).abs() < 0.001);
-    input.axes[1] = 0.0;
+    input.axes[input_axis] = 0.0;
     let lines = machine.jog_lines(&input, &t, false);
     let velocity: f32 = lines[0].split_whitespace().last().unwrap().parse().unwrap();
     assert_eq!(velocity, 0.0);
@@ -48,13 +55,16 @@ fn frozen_feedback_does_not_accumulate_a_manual_position_target() {
 fn displayed_position_uses_the_captured_offset() {
     let profile = MachineProfile::embedded().unwrap();
     let native_per_unit = profile.axes[0].native_per_unit;
+    let origin_position = profile.axes[0].origin_position;
     let mut machine = MachineController::new(profile);
     let start = telemetry(5.0);
     machine.observe(&start);
     machine.capture_origin(0, Some(&start));
     let moved = telemetry(5.0 + native_per_unit);
     machine.observe(&moved);
-    assert!((machine.origin_states(Some(&moved))[0].position - 121.0).abs() < 0.001);
+    assert!(
+        (machine.origin_states(Some(&moved))[0].position - (origin_position + 1.0)).abs() < 0.001
+    );
     let mut input = ControllerState::default();
     input.axes[1] = 1.0;
     let restarted = telemetry(0.0);

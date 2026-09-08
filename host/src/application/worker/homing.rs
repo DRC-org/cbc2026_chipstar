@@ -286,7 +286,17 @@ mod tests {
                 .any(|l| l.contains("JOG 1 ") || l.contains("TARGET 1 "))
         );
         let origins = r.machine.origin_states(r.telemetry.as_ref());
-        assert!((origins.iter().find(|a| a.name == "r").unwrap().position - 120.0).abs() < 0.001);
+        let r_origin = r
+            .cfg
+            .machine
+            .axes
+            .iter()
+            .find(|a| a.name == "r")
+            .unwrap()
+            .origin_position;
+        assert!(
+            (origins.iter().find(|a| a.name == "r").unwrap().position - r_origin).abs() < 0.001
+        );
         assert_eq!(
             origins.iter().find(|a| a.name == "z").unwrap().position,
             0.0

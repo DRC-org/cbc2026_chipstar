@@ -44,6 +44,30 @@ bool save(const domain::Parameters&) {return true;}
 bool clear() {return true;}
 bool present() {return false;}
 }
+namespace {
+void el05Position(ActuatorController& controller, float position) {
+ domain::CanFrame frame;frame.id=domain::el05::buildCanId(domain::el05::comm::READ_PARAM,0x7F,0xFD);
+ frame.extended=true;frame.length=8;
+ domain::el05::encodeParamFloat(domain::el05::param::MECH_POS,position,frame.data);
+ controller.dispatchRx(frame);
+}
+void el05Feedback(ActuatorController& controller, float wrapped_position) {
+ domain::CanFrame frame;
+ frame.id=domain::el05::buildCanId(domain::el05::comm::FEEDBACK,0x7F,0xFD);
+ frame.extended=true;frame.length=8;
+ const auto raw=domain::el05::floatToUint16(wrapped_position,domain::el05::POSITION_MIN,
+                                            domain::el05::POSITION_MAX);
+ frame.data[0]=static_cast<uint8_t>(raw>>8);frame.data[1]=static_cast<uint8_t>(raw);
+ controller.dispatchRx(frame);
+}
+void el05Feedback(El05Motor& motor, float wrapped_position) {
+ uint8_t data[8]={};
+ const auto raw=domain::el05::floatToUint16(wrapped_position,domain::el05::POSITION_MIN,
+                                            domain::el05::POSITION_MAX);
+ data[0]=static_cast<uint8_t>(raw>>8);data[1]=static_cast<uint8_t>(raw);
+ motor.onFeedback(domain::el05::buildCanId(domain::el05::comm::FEEDBACK,0x7F,0xFD),data);
+}
+}
 
 TEST_CASE("3要素FIFOが空けば連続8フレームを欠落なく受け付ける") {
  resetBus();CanBus bus(&handle);uint8_t data[8]={};
@@ -81,6 +105,7 @@ TEST_CASE("FIFOが空かなくても送信待ちは有限で未送信指令を�
 }
 TEST_CASE("Enable送信失敗はRUNと全軸の出力許可を取り消し復旧しても自動再開しない") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ el05Position(controller,0);
  REQUIRE(controller.setMode(domain::RunMode::Stop));
  REQUIRE(controller.setSlotsEnabled(7,true));
  fail_enqueue=true;
@@ -91,6 +116,56 @@ TEST_CASE("Enable送信失敗はRUNと全軸の出力許可を取り消し復旧
  CHECK(controller.mode()==domain::RunMode::Stop);CHECK(controller.enabledSlots()==0);
  REQUIRE(controller.setSlotsEnabled(1,true));REQUIRE(controller.setMode(domain::RunMode::Run));
  CHECK(controller.enabledSlots()==1);
+}
+TEST_CASE("EL05の周期位置をMECH_POSへ接続して正逆の折返しを連続化する") {
+ resetBus();CanBus bus(&handle);El05Motor motor(bus,0x7F,0xFD);
+ uint8_t reply[8]={};domain::el05::encodeParamFloat(domain::el05::param::MECH_POS,13.022f,reply);
+ REQUIRE_FALSE(motor.onFeedback(
+     domain::el05::buildCanId(domain::el05::comm::READ_PARAM,0x7F,0xFD),reply));
+ REQUIRE(motor.positionReady());
+ el05Feedback(motor,-12.11f);
+ CHECK(motor.position()==doctest::Approx(13.03f).epsilon(0.002));
+ el05Feedback(motor,-12.0f);
+ CHECK(motor.position()==doctest::Approx(13.14f).epsilon(0.002));
+ el05Feedback(motor,12.5f);
+ CHECK(motor.position()==doctest::Approx(12.5f).epsilon(0.002));
+ el05Feedback(motor,-12.5f);
+ CHECK(motor.position()==doctest::Approx(12.64f).epsilon(0.002));
+}
+TEST_CASE("EL05の多回転位置が確立するまでslot0のRUNを拒否する") {
+ resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ REQUIRE(controller.setSlotsEnabled(1,true));
+ CHECK_FALSE(controller.setMode(domain::RunMode::Run));
+ CHECK(controller.mode()==domain::RunMode::Safe);
+ el05Position(controller,13.022f);
+ REQUIRE(controller.setMode(domain::RunMode::Run));
+ CHECK(controller.target(0)==doctest::Approx(13.022f));
+}
+TEST_CASE("EL05の折返し後もJog目標と基板絶対制限を連続座標で扱う") {
+ resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::Slot0Min),-20));
+ REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::Slot0Max),13.2f));
+ el05Position(controller,13.022f);el05Feedback(controller,-12.11f);
+ REQUIRE(controller.measured(0)>13.0f);
+ REQUIRE(controller.setSlotsEnabled(1,true));REQUIRE(controller.setMode(domain::RunMode::Run));
+ REQUIRE(controller.setJog(0,1));tick+=20;controller.update();
+ CHECK(controller.target(0)>13.0f);CHECK(controller.target(0)<=13.2f);
+ el05Feedback(controller,-11.9f);tick+=20;controller.update();
+ CHECK(controller.measured(0)>13.2f);
+ for(int i=0;i<10;++i) {el05Feedback(controller,-11.9f);tick+=20;controller.update();}
+ CHECK(controller.target(0)==doctest::Approx(13.2f));
+}
+TEST_CASE("EL05応答喪失後はMECH_POSを再取得するまでRUNを拒否する") {
+ resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ el05Position(controller,1);el05Feedback(controller,1);
+ REQUIRE(controller.setSlotsEnabled(1,true));REQUIRE(controller.setMode(domain::RunMode::Run));
+ tick+=300;controller.update();
+ CHECK((controller.enabledSlots()&1)==0);
+ REQUIRE(controller.setMode(domain::RunMode::Stop));
+ REQUIRE(controller.setSlotsEnabled(1,true));
+ CHECK_FALSE(controller.setMode(domain::RunMode::Run));
+ el05Position(controller,1);
+ REQUIRE(controller.setMode(domain::RunMode::Run));
 }
 namespace {
 void feedback(ActuatorController& controller, uint8_t esc, uint16_t angle, uint8_t temperature=25) {
@@ -176,6 +251,7 @@ TEST_CASE("EL05速度上限はPP用のVEL_MAXへ書く") {
 
 TEST_CASE("EL05は出力を有効化するたびにPPモードと制限値を復元する") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ el05Position(controller,0);
  REQUIRE(controller.setSlotsEnabled(1,true));accepted.clear();
  REQUIRE(controller.setMode(domain::RunMode::Run));
  auto countRunModeWrites=[] {
@@ -200,6 +276,7 @@ TEST_CASE("EL05は出力を有効化するたびにPPモードと制限値を復
 
 TEST_CASE("周期指令と再初期化の送信失敗も停止側へ戻す") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ el05Position(controller,0);
  REQUIRE(controller.setSlotsEnabled(1,true));REQUIRE(controller.setMode(domain::RunMode::Run));
  fail_enqueue=true;tick+=20;controller.update();
  CHECK(controller.mode()==domain::RunMode::Stop);CHECK(controller.enabledSlots()==0);
@@ -218,6 +295,7 @@ TEST_CASE("EL05設定送信失敗時は設定値を巻き戻して再試行で�
 
 TEST_CASE("停止時の取消失敗でも内部出力を切り停止再送までRUNを拒否する") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ el05Position(controller,0);
  REQUIRE(controller.setSlotsEnabled(7,true));REQUIRE(controller.setMode(domain::RunMode::Run));
  fail_cancel=true;
  CHECK_FALSE(controller.setMode(domain::RunMode::Stop));
@@ -229,6 +307,7 @@ TEST_CASE("停止時の取消失敗でも内部出力を切り停止再送まで
 
 TEST_CASE("停止再送は既に受付済みの停止フレームを取消も重複送信もしない") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ el05Position(controller,0);
  REQUIRE(controller.setSlotsEnabled(7,true));
  fail_enqueue=true;CHECK_FALSE(controller.setMode(domain::RunMode::Run));
  fail_enqueue=false;fail_identifier=0x200;accepted.clear();
@@ -244,6 +323,7 @@ TEST_CASE("停止再送は既に受付済みの停止フレームを取消も重
 }
 TEST_CASE("同じRUNの再要求ではEnableを再送しない") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
+ el05Position(controller,0);
  REQUIRE(controller.setSlotsEnabled(5,true));REQUIRE(controller.setMode(domain::RunMode::Run));
  accepted.clear();CHECK(controller.setMode(domain::RunMode::Run));CHECK(accepted.empty());
 }

@@ -1,8 +1,10 @@
 #include "el05_motor.hpp"
+#include <cmath>
 #include <cstring>
 
 namespace {
 namespace codec = domain::el05;
+constexpr float POSITION_SPAN = codec::POSITION_MAX - codec::POSITION_MIN;
 }  // namespace
 
 bool El05Motor::sendFrame(uint8_t comm_type, const uint8_t data[8]) {
@@ -23,7 +25,12 @@ bool El05Motor::disable(bool clear_fault) {
 bool El05Motor::setZero() {
   uint8_t data[8] = {};
   data[0] = 1;
-  return sendFrame(codec::comm::SET_ZERO, data);
+  const bool sent = sendFrame(codec::comm::SET_ZERO, data);
+  if (sent) {
+    position_ready_ = false;
+    has_wrapped_position_ = false;
+  }
+  return sent;
 }
 
 bool El05Motor::setRunMode(RunMode mode) {
@@ -73,7 +80,28 @@ bool El05Motor::onFeedback(uint32_t ext_id, const uint8_t data[8]) {
       if (static_cast<uint8_t>(codec::dataArea2(ext_id) & 0xFF) != motor_id_) {
         return false;
       }
-      feedback_ = codec::decodeFeedback(ext_id, data);
+      const codec::Feedback decoded = codec::decodeFeedback(ext_id, data);
+      const uint16_t position_raw =
+          (static_cast<uint16_t>(data[0]) << 8) | data[1];
+      const float wrapped = decoded.position_rad;
+      if (!has_wrapped_position_) {
+        if (position_ready_) {
+          // MECH_POSと同じ周回になる、最も近い周期位置を選ぶ。
+          position_rad_ =
+              wrapped + std::round((position_rad_ - wrapped) / POSITION_SPAN) * POSITION_SPAN;
+        } else {
+          position_rad_ = wrapped;
+        }
+        has_wrapped_position_ = true;
+      } else {
+        int32_t delta_raw = static_cast<int32_t>(position_raw) - last_position_raw_;
+        if (delta_raw > 32767) delta_raw -= 65536;
+        if (delta_raw < -32768) delta_raw += 65536;
+        position_rad_ += static_cast<float>(delta_raw) * POSITION_SPAN / 65535.0f;
+      }
+      last_position_raw_ = position_raw;
+      feedback_ = decoded;
+      feedback_.position_rad = position_rad_;
       return true;
     }
     case codec::comm::READ_PARAM: {
@@ -84,6 +112,17 @@ bool El05Motor::onFeedback(uint32_t ext_id, const uint8_t data[8]) {
       last_param_index_ = codec::paramReplyIndex(data);
       last_param_value_ = codec::paramReplyFloat(data);
       std::memcpy(&last_param_raw_, &data[4], sizeof(last_param_raw_));
+      if (last_param_index_ == codec::param::MECH_POS && std::isfinite(last_param_value_)) {
+        if (has_wrapped_position_) {
+          // 非同期のMECH_POS値で小さく飛ばさず、周回数だけを補正する。
+          position_rad_ +=
+              std::round((last_param_value_ - position_rad_) / POSITION_SPAN) * POSITION_SPAN;
+        } else {
+          position_rad_ = last_param_value_;
+        }
+        position_ready_ = true;
+        feedback_.position_rad = position_rad_;
+      }
       // 設定応答だけでは位置フィードバックの鮮度を更新しない。
       return false;
     }
