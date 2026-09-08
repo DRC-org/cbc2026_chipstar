@@ -48,3 +48,12 @@ Watch で確認する。
 
 `can_rx` は `g_can_status_code` ほかの変数を Live Expressions で監視する前提。
 状態コードの意味はソース冒頭のコメントに記載。
+
+## svmd（Arduino UNO R4 Minima / DRC-SVMD2025_Ver2.1）
+
+| サンプル | 動作 | 使用ペリフェラル |
+|---|---|---|
+| `fixed_angle` | 起動2秒後、選択したPWMサーボを指定角度へ移動して保持 | D3 / D6 / D10 / D9 |
+
+`fixed_angle`は独立したPlatformIOプロジェクト。使い方と電源上の注意は
+[`svmd/fixed_angle/README.md`](svmd/fixed_angle/README.md)を参照。
