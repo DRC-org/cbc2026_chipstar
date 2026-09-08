@@ -409,7 +409,7 @@ fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> b
             }
             if axis.limit.is_some() {
                 let description =
-                    "r・z自動ホーミングで使う速度です。最高速度に対する1〜100%で指定し、rは10 mm/s、zは5 mm/sを超えません。";
+                    "r・z自動ホーミングで使う速度です。軸の最高速度に対する1〜100%で指定します。";
                 ui.label("ホーミング速度率").on_hover_text(description);
                 edited |= ui
                     .add(

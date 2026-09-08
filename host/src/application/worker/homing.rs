@@ -198,8 +198,7 @@ impl Runtime {
             h.phase = Phase::AwaitStop;
             h.since = now;
         } else {
-            let speed = (axis.speed_per_second * axis.homing_speed_percent * 0.01)
-                .min(if name == "z" { 5.0 } else { 10.0 });
+            let speed = axis.speed_per_second * axis.homing_speed_percent * 0.01;
             let timeout = home.timeout_seconds;
             anyhow::ensure!(
                 now.duration_since(home.axis_started).as_secs_f32() < timeout,
@@ -228,7 +227,7 @@ mod tests {
             .iter_mut()
             .find(|a| a.name == "z")
             .unwrap();
-        z.speed_per_second = 20.0;
+        z.speed_per_second = 100.0;
         z.homing_speed_percent = 10.0;
         z.native_per_unit = 2.0;
         let radial = r
@@ -238,7 +237,7 @@ mod tests {
             .iter_mut()
             .find(|a| a.name == "r")
             .unwrap();
-        radial.speed_per_second = 40.0;
+        radial.speed_per_second = 100.0;
         radial.homing_speed_percent = 25.0;
         radial.native_per_unit = 0.5;
         assert!(r.begin_homing(false, true, 180.0).is_err());
@@ -278,8 +277,8 @@ mod tests {
         assert!(r.homing.is_none());
         assert!(!r.drive.running());
         let logs = r.shared.status_snapshot().logs;
-        assert!(logs.iter().any(|l| l.contains("JOG 2 -4.00000")));
-        assert!(logs.iter().any(|l| l.contains("JOG 0 5.00000")));
+        assert!(logs.iter().any(|l| l.contains("JOG 2 -20.00000")));
+        assert!(logs.iter().any(|l| l.contains("JOG 0 12.50000")));
         assert!(
             !logs
                 .iter()
