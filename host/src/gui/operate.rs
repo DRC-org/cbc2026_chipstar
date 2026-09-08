@@ -156,7 +156,7 @@ impl BridgeApp {
                 "姿勢・経路を確認済み",
             )
             .on_hover_text(
-                "EEがシューティングボックスの反対側を向き、z下降・50 mm上昇・r前進の全経路に干渉がないことを確認してください",
+                "EEがシューティングボックスの反対側を向き、z下降・50 mm上昇・r前進・100 mm後退の全経路に干渉がないことを確認してください",
             );
             let can_start = self.homing_confirmed
                 && status.connected
@@ -180,7 +180,7 @@ impl BridgeApp {
             }
         });
         ui.label(
-            RichText::new("z下端 → zを50 mm上昇 → r前端。DualSenseでは停止中にCreateを1秒長押し。")
+            RichText::new("z下端 → zを50 mm上昇 → r前端 → rを100 mm後退。DualSenseでは停止中にCreateを1秒長押し。")
                 .size(12.0)
                 .color(MUTED),
         );

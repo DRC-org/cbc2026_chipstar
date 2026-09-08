@@ -1,6 +1,8 @@
 use super::*;
 const Z_CLEARANCE_MM: f32 = 50.0;
 const Z_CLEARANCE_TOLERANCE_MM: f32 = 1.0;
+const R_RETREAT_MM: f32 = 100.0;
+const R_RETREAT_TOLERANCE_MM: f32 = 1.0;
 
 #[derive(Clone, Copy)]
 enum Phase {
@@ -11,6 +13,7 @@ enum Phase {
     PrepareClearance,
     AwaitClearanceRun,
     MoveClearance,
+    MoveRadialRetreat,
     AwaitHold,
 }
 pub(super) struct Homing {
@@ -70,6 +73,12 @@ impl Runtime {
                 anyhow::ensure!(
                     (a.minimum..=a.maximum).contains(&clearance),
                     "z原点から50mm上昇した位置が可動域外です"
+                );
+            } else {
+                let retreat = a.origin_position - limit.direction * R_RETREAT_MM;
+                anyhow::ensure!(
+                    (a.minimum..=a.maximum).contains(&retreat),
+                    "r原点から100mm後退した位置が可動域外です"
                 );
             }
         }
@@ -133,6 +142,51 @@ impl Runtime {
                 anyhow::ensure!(
                     elapsed < Duration::from_millis(500),
                     "ホーミング完了後のz保持応答がありません"
+                );
+            }
+            return Ok(());
+        }
+        if matches!(phase, Phase::MoveRadialRetreat) {
+            let index = self
+                .cfg
+                .machine
+                .axes
+                .iter()
+                .position(|axis| axis.name == "r")
+                .context("r軸の設定が必要です")?;
+            let axis = self.cfg.machine.axes[index].clone();
+            let z = self
+                .cfg
+                .machine
+                .axes
+                .iter()
+                .find(|axis| axis.name == "z")
+                .context("z軸の設定が必要です")?;
+            let bit = 1 << axis.slot;
+            let enabled = bit | (1 << z.slot);
+            let limit = axis.limit.context("rのリミットスイッチ設定が必要です")?;
+            let target = axis.origin_position - limit.direction * R_RETREAT_MM;
+            anyhow::ensure!(
+                t.mode == RunMode::Run && t.enabled_slots == enabled,
+                "r後退中の出力状態が変化しました"
+            );
+            anyhow::ensure!(
+                t.stale_slots & enabled == 0
+                    && t.error_bits[usize::from(axis.slot)] == 0
+                    && t.error_bits[usize::from(z.slot)] == 0,
+                "r後退中のフィードバック異常"
+            );
+            let position = self.machine.origin_states(Some(&t))[index].position;
+            if (position - target).abs() <= R_RETREAT_TOLERANCE_MM {
+                self.send(&format!("ENABLE {bit} 0"))?;
+                let h = self.homing.as_mut().unwrap();
+                h.phase = Phase::AwaitHold;
+                h.since = now;
+                h.label = "r後退完了（z位置保持中）".into();
+            } else {
+                anyhow::ensure!(
+                    now.duration_since(home.axis_started).as_secs_f32() < home.timeout_seconds,
+                    "rが原点から100mm後退せず時間超過しました"
                 );
             }
             return Ok(());
@@ -342,12 +396,21 @@ impl Runtime {
                 self.send("STOP")?;
                 Phase::AwaitStop
             } else {
-                self.send(&format!("ENABLE {bit} 0"))?;
-                Phase::AwaitHold
+                let target = axis.origin_position - limit.direction * R_RETREAT_MM;
+                let native_target = self
+                    .machine
+                    .set_position_target(axis.slot, target)
+                    .context("r原点が確認されていません")?;
+                self.send(&format!("TARGET {} {native_target:.5}", axis.slot))?;
+                Phase::MoveRadialRetreat
             };
             let h = self.homing.as_mut().unwrap();
             h.phase = next_phase;
             h.since = now;
+            h.axis_started = now;
+            if stage == 1 {
+                h.label = "rを原点から100mm後退（z位置保持中）".into();
+            }
         } else {
             let speed =
                 self.cfg.machine.effective_axis_speed(&axis) * axis.homing_speed_percent * 0.01;
@@ -448,8 +511,14 @@ mod tests {
         r.tick_homing(now + Duration::from_millis(450)).unwrap();
         r.telemetry.as_mut().unwrap().contacts = Some(1);
         r.tick_homing(now + Duration::from_millis(500)).unwrap();
-        r.telemetry.as_mut().unwrap().enabled_slots = 4;
+        {
+            let t = r.telemetry.as_mut().unwrap();
+            t.contacts = Some(0);
+            t.slots[0].measured = -50.0;
+        }
         r.tick_homing(now + Duration::from_millis(550)).unwrap();
+        r.telemetry.as_mut().unwrap().enabled_slots = 4;
+        r.tick_homing(now + Duration::from_millis(600)).unwrap();
         assert!(r.homing.is_none());
         assert!(!r.drive.running());
         let logs = r.shared.status_snapshot().logs;
@@ -457,6 +526,7 @@ mod tests {
         assert!(logs.iter().any(|l| l.contains("TX REINIT 5")));
         assert!(logs.iter().any(|l| l.contains("TARGET 2 100.00000")));
         assert!(logs.iter().any(|l| l.contains("JOG 0 12.50000")));
+        assert!(logs.iter().any(|l| l.contains("TARGET 0 -50.00000")));
         assert!(logs.iter().any(|l| l.contains("ENABLE 1 0")));
         assert!(
             !logs
@@ -473,7 +543,8 @@ mod tests {
             .unwrap()
             .origin_position;
         assert!(
-            (origins.iter().find(|a| a.name == "r").unwrap().position - r_origin).abs() < 0.001
+            (origins.iter().find(|a| a.name == "r").unwrap().position - (r_origin - 100.0)).abs()
+                < 0.001
         );
         assert_eq!(
             origins.iter().find(|a| a.name == "z").unwrap().position,
