@@ -154,6 +154,16 @@ Sts3215::Result Sts3215::ping(uint8_t id) {
 }
 
 Sts3215::Result Sts3215::read(uint8_t id, uint8_t address, uint8_t* data, uint8_t length) {
+  auto result = readOnce(id, address, data, length);
+  if (result == Result::Timeout || result == Result::HalError ||
+      result == Result::ProtocolError || result == Result::ChecksumError) {
+    HAL_Delay(1);
+    result = readOnce(id, address, data, length);
+  }
+  return result;
+}
+
+Sts3215::Result Sts3215::readOnce(uint8_t id, uint8_t address, uint8_t* data, uint8_t length) {
   if (id >= BROADCAST_ID || data == nullptr || length == 0 || length > proto::MAX_RX_PARAMETERS) {
     return Result::ArgumentError;
   }

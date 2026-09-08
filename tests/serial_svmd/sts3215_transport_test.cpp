@@ -56,14 +56,16 @@ TEST_CASE("循環DMAで位置応答を読み古いACKと他IDを読み飛ばす"
 TEST_CASE("受信停止のタイムアウト後はDMAを張り直し再開失敗も再試行する") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
  receiver_stalled=true;uint16_t position=0;
+ REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
+ CHECK(position==2100);CHECK(receiver_starts==2);
+ silent=true;
  CHECK(bus.readPosition(1,position)==Sts3215::Result::Timeout);
- CHECK(bus.lastHalStatus()==HAL_TIMEOUT);
  fail_start=true;const auto transmissions=sent.size();
  CHECK(bus.readPosition(1,position)==Sts3215::Result::HalError);
  CHECK(sent.size()==transmissions);
- fail_start=false;
+ fail_start=false;silent=false;
  REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
- CHECK(position==2100);CHECK(receiver_starts==3);
+ CHECK(position==2100);CHECK(receiver_starts==6);
 }
 TEST_CASE("受信UART異常はHAL成功と誤表示せず次の読取りで復旧する") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
@@ -72,7 +74,7 @@ TEST_CASE("受信UART異常はHAL成功と誤表示せず次の読取りで復�
  CHECK(bus.lastHalStatus()==HAL_ERROR);
  receive_error=false;
  REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
- CHECK(receiver_starts==2);CHECK(position==2100);
+ CHECK(receiver_starts==3);CHECK(position==2100);
 }
 TEST_CASE("応答なしや読戻し不一致を送信成功として扱わない") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
@@ -110,6 +112,18 @@ namespace {
 std::vector<std::array<uint8_t,8>> replies;
 void emitService(uint16_t, const uint8_t* data) { std::array<uint8_t,8> p{};std::memcpy(p.data(),data,8);replies.push_back(p); }
 bool changeBaud(uint32_t) { return true; }
+}
+TEST_CASE("一括監視は受信停止から復旧し全4分割データと成功応答を返す") {
+ reset();replies.clear();Sts3215 bus(&uart,20,false);
+ REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ ServoService service(bus,emitService,changeBaud);
+ receiver_stalled=true;
+ const uint8_t monitor[8]={1,24,1,7,0,0,0,0};
+ service.handle(monitor,false);
+ REQUIRE(replies.size()==5);
+ CHECK(replies.back()[4]==0);CHECK(receiver_starts==2);
+ CHECK(replies[0][4]==0x34);CHECK(replies[0][5]==0x08);
+ for(unsigned i=0;i<4;++i) CHECK(replies[i][3]==i);
 }
 TEST_CASE("相対ステップのEXECUTE再送で二度動かさず停止で待機目標を破棄する") {
  reset();replies.clear();regs[33]=3;

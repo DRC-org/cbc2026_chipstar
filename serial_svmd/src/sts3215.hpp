@@ -81,6 +81,7 @@ class Sts3215 {
   HAL_StatusTypeDef lastHalStatus() const { return last_hal_status_; }
 
  private:
+  Result readOnce(uint8_t id, uint8_t address, uint8_t* data, uint8_t length);
   Result sendInstruction(uint8_t id, uint8_t instruction, const uint8_t* parameters,
                          uint8_t parameter_count);
   Result receiveStatus(uint8_t expected_id, uint8_t* parameters, uint8_t capacity,
