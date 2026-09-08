@@ -582,3 +582,15 @@ fn m3508_z_profile_uses_rotor_degrees_and_rejects_legacy_dm() {
     profile.parameters.insert("dm_p_max".into(), 2048.0);
     assert!(profile.validate().is_err());
 }
+
+#[test]
+fn homing_retreat_settings_roundtrip_and_reject_invalid_values() {
+    let mut profile = MachineProfile::embedded().unwrap();
+    profile.axes[0].homing_retreat_mm = Some(37.5);
+    let restored: MachineProfile = toml::from_str(&toml::to_string(&profile).unwrap()).unwrap();
+    assert_eq!(restored.axes[0].homing_retreat_mm(), 37.5);
+    for value in [-1.0, f32::NAN, f32::INFINITY] {
+        profile.axes[0].homing_retreat_mm = Some(value);
+        assert!(profile.validate().is_err());
+    }
+}

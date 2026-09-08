@@ -1,7 +1,5 @@
 use super::*;
-const Z_CLEARANCE_MM: f32 = 50.0;
 const Z_CLEARANCE_TOLERANCE_MM: f32 = 1.0;
-const R_RETREAT_MM: f32 = 100.0;
 const R_RETREAT_TOLERANCE_MM: f32 = 1.0;
 
 #[derive(Clone, Copy)]
@@ -69,16 +67,16 @@ impl Runtime {
             );
             if name == "z" {
                 anyhow::ensure!(a.unit == "mm", "z軸の単位はmmにしてください");
-                let clearance = a.origin_position + Z_CLEARANCE_MM;
+                let clearance = a.origin_position + a.homing_retreat_mm();
                 anyhow::ensure!(
                     (a.minimum..=a.maximum).contains(&clearance),
-                    "z原点から50mm上昇した位置が可動域外です"
+                    "z原点から設定量だけ上昇した位置が可動域外です"
                 );
             } else {
-                let retreat = a.origin_position - limit.direction * R_RETREAT_MM;
+                let retreat = a.origin_position - limit.direction * a.homing_retreat_mm();
                 anyhow::ensure!(
                     (a.minimum..=a.maximum).contains(&retreat),
-                    "r原点から100mm後退した位置が可動域外です"
+                    "r原点から設定量だけ後退した位置が可動域外です"
                 );
             }
         }
@@ -165,7 +163,7 @@ impl Runtime {
             let bit = 1 << axis.slot;
             let enabled = bit | (1 << z.slot);
             let limit = axis.limit.context("rのリミットスイッチ設定が必要です")?;
-            let target = axis.origin_position - limit.direction * R_RETREAT_MM;
+            let target = axis.origin_position - limit.direction * axis.homing_retreat_mm();
             anyhow::ensure!(
                 t.mode == RunMode::Run && t.enabled_slots == enabled,
                 "r後退中の出力状態が変化しました"
@@ -186,7 +184,7 @@ impl Runtime {
             } else {
                 anyhow::ensure!(
                     now.duration_since(home.axis_started).as_secs_f32() < home.timeout_seconds,
-                    "rが原点から100mm後退せず時間超過しました"
+                    "rが設定した後退位置に到達せず時間超過しました"
                 );
             }
             return Ok(());
@@ -204,7 +202,7 @@ impl Runtime {
                 .context("z軸の設定が必要です")?;
             let axis = self.cfg.machine.axes[index].clone();
             let bit = 1 << axis.slot;
-            let target = axis.origin_position + Z_CLEARANCE_MM;
+            let target = axis.origin_position + axis.homing_retreat_mm();
             anyhow::ensure!(
                 t.stale_slots & bit == 0 && t.error_bits[usize::from(axis.slot)] == 0,
                 "z上昇中のフィードバック異常"
@@ -261,7 +259,7 @@ impl Runtime {
             } else {
                 anyhow::ensure!(
                     now.duration_since(home.axis_started).as_secs_f32() < home.timeout_seconds,
-                    "zが原点から50mmの位置に到達せず時間超過しました"
+                    "zが設定した上昇位置に到達せず時間超過しました"
                 );
             }
             return Ok(());
@@ -295,7 +293,7 @@ impl Runtime {
                 h.phase = Phase::PrepareClearance;
                 h.since = now;
                 h.axis_started = now;
-                h.label = "zを原点から50mm上昇".into();
+                h.label = "zを設定した戻し位置へ上昇".into();
             } else {
                 anyhow::ensure!(
                     elapsed < Duration::from_millis(500),
@@ -396,7 +394,7 @@ impl Runtime {
                 self.send("STOP")?;
                 Phase::AwaitStop
             } else {
-                let target = axis.origin_position - limit.direction * R_RETREAT_MM;
+                let target = axis.origin_position - limit.direction * axis.homing_retreat_mm();
                 let native_target = self
                     .machine
                     .set_position_target(axis.slot, target)
@@ -409,7 +407,7 @@ impl Runtime {
             h.since = now;
             h.axis_started = now;
             if stage == 1 {
-                h.label = "rを原点から100mm後退（z位置保持中）".into();
+                h.label = "rを設定した戻し位置へ後退（z位置保持中）".into();
             }
         } else {
             let speed =
@@ -434,6 +432,12 @@ mod tests {
     use super::*;
     #[test]
     fn homes_z_raises_and_holds_it_while_homing_r() {
+        check_homing_retreat(None, None);
+        check_homing_retreat(Some(25.0), Some(60.0));
+        check_homing_retreat(Some(0.0), Some(0.0));
+    }
+
+    fn check_homing_retreat(z_distance: Option<f32>, r_distance: Option<f32>) {
         let mut r = crate::application::worker::tests::screen_runtime();
         let z = r
             .cfg
@@ -442,6 +446,8 @@ mod tests {
             .iter_mut()
             .find(|a| a.name == "z")
             .unwrap();
+        z.homing_retreat_mm = z_distance;
+        let z_distance = z.homing_retreat_mm();
         z.speed_per_second = 100.0;
         z.homing_speed_percent = 10.0;
         z.native_per_unit = 2.0;
@@ -452,6 +458,8 @@ mod tests {
             .iter_mut()
             .find(|a| a.name == "r")
             .unwrap();
+        radial.homing_retreat_mm = r_distance;
+        let r_distance = radial.homing_retreat_mm();
         radial.speed_per_second = 100.0;
         radial.homing_speed_percent = 25.0;
         radial.native_per_unit = 0.5;
@@ -502,7 +510,7 @@ mod tests {
         r.tick_homing(now + Duration::from_millis(300)).unwrap();
         {
             let t = r.telemetry.as_mut().unwrap();
-            t.slots[2].measured = 100.0;
+            t.slots[2].measured = z_distance * 2.0;
             t.contacts = Some(0);
         }
         r.tick_homing(now + Duration::from_millis(350)).unwrap();
@@ -514,7 +522,7 @@ mod tests {
         {
             let t = r.telemetry.as_mut().unwrap();
             t.contacts = Some(0);
-            t.slots[0].measured = -50.0;
+            t.slots[0].measured = -r_distance * 0.5;
         }
         r.tick_homing(now + Duration::from_millis(550)).unwrap();
         r.telemetry.as_mut().unwrap().enabled_slots = 4;
@@ -524,9 +532,15 @@ mod tests {
         let logs = r.shared.status_snapshot().logs;
         assert!(logs.iter().any(|l| l.contains("JOG 2 -20.00000")));
         assert!(logs.iter().any(|l| l.contains("TX REINIT 5")));
-        assert!(logs.iter().any(|l| l.contains("TARGET 2 100.00000")));
+        assert!(
+            logs.iter()
+                .any(|l| l.contains(&format!("TARGET 2 {:.5}", z_distance * 2.0)))
+        );
         assert!(logs.iter().any(|l| l.contains("JOG 0 12.50000")));
-        assert!(logs.iter().any(|l| l.contains("TARGET 0 -50.00000")));
+        assert!(
+            logs.iter()
+                .any(|l| l.contains(&format!("TARGET 0 {:.5}", (0.0 - r_distance) * 0.5)))
+        );
         assert!(logs.iter().any(|l| l.contains("ENABLE 1 0")));
         assert!(
             !logs
@@ -543,14 +557,18 @@ mod tests {
             .unwrap()
             .origin_position;
         assert!(
-            (origins.iter().find(|a| a.name == "r").unwrap().position - (r_origin - 100.0)).abs()
+            (origins.iter().find(|a| a.name == "r").unwrap().position - (r_origin - r_distance))
+                .abs()
                 < 0.001
         );
         assert_eq!(
             origins.iter().find(|a| a.name == "z").unwrap().position,
-            50.0
+            z_distance
         );
-        assert_eq!(origins.iter().find(|a| a.name == "z").unwrap().target, 50.0);
+        assert_eq!(
+            origins.iter().find(|a| a.name == "z").unwrap().target,
+            z_distance
+        );
     }
     #[test]
     fn stop_cancels_and_stale_or_timeout_fails() {

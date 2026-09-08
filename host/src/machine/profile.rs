@@ -50,6 +50,9 @@ pub struct AxisProfile {
         skip_serializing_if = "is_default_homing_speed_percent"
     )]
     pub homing_speed_percent: f32,
+    /// 原点採用後、リミットから離れる距離。省略時はr=100mm、z=50mm。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub homing_retreat_mm: Option<f32>,
     pub native_per_unit: f32,
     pub minimum: f32,
     pub maximum: f32,
@@ -60,6 +63,16 @@ pub struct AxisProfile {
     /// 省略するとスイッチを持たず、原点採用は手動操作だけになる。
     #[serde(default)]
     pub limit: Option<AxisLimit>,
+}
+
+impl AxisProfile {
+    pub fn homing_retreat_mm(&self) -> f32 {
+        self.homing_retreat_mm.unwrap_or(match self.name.as_str() {
+            "r" => 100.0,
+            "z" => 50.0,
+            _ => 0.0,
+        })
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -357,6 +370,7 @@ impl MachineProfile {
                 axis.input_sign,
                 axis.speed_per_second,
                 axis.homing_speed_percent,
+                axis.homing_retreat_mm(),
                 axis.native_per_unit,
                 axis.minimum,
                 axis.maximum,
@@ -369,6 +383,7 @@ impl MachineProfile {
             if axis.input_sign.abs() != 1.0
                 || axis.speed_per_second < 0.0
                 || !(1.0..=100.0).contains(&axis.homing_speed_percent)
+                || axis.homing_retreat_mm() < 0.0
                 || axis.native_per_unit == 0.0
                 || axis.minimum >= axis.maximum
                 || !(axis.minimum..=axis.maximum).contains(&axis.initial)
