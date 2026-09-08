@@ -69,6 +69,7 @@ add_firmware_tests(cctl_tests ${REPO_ROOT}/cctl/src
     cctl/pid_test.cpp
     cctl/delta_timer_test.cpp
     cctl/deadline_test.cpp
+    cctl/can_rx_queue_test.cpp
     ${REPO_ROOT}/cctl/src/domain/c620_codec.cpp
     ${REPO_ROOT}/cctl/src/domain/line_reader.cpp
     ${REPO_ROOT}/cctl/src/domain/telemetry.cpp

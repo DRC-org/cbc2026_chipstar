@@ -2,6 +2,7 @@
 #include "can_bus.hpp"
 #include "device_config.hpp"
 #include "domain/can_frame.hpp"
+#include "domain/can_rx_queue.hpp"
 #include "domain/deadline.hpp"
 #include "domain/motor_discovery.hpp"
 #include "domain/command.hpp"
@@ -33,6 +34,8 @@ namespace {
 Ui ui(&hi2c1, &htim15);
 CanBus motor_bus(&hfdcan1);
 CanBus peripheral_bus(&hfdcan2);
+domain::CanRxQueue peripheral_rx;
+std::atomic<uint32_t> peripheral_rx_dropped{0};
 ActuatorController controller(motor_bus);
 domain::LineReader usb_line;
 domain::CommandQueue commands;
@@ -306,11 +309,31 @@ domain::Status ledStatus() {
 }
 }  // namespace
 
+extern "C" void FDCAN2_IT0_IRQHandler(void) {
+    HAL_FDCAN_IRQHandler(&hfdcan2);
+}
+
+extern "C" void HAL_FDCAN_RxFifo0Callback(FDCAN_HandleTypeDef* handle, uint32_t flags) {
+    if (handle != &hfdcan2) return;
+    if (flags & FDCAN_IT_RX_FIFO0_MESSAGE_LOST) ++peripheral_rx_dropped;
+    domain::CanFrame frame;
+    while (peripheral_bus.receive(frame)) {
+        if (!peripheral_rx.push(frame)) ++peripheral_rx_dropped;
+    }
+}
+
 extern "C" void setup(void) {
     ui.begin();
     HAL_TIM_Base_Start_IT(&htim2);
     motor_bus_ready = motor_bus.begin();
-    peripheral_bus_ready = peripheral_bus.begin();
+    hfdcan2.Init.AutoRetransmission = ENABLE;
+    peripheral_bus_ready = HAL_FDCAN_Init(&hfdcan2) == HAL_OK && peripheral_bus.begin();
+    if (peripheral_bus_ready) {
+        peripheral_bus_ready = HAL_FDCAN_ActivateNotification(&hfdcan2,
+            FDCAN_IT_RX_FIFO0_NEW_MESSAGE | FDCAN_IT_RX_FIFO0_MESSAGE_LOST, 0) == HAL_OK;
+        HAL_NVIC_SetPriority(FDCAN2_IT0_IRQn, 5, 0);
+        HAL_NVIC_EnableIRQ(FDCAN2_IT0_IRQn);
+    }
     controller.begin();
     last_contact_ms = HAL_GetTick();
 }
@@ -354,7 +377,15 @@ extern "C" void loop(void) {
         }
         controller.dispatchRx(frame);
     }
-    while (peripheral_bus.receive(frame)) sendCanFrame(frame);
+    // USBが詰まっている間は、CANフレームをキューに残す。
+    while (TX_CAPACITY - 1 - txUsed() >= 96 && peripheral_rx.pop(frame)) sendCanFrame(frame);
+    const auto dropped = peripheral_rx_dropped.exchange(0);
+    if (dropped) {
+        char text[64];
+        std::snprintf(text, sizeof(text), "CAN_RX_LOST bus=2 count=%lu",
+                      static_cast<unsigned long>(dropped));
+        sendText(text);
+    }
 
     domain::Command command;
     while (commands.pop(command)) applyCommand(command);

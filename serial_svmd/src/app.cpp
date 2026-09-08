@@ -181,6 +181,9 @@ void serviceReply(uint16_t id, const uint8_t* data) {
     }
   }
   sendCan(domain::servo_can::canId(id, address), data);
+  // 一括監視の連射で、受信側の3要素FIFOが満杯になるのを避ける。
+  // 分割データ間で受信側に処理時間を与える。
+  if (id == 0x327) HAL_Delay(2);
   if (id == 0x326 && data[4] != 0 && mode == Mode::Run) {
     mode = Mode::Stop;
     stop_retry = true;
