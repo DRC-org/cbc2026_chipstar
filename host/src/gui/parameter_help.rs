@@ -80,7 +80,7 @@ pub(super) fn help(name: &str) -> Option<(&'static str, &'static str)> {
         ),
         "m3508_max_rpm" => (
             "rpm",
-            "位置制御が出すモータ回転速度の上限。機体側の角速度ではありません。",
+            "軸の最高速度と換算係数から自動生成されるCCTL内部値です。",
         ),
         "m3508_max_current_ma" => (
             "mA",
@@ -93,7 +93,7 @@ pub(super) fn help(name: &str) -> Option<(&'static str, &'static str)> {
         ),
         "el05_limit_spd" => (
             "rad/s",
-            "EL05のPP位置モード用速度上限（VEL_MAX）。機体側のmm/sとは別の制限です。",
+            "軸の最高速度と換算係数から自動生成されるEL05 CSP速度上限です。",
         ),
         "el05_limit_cur" => (
             "A",

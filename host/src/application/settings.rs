@@ -85,8 +85,9 @@ impl Settings {
 /// 検証済みプロファイルを送信順の設定値へ変換する。
 /// 基板とIDを保持し、指令文字列の逆解析で応答先を推測しない。
 pub fn parameter_plan(profile: &MachineProfile) -> Vec<ParameterValue> {
+    let cctl_parameters = profile.cctl_parameters();
     let boards: [(ParameterBoard, &ParameterMap, &[&str]); 4] = [
-        (ParameterBoard::Cctl, &profile.parameters, &PARAMETER_NAMES),
+        (ParameterBoard::Cctl, &cctl_parameters, &PARAMETER_NAMES),
         (
             ParameterBoard::Svmd,
             &profile.svmd_parameters,
@@ -134,6 +135,7 @@ mod tests {
     fn small_gain_requires_precise_reply_and_reports_both_values() {
         let mut profile = MachineProfile::embedded().unwrap();
         profile.parameters.clear();
+        profile.axes.clear();
         profile.parameters.insert("m3508_vel_ki".into(), 0.0005);
         let mut sync = Settings::new(&profile);
         assert_eq!(sync.poll_command().unwrap().unwrap(), "PARAM 5 0.00050");
@@ -181,6 +183,27 @@ mod tests {
     }
 
     #[test]
+    fn derives_motor_speed_limits_from_axis_speed() {
+        let mut profile = MachineProfile::embedded().unwrap();
+        for (slot, speed, native) in [(0, 100.0, -0.04), (1, 40.0, 132.0), (2, 100.0, -96.0)] {
+            let axis = profile
+                .axes
+                .iter_mut()
+                .find(|axis| axis.slot == slot)
+                .unwrap();
+            axis.speed_per_second = speed;
+            axis.native_per_unit = native;
+        }
+        let lines = parameter_plan(&profile)
+            .iter()
+            .map(ParameterValue::command)
+            .collect::<Vec<_>>();
+        assert!(lines.contains(&"PARAM 9 4.00000".to_owned()));
+        assert!(lines.contains(&"PARAM 3 880.00000".to_owned()));
+        assert!(lines.contains(&"PARAM 36 1600.00000".to_owned()));
+    }
+
+    #[test]
     fn sends_can_board_parameters_through_the_gateway() {
         let mut profile = MachineProfile::embedded().unwrap();
         profile.dcmd_parameters.insert("max_duty".into(), 1000.0);
@@ -201,6 +224,7 @@ mod tests {
     fn identical_parameter_ids_on_different_boards_do_not_cross_confirm() {
         let mut profile = MachineProfile::embedded().unwrap();
         profile.parameters.clear();
+        profile.axes.clear();
         profile.svmd_parameters.insert("min_pulse_us".into(), 500.0);
         profile.dcmd_parameters.insert("max_duty".into(), 500.0);
         profile

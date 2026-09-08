@@ -205,14 +205,8 @@ impl BridgeApp {
                             "低速固定中。機体座標による移動範囲の制限は無効です。",
                         );
                     }
-                    let effective_speed = self
-                        .edit
-                        .axes
-                        .iter()
-                        .find(|axis| axis.name == name)
-                        .map(|axis| self.edit.effective_axis_speed(axis));
                     if let Some(axis) = self.edit.axes.iter_mut().find(|axis| axis.name == name) {
-                        edited |= axis_settings(ui, axis, effective_speed);
+                        edited |= axis_settings(ui, axis);
                     }
                     if name == "theta" {
                         ui.colored_label(
@@ -287,6 +281,16 @@ impl BridgeApp {
                             .max_col_width((ui.available_width() - 360.0).max(180.0))
                             .show(ui, |ui| {
                                 for (name, value) in parameters {
+                                    if board == "cctl"
+                                        && matches!(
+                                            name.as_str(),
+                                            "el05_limit_spd"
+                                                | "m3508_max_rpm"
+                                                | "m3508_slot2_max_rpm"
+                                        )
+                                    {
+                                        continue;
+                                    }
                                     let (unit, description) = parameter_help::help(name)
                                         .unwrap_or(("", "この項目の説明は未登録です"));
                                     let label = parameter_help::label(name).unwrap_or(name);
@@ -360,11 +364,7 @@ impl BridgeApp {
     }
 }
 
-fn axis_settings(
-    ui: &mut egui::Ui,
-    axis: &mut crate::machine::AxisProfile,
-    effective_speed: Option<f32>,
-) -> bool {
+fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> bool {
     let mut edited = false;
     let unit = axis.unit.clone();
     ui.add_space(8.0);
@@ -434,16 +434,5 @@ fn axis_settings(
                 ui.end_row();
             }
         });
-    if let Some(effective) = effective_speed
-        && effective + f32::EPSILON < axis.speed_per_second
-    {
-        ui.colored_label(
-            WARNING,
-            format!(
-                "実効最高速度はモータ保護上限により {:.2} {} です。低速率とホーミング速度率はこの値に掛かります。",
-                effective, axis.unit
-            ),
-        );
-    }
     edited
 }

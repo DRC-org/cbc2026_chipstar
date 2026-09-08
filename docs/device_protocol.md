@@ -224,6 +224,8 @@ PARAMの応答値は小数5桁で返す。例えば速度ゲイン `0.0005` は 
 | 41 | `c620_slot2_esc_id` | slot 2のESC ID（1〜8、slot 1と重複不可） |
 | 42 | `m3508_slot2_max_temperature_c` | slot 2の過熱しきい値 [°C] |
 
+`el05_limit_spd`、`m3508_max_rpm`、`m3508_slot2_max_rpm`は機体プロファイルで直接調整しない。hostが各軸の`speed_per_second`と`native_per_unit`から生成して送信する。
+
 id 21・24・25・41（通信ID）の変更はSAFE中だけ受理する。走行中に宛先を差し替えると、
 指令の宛先とフィードバックの解釈が食い違うためである。
 

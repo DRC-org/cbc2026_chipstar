@@ -211,26 +211,42 @@ impl MachineProfile {
     }
 
     pub fn parse(source: &str) -> Result<Self> {
-        let profile: Self = toml::from_str(source).context("機体プロファイルの形式が不正です")?;
+        let mut profile: Self =
+            toml::from_str(source).context("機体プロファイルの形式が不正です")?;
+        profile.sync_motor_speed_limits();
         profile.validate()?;
         Ok(profile)
     }
 
-    /// 操作速度とモータ側保護上限のうち、小さい方を機体単位で返す。
+    /// 操作・シーケンスで使う機体単位の最高速度。
     pub fn effective_axis_speed(&self, axis: &AxisProfile) -> f32 {
-        let motor_limit = match axis.slot {
-            0 => self.parameters.get("el05_limit_spd").copied(),
-            1 => self.parameters.get("m3508_max_rpm").map(|rpm| rpm * 6.0),
-            2 => self
-                .parameters
-                .get("m3508_slot2_max_rpm")
-                .map(|rpm| rpm * 6.0),
-            _ => None,
+        axis.speed_per_second
+    }
+
+    /// CCTLが最終段で適用するモータ速度上限を、軸の最高速度から生成する。
+    pub fn cctl_parameters(&self) -> ParameterMap {
+        let mut values = self.parameters.clone();
+        for axis in &self.axes {
+            let native_per_second = axis.speed_per_second * axis.native_per_unit.abs();
+            match axis.slot {
+                0 => {
+                    values.insert("el05_limit_spd".into(), native_per_second);
+                }
+                1 => {
+                    values.insert("m3508_max_rpm".into(), native_per_second / 6.0);
+                }
+                2 => {
+                    values.insert("m3508_slot2_max_rpm".into(), native_per_second / 6.0);
+                }
+                _ => {}
+            }
         }
-        .map(|native_per_second| native_per_second / axis.native_per_unit.abs());
-        motor_limit.map_or(axis.speed_per_second, |limit| {
-            axis.speed_per_second.min(limit)
-        })
+        values
+    }
+
+    /// 表示・保存されるCCTL設定も軸速度から生成した値へ揃える。
+    pub fn sync_motor_speed_limits(&mut self) {
+        self.parameters = self.cctl_parameters();
     }
 
     pub fn validate(&self) -> Result<()> {

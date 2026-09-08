@@ -52,22 +52,19 @@ impl BridgeApp {
                         });
                 }
                 ui.add_space(6.0);
-                ui.label(RichText::new("モータへの指令上限").strong());
+                ui.label(RichText::new("モータへの電流指令上限").strong());
                 egui::Grid::new(("pid-limits", slot))
                     .num_columns(4)
                     .spacing([10.0, 6.0])
                     .show(ui, |ui| {
-                        for (suffix, label) in [("max_rpm", "速度"), ("max_current_ma", "電流")]
-                        {
-                            edited |= parameter_row(
-                                ui,
-                                &mut self.edit,
-                                &applied,
-                                &format!("{prefix}_{suffix}"),
-                                label,
-                                false,
-                            );
-                        }
+                        edited |= parameter_row(
+                            ui,
+                            &mut self.edit,
+                            &applied,
+                            &format!("{prefix}_max_current_ma"),
+                            "電流",
+                            false,
+                        );
                     });
             } else if slot == 0 {
                 ui.label(
@@ -81,14 +78,13 @@ impl BridgeApp {
                     .show(ui, |ui| {
                         for (key, label, gain) in [
                             ("el05_loc_kp", "位置P", true),
-                            ("el05_limit_spd", "速度上限", false),
                             ("el05_limit_cur", "電流上限", false),
                         ] {
                             edited |= parameter_row(ui, &mut self.edit, &applied, key, label, gain);
                         }
                     });
                 ui.label(
-                    RichText::new("この接続では位置I・位置D・速度ゲインを変更できません。")
+                    RichText::new("最高速度は軸設定で指定します。この接続では位置I・位置D・速度ゲインを変更できません。")
                         .size(12.0)
                         .color(MUTED),
                 );

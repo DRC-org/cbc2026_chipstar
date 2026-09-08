@@ -116,13 +116,13 @@ fn slow_speed_percent_defaults_to_twenty_and_is_configurable() {
 }
 
 #[test]
-fn effective_speed_uses_the_lower_motor_protection_limit() {
+fn effective_speed_uses_axis_speed_as_the_single_source() {
     let mut profile = MachineProfile::embedded().unwrap();
     let r = profile.axes.iter_mut().find(|axis| axis.slot == 0).unwrap();
     r.speed_per_second = 400.0;
     r.native_per_unit = -0.04;
     profile.parameters.insert("el05_limit_spd".into(), 1.0);
-    assert_eq!(profile.effective_axis_speed(&profile.axes[0]), 25.0);
+    assert_eq!(profile.effective_axis_speed(&profile.axes[0]), 400.0);
 
     let z = profile.axes.iter_mut().find(|axis| axis.slot == 2).unwrap();
     z.speed_per_second = 400.0;
@@ -130,7 +130,7 @@ fn effective_speed_uses_the_lower_motor_protection_limit() {
     profile
         .parameters
         .insert("m3508_slot2_max_rpm".into(), 500.0);
-    assert_eq!(profile.effective_axis_speed(&profile.axes[2]), 31.25);
+    assert_eq!(profile.effective_axis_speed(&profile.axes[2]), 400.0);
 }
 
 /// `[parameters]` の検証用に、最小構成のプロファイルを組み立てる。

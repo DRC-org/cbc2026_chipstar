@@ -148,7 +148,7 @@ bit7..0   : target_id(8bit)
 | `0x702E` | dcc_set | 減速度 | | RW |
 
 ### rθz での位置制御手順
-`disable(clear_fault)` → `run_mode=1` → `limit_spd` / `limit_cur` / `loc_kp` 設定 →
+`disable(clear_fault)` → `run_mode=5` → `limit_spd` / `limit_cur` / `loc_kp` 設定 →
 `set_zero` → `enable` → 以降 `loc_ref` に目標位置[rad]を周期書込。
 
 ### フィードバック（comm_type=2）復号レンジ
