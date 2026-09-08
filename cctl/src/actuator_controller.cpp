@@ -279,15 +279,9 @@ bool ActuatorController::setMode(domain::RunMode mode) {
   if (mode == domain::RunMode::Run &&
       (enabled_slots_ & domain::slot_bit::SLOT0) != 0) {
     if (!slot0_.positionReady()) return false;
-    // EL05だけ再通電されても、全軸が停止しているRUN遷移前なら必ず
-    // 無効状態でPPモードと制限値を復元できる。動作中のC620への周期送信を
-    // 初期化待ちで止めないため、slot有効化だけでは再設定しない。
-    const uint32_t failures = bus_.txFailures();
-    initMotor(0);
-    if (bus_.txFailures() != failures) {
-      stopAfterTxFailure();
-      return false;
-    }
+    // RUNは保持目標の設定と出力有効化だけを行う。
+    // initMotorの待機中は全軸の受信・状態送信が止まるため、
+    // モータ再通電後の設定復元はSAFEでの明示的なREINITに任せる。
   }
   mode_ = mode;
   return applySlotStates();

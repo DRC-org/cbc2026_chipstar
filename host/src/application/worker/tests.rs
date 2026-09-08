@@ -976,3 +976,33 @@ fn old_motor_layout_cannot_start_even_with_confirmed_settings() {
     assert!(runtime.start().is_err());
     assert!(!runtime.drive.running());
 }
+
+#[test]
+fn gain_apply_after_hold_preserves_coordinates_and_allows_run() {
+    let mut runtime = screen_runtime();
+    runtime.start().unwrap();
+    runtime.tick().unwrap();
+    runtime.stop(false).unwrap();
+    let before = runtime.machine.origin_states(runtime.telemetry.as_ref());
+    let mut profile = runtime.cfg.machine.clone();
+    profile.parameters.insert("m3508_slot2_vel_kp".into(), 9.0);
+    runtime.request(&Request {
+        text: Some(toml::to_string(&profile).unwrap()),
+        ..Request::new("apply")
+    }, true).unwrap();
+    for _ in 0..45 {
+        runtime.tick().unwrap();
+    }
+    assert!(runtime.settings.ready());
+    assert!(!runtime.drive.running());
+    let after = runtime.machine.origin_states(runtime.telemetry.as_ref());
+    for (old, new) in before.iter().zip(&after) {
+        assert!(new.captured && !new.lost);
+        assert!((old.position - new.position).abs() < 0.001);
+    }
+    runtime.start().unwrap();
+    runtime.tick().unwrap();
+    assert!(runtime.drive.running());
+    assert!(runtime.machine.origin_states(runtime.telemetry.as_ref())
+        .iter().all(|o| o.captured && !o.lost));
+}
