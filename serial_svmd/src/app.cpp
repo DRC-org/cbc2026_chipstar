@@ -317,6 +317,14 @@ void apply(const domain::ServoCommand& command) {
     case domain::ServoCommandKind::Read: {
       uint16_t position = 0;
       g_servo_status = bus.readPosition(command.id, position);
+      // 位置読取りは観測処理なので、一時的な通信異常は一度だけ再同期して読み直す。
+      if (g_servo_status == Sts3215::Result::HalError ||
+          g_servo_status == Sts3215::Result::Timeout ||
+          g_servo_status == Sts3215::Result::ProtocolError ||
+          g_servo_status == Sts3215::Result::ChecksumError) {
+        HAL_Delay(1);
+        g_servo_status = bus.readPosition(command.id, position);
+      }
       g_servo_id = command.id;
       g_servo_error_flags = bus.lastServoError();
       if (g_servo_status == Sts3215::Result::Ok) {

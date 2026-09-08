@@ -338,6 +338,8 @@ resultは1=引数、2=HAL、3=timeout、4=形式、5=checksum、6=サーボ異�
 7=位置モード以外、8=書込み読戻し不一致。失敗した指令に続けてOKは返さない。
 ASCIIでは`ERR code=SERVO_IO id=... result=... hal=... flags=...`。
 
+位置READのtimeout・UART・応答形式・checksum異常は一度だけ再試行する。連続して失敗した場合はEE出力を解除するが、hostはr・θ・zの運転を継続する。
+
 1バス上のserial_svmdは1台を想定する。複数台にはアドレス割当の拡張が必要。
 
 ## svmd

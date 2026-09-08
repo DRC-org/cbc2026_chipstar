@@ -213,6 +213,28 @@ impl Runtime {
         self.reason = reason.clone();
         self.error = reason;
     }
+    fn fault_ee(&mut self, reason: String) {
+        self.ee = ee_control::Control::default();
+        self.pad.ee_armed = false;
+        let mut stop_error = None;
+        if !self.cfg.machine.pwm_servos.is_empty()
+            && let Err(error) = self.send(&crate::protocol::svmd::Command::Stop.to_cctl_line())
+        {
+            stop_error = Some(error.to_string());
+        }
+        if self.cfg.machine.requires_serial_svmd()
+            && let Err(error) =
+                self.send(&crate::protocol::serial_svmd::Command::Stop.to_cctl_line())
+        {
+            stop_error = Some(error.to_string());
+        }
+        let detail = match stop_error {
+            Some(error) => format!("{reason} / EE停止指令: {error}"),
+            None => reason,
+        };
+        self.reason = format!("EEを停止しました。r・θ・zの運転は継続しています: {detail}");
+        self.error = detail;
+    }
     fn communication_failed(&mut self, reason: String) {
         if self.communication_error.as_ref() != Some(&reason) {
             self.shared.log(format!("通信切断: {reason}"));
@@ -342,7 +364,7 @@ impl Runtime {
         for line in self.link.read_lines()? {
             self.observe_test_reply(&line);
             if let Err(error) = self.observe_ee(&line) {
-                self.fault(error.to_string());
+                self.fault_ee(error.to_string());
             }
             if let Err(error) = self.observe_sts(&line) {
                 self.sts.stop_monitoring();
@@ -652,7 +674,7 @@ impl Runtime {
             self.fault(error.to_string());
         }
         if let Err(error) = self.tick_ee(now) {
-            self.fault(error.to_string());
+            self.fault_ee(error.to_string());
         }
         if let Err(error) = self.tick_sts(now) {
             self.sts.stop_monitoring();

@@ -245,4 +245,20 @@ mod tests {
         assert!(r.ee.targets.is_empty());
         assert!(!r.drive.running());
     }
+
+    #[test]
+    fn ee_fault_stops_only_ee_and_keeps_main_axes_running() {
+        let mut r = crate::application::worker::tests::screen_runtime();
+        r.drive = DriveState::Running;
+        r.ee.targets.insert("ee_rotation".into(), 2048.0);
+        let before = r.shared.status_snapshot().logs.len();
+
+        r.fault_ee("EEサーボ1: 応答なし".into());
+
+        assert!(r.drive.running());
+        assert!(r.ee.targets.is_empty());
+        let logs = r.shared.status_snapshot().logs;
+        assert!(!logs.iter().skip(before).any(|line| line == "TX STOP"));
+        assert!(r.reason.contains("r・θ・zの運転は継続"));
+    }
 }
