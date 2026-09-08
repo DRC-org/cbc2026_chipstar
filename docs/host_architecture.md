@@ -29,9 +29,9 @@ FWの`domain/`は指令解釈・制御計算・状態管理を担い、`app.cpp`
 | [application](../host/src/application/mod.rs) | `command.rs`: 要求・応答、`app_state.rs`: 受付・表示用状態、`authority.rs`: 操作権と入力期限、`settings.rs`: 設定反映、`worker/`: 実行順序と状態遷移 |
 | [protocol](../host/src/protocol/mod.rs) | 基板種別、指令の符号化、状態・設定応答の解釈 |
 | [transport](../host/src/transport/mod.rs) | USBシリアル、模擬接続、プロファイルの読込・保存 |
-| [input](../host/src/input/mod.rs) | 入力スナップショットとDualSenseの読み取り |
+| [input](../host/src/input/mod.rs) | 入力スナップショット、ボタン名とDualSenseの読み取り |
 | [interface](../host/src/interface/mod.rs) | Unixソケットの接続受付、長さ付きTOMLの送受信 |
-| [gui](../host/src/gui/mod.rs) | 画面共通状態と遷移。操縦・調整・診断・文書は各画面のモジュールで描画。調整・診断は型付きの表示選択を持ち、調整の編集データは共通状態に保持する。`manual.rs`は画面ジョグ、`parameter_help.rs`は調整値の説明、`documents.rs`はMarkdown表示を担当。`individual.rs`は個別テスト画面、`shell.rs`は共通の運転操作・状態・ページ選択、`controls.rs`はコマンド入力を担当。`shortcuts.rs`のコマンド一覧に名前・説明・操作を登録し、Vim系の画面移動を含むキーを解釈し、ボタンと共通の操作入口へ渡す |
+| [gui](../host/src/gui/mod.rs) | 画面共通状態と遷移。操縦・調整・診断・文書は各画面のモジュールで描画。調整・診断は型付きの表示選択を持ち、調整の編集データは共通状態に保持する。`manual.rs`は画面ジョグ、`gamepad.rs`はDualSense入力表示、`parameter_help.rs`は調整値の説明、`documents.rs`はMarkdown表示を担当。`individual.rs`は個別テスト画面、`shell.rs`は共通の運転操作・状態・ページ選択、`controls.rs`はコマンド入力を担当。`shortcuts.rs`のコマンド一覧に名前・説明・操作を登録し、Vim系の画面移動を含むキーを解釈し、ボタンと共通の操作入口へ渡す |
 | [diagnostics](../host/src/diagnostics/mod.rs) | 通常hostとは独立して使うFW保守セッションと接続準備 |
 
 機体モデルはGUI、ソケット、ファイルシステムを参照しない。基板プロトコルは機体モデルや
@@ -80,6 +80,8 @@ stateDiagram-v2
 - 通常停止は速度ゼロによる保持、出力停止はFWのSTOPとして区別する。
 - 操作権は運転状態とは別に管理する。AIの操作権は30秒、各軸の入力は150msで期限切れになる。
   heartbeatは操作権だけを延長し、スティック入力の期限を延長しない。
+- 表示状態では、制御に採用中の`axes`と物理DualSenseの`gamepad_input`を分離する。
+  停止中やAI操作中のパッド入力を、機体へ出力中の値として扱わない。
 - 停止要求は操作権に関係なく受け付ける。AIの解放・期限切れで通常操縦を自動再開しない。
 - `observe`は実測値と接点から原点状態を更新する。`jog_lines`は入力から速度指令を生成し、
   host側に移動目標を積み上げない。

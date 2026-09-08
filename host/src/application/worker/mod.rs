@@ -58,6 +58,7 @@ struct Runtime {
     pad: pad_control::Control,
     authority: Authority,
     manual_input: ControllerState,
+    gamepad_input: Option<ControllerState>,
     screen_control: bool,
     screen_input_times: [Option<Instant>; 6],
     gamepad_name: String,
@@ -92,6 +93,7 @@ impl Runtime {
             pad: pad_control::Control::default(),
             authority: Authority::default(),
             manual_input: ControllerState::default(),
+            gamepad_input: None,
             gamepad_name: String::new(),
             adjustment: false,
             last_hello: Instant::now() - Duration::from_secs(2),
@@ -680,6 +682,7 @@ impl Runtime {
                 || (!self.authority.active() && self.screen_control)
                 || self.authority.input().unwrap_or(&self.manual_input).buttons[9] != 0;
             s.axes = self.authority.input().unwrap_or(&self.manual_input).axes;
+            s.gamepad_input = self.gamepad_input.clone();
             s.origins = origins;
             s.gamepad = self.gamepad_name.clone();
             s.board_mode = self

@@ -14,6 +14,7 @@ impl Runtime {
         let previous = self.pad.previous;
         self.pad.previous = input.buttons;
         let buttons = input.buttons;
+        self.gamepad_input = Some(input.clone());
         if !self.screen_control {
             self.manual_input = input.clone();
         }
@@ -118,6 +119,7 @@ impl Runtime {
         }
         self.pad = Control::default();
         self.gamepad_name.clear();
+        self.gamepad_input = None;
         if !self.screen_control {
             self.manual_input = ControllerState::default();
         }

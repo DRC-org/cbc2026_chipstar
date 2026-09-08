@@ -62,20 +62,13 @@ impl BridgeApp {
                     RichText::new(if status.gamepad.is_empty() {
                         "DualSenseが接続されていません。入力の切替は停止中に行えます。"
                     } else {
-                        "左スティック：r・θ　右スティック：z・EE回転　十字キー：畳み・把持"
+                        "左：r・θ　右：z・EE回転　十字：畳み・把持　L1：低速　Options：再開　PS：停止"
                     })
                     .size(12.0)
                     .color(MUTED),
                 );
-                ui.horizontal_wrapped(|ui| {
-                    keycap(ui, "L1");
-                    ui.label("低速20%");
-                    keycap(ui, "Options");
-                    ui.label("運転再開");
-                    keycap(ui, "PS");
-                    ui.label("停止");
-                });
             }
+            gamepad::monitor(ui, status, &self.shared.config().machine);
             self.homing_controls(ui, status);
         });
     }

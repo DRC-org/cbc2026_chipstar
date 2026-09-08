@@ -557,6 +557,7 @@ mod individual;
 mod manual;
 
 mod documents;
+mod gamepad;
 
 mod parameter_help;
 

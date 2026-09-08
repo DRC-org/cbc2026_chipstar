@@ -78,6 +78,31 @@ fn ai_control_excludes_manual_changes_and_expires_without_resuming() {
     assert!(runtime.drive.awaiting().is_none());
 }
 
+#[test]
+fn status_keeps_dualsense_input_separate_from_the_active_ai_input() {
+    let mut runtime = screen_runtime();
+    runtime.screen_control = false;
+    runtime.gamepad_name = "DualSense test".into();
+    let now = Instant::now();
+    let mut pad = ControllerState::default();
+    pad.axes[0] = 0.4;
+    pad.buttons[0] = 1;
+    runtime.read_pad(pad, now).unwrap();
+    runtime.authority.claim("test".into(), now);
+    runtime.authority.set_input(0, -0.7, now);
+
+    runtime.publish();
+    let status = runtime.shared.status_snapshot();
+    assert_eq!(status.axes[0], -0.7);
+    let gamepad = status.gamepad_input.unwrap();
+    assert_eq!(gamepad.axes[0], 0.4);
+    assert_eq!(gamepad.buttons[0], 1);
+
+    runtime.disconnect_pad();
+    runtime.publish();
+    assert!(runtime.shared.status_snapshot().gamepad_input.is_none());
+}
+
 pub(super) fn screen_runtime() -> Runtime {
     let mut profile = MachineProfile::embedded().unwrap();
     profile.pwm_servos.clear();

@@ -60,6 +60,7 @@ pub struct Status {
     pub slow: bool,
     pub origin_adjustment: bool,
     pub gamepad: String,
+    pub gamepad_input: Option<crate::input::ControllerState>,
     pub axes: [f32; 6],
     pub origins: Vec<OriginState>,
     pub telemetry_age_ms: u64,
