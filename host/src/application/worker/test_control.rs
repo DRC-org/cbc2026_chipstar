@@ -136,6 +136,13 @@ impl Runtime {
                 }
                 let value = req.value.context("指令値が必要です")?;
                 target.validate(kind, value, &self.cfg.machine)?;
+                let command_value = if let (Target::Cctl(slot), Kind::Position) = (target, kind) {
+                    self.machine
+                        .native_position(slot, value)
+                        .context("機体座標の原点を採用してから位置テストを実行してください")?
+                } else {
+                    value
+                };
                 if matches!(target, Target::Cctl(_)) {
                     if !self
                         .device
@@ -176,7 +183,7 @@ impl Runtime {
                     }
                 }
                 self.test.renewed = Some(Instant::now());
-                for line in target.command(kind, value) {
+                for line in target.command(kind, command_value) {
                     self.send(&line)?;
                 }
             }

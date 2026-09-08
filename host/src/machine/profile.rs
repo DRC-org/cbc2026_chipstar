@@ -146,12 +146,12 @@ pub const PARAMETER_NAMES: [&str; 43] = [
     "dm_v_max",
     "dm_t_max",
     "dm_pos_vel_limit",
-    "slot0_min",
-    "slot0_max",
-    "slot1_min",
-    "slot1_max",
-    "slot2_min",
-    "slot2_max",
+    "reserved_15",
+    "reserved_16",
+    "reserved_17",
+    "reserved_18",
+    "reserved_19",
+    "reserved_20",
     "c620_esc_id",
     "dm_can_id",
     "dm_mst_id",
@@ -268,6 +268,13 @@ impl MachineProfile {
             }
         }
 
+        if self
+            .parameters
+            .keys()
+            .any(|name| name.starts_with("reserved_"))
+        {
+            bail!("予約パラメータは機体設定に指定できません");
+        }
         if self.parameters.keys().any(|name| name.starts_with("dm_")) {
             bail!("旧DM用設定です。M3508×2台用の機体設定へ移行してください");
         }
@@ -279,18 +286,6 @@ impl MachineProfile {
             .unwrap_or(2.0);
         if !(1.0..=8.0).contains(&first) || !(1.0..=8.0).contains(&second) || first == second {
             bail!("C620のESC IDは1〜8で2台を重複なく指定してください");
-        }
-        for (minimum, maximum) in [
-            ("slot0_min", "slot0_max"),
-            ("slot1_min", "slot1_max"),
-            ("slot2_min", "slot2_max"),
-        ] {
-            if let (Some(low), Some(high)) =
-                (self.parameters.get(minimum), self.parameters.get(maximum))
-                && low >= high
-            {
-                bail!("基板の可動域が逆転しています: {minimum}/{maximum}");
-            }
         }
         for (name, value) in &self.parameters {
             if (name.ends_with("_id") || name.ends_with("_ms")) && value.fract() != 0.0 {

@@ -30,12 +30,12 @@ constexpr Range RANGES[PARAM_COUNT] = {
     {0.001f, 1.0e6f},  // DmVMax
     {0.001f, 1.0e6f},  // DmTMax
     {0.0f, 1.0e6f},    // DmPosVelLimit
-    {-1.0e6f, 1.0e6f}, // Slot0Min
-    {-1.0e6f, 1.0e6f}, // Slot0Max
-    {-1.0e6f, 1.0e6f}, // Slot1Min
-    {-1.0e6f, 1.0e6f}, // Slot1Max
-    {-1.0e6f, 1.0e6f}, // Slot2Min
-    {-1.0e6f, 1.0e6f}, // Slot2Max
+    {0.0f, 0.0f},      // Reserved15
+    {0.0f, 0.0f},      // Reserved16
+    {0.0f, 0.0f},      // Reserved17
+    {0.0f, 0.0f},      // Reserved18
+    {0.0f, 0.0f},      // Reserved19
+    {0.0f, 0.0f},      // Reserved20
     {1.0f, 8.0f},      // C620EscId
     {0.0f, 2047.0f},   // DmCanId
     {0.0f, 2047.0f},   // DmMstId
@@ -70,12 +70,12 @@ constexpr float DEFAULTS[PARAM_COUNT] = {
     config::dm::V_MAX,
     config::dm::T_MAX,
     config::dm::POS_VEL_LIMIT,
-    config::limit::SLOT0_MIN,
-    config::limit::SLOT0_MAX,
-    config::limit::SLOT1_MIN,
-    config::limit::SLOT1_MAX,
-    config::limit::SLOT2_MIN,
-    config::limit::SLOT2_MAX,
+    0.0f,
+    0.0f,
+    0.0f,
+    0.0f,
+    0.0f,
+    0.0f,
     static_cast<float>(config::can_id::C620_ESC_ID),
     static_cast<float>(config::can_id::DM_CAN_ID),
     static_cast<float>(config::can_id::DM_MST_ID),
@@ -108,7 +108,7 @@ bool requiresSafe(uint8_t id) {
 }
 
 bool Parameters::valid(uint8_t id, float value) {
-    if (id >= PARAM_COUNT || !std::isfinite(value)) return false;
+    if (id >= PARAM_COUNT || (id >= 15 && id <= 20) || !std::isfinite(value)) return false;
     const Range& range = RANGES[id];
     return value >= range.min && value <= range.max;
 }
@@ -116,12 +116,16 @@ bool Parameters::valid(uint8_t id, float value) {
 bool Parameters::restore(const float* values, std::size_t count) {
     if (count != PARAM_COUNT) return false;
     for (uint8_t id = 0; id < PARAM_COUNT; ++id) {
+        // 旧FWが保存したslot可動域は読み捨て、後続IDの保存値は引き継ぐ。
+        if (id >= 15 && id <= 20) continue;
         if (!valid(id, values[id])) return false;
     }
     const float first = values[static_cast<uint8_t>(ParamId::C620EscId)];
     const float second = values[static_cast<uint8_t>(ParamId::C620Slot2EscId)];
     if (first == second || std::floor(first) != first || std::floor(second) != second) return false;
-    for (uint8_t id = 0; id < PARAM_COUNT; ++id) values_[id] = values[id];
+    for (uint8_t id = 0; id < PARAM_COUNT; ++id) {
+        values_[id] = (id >= 15 && id <= 20) ? DEFAULTS[id] : values[id];
+    }
     return true;
 }
 

@@ -29,13 +29,13 @@ enum class ParamId : uint8_t {
     DmVMax,
     DmTMax,
     DmPosVelLimit,
-    // slotのネイティブ単位での絶対可動域
-    Slot0Min,
-    Slot0Max,
-    Slot1Min,
-    Slot1Max,
-    Slot2Min,
-    Slot2Max,
+    // 廃止済みの基板側可動域。保存形式と後続IDの互換性のため欠番を維持する。
+    Reserved15,
+    Reserved16,
+    Reserved17,
+    Reserved18,
+    Reserved19,
+    Reserved20,
     // モータのCAN ID。変更はSAFE中だけ受理する。
     C620EscId,
     DmCanId,

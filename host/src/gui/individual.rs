@@ -124,8 +124,10 @@ impl BridgeApp {
                         self.request(Request { axis: Some(key.clone()), text: Some(self.tests.kind.key().into()), ..Request::new("test_select") });
                     }
                     ui.label(RichText::new(format!("指令範囲 {min:.3} .. {max:.3} {unit}")).size(12.0).color(MUTED));
-                    if matches!(target, Target::Cctl(_)) {
-                        ui.label(RichText::new("モータ側の座標・単位で指定します。位置テストには機体座標の可動域制限を適用しません。").size(12.0).color(WARNING));
+                    if matches!((target, self.tests.kind), (Target::Cctl(_), Kind::Position)) {
+                        ui.label(RichText::new("機体座標で指定します。原点採用済みの軸だけ実行できます。").size(12.0).color(WARNING));
+                    } else if matches!(target, Target::Cctl(_)) {
+                        ui.label(RichText::new("速度はモータ側の単位で指定します。").size(12.0).color(WARNING));
                     }
                     ui.horizontal_wrapped(|ui| {
                         ui.label("指令値");

@@ -68,33 +68,22 @@ impl Target {
             Self::Dc => "dc",
         }
     }
-    pub fn limits(self, kind: Kind, profile: &MachineProfile) -> Result<(f32, f32, &'static str)> {
+    pub fn limits(self, kind: Kind, profile: &MachineProfile) -> Result<(f32, f32, String)> {
         if kind == Kind::Position
             && let Some(axis) = crate::machine::ee::axes(profile)
                 .iter()
                 .find(|a| a.target == self)
         {
-            return Ok((axis.min, axis.max, axis.unit()));
+            return Ok((axis.min, axis.max, axis.unit().into()));
         }
         Ok(match (self, kind) {
             (Self::Cctl(slot), Kind::Position) => {
-                let min = profile
-                    .parameters
-                    .get(&format!("slot{slot}_min"))
-                    .context("基板の最小位置設定がありません")?;
-                let max = profile
-                    .parameters
-                    .get(&format!("slot{slot}_max"))
-                    .context("基板の最大位置設定がありません")?;
-                (
-                    *min,
-                    *max,
-                    if slot == 1 || slot == 2 {
-                        "motor deg"
-                    } else {
-                        "rad"
-                    },
-                )
+                let axis = profile
+                    .axes
+                    .iter()
+                    .find(|axis| axis.slot == slot)
+                    .context("軸設定がありません")?;
+                (axis.minimum, axis.maximum, axis.unit.clone())
             }
             (Self::Cctl(slot), Kind::Velocity) => {
                 let axis = profile
@@ -114,7 +103,8 @@ impl Target {
                         "motor deg/s"
                     } else {
                         "rad/s"
-                    },
+                    }
+                    .into(),
                 )
             }
             (Self::Pwm(_), Kind::Position) => (
@@ -128,10 +118,10 @@ impl Target {
                     .get("max_pulse_us")
                     .copied()
                     .unwrap_or(2500.0),
-                "µs",
+                "µs".into(),
             ),
-            (Self::Sts(_), Kind::Position) => (0.0, 4095.0, "step"),
-            (Self::Dc, Kind::Duty) => (-100.0, 100.0, "‰"),
+            (Self::Sts(_), Kind::Position) => (0.0, 4095.0, "step".into()),
+            (Self::Dc, Kind::Duty) => (-100.0, 100.0, "‰".into()),
             _ => bail!("この対象では使えないテスト方式です"),
         })
     }

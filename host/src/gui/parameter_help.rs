@@ -22,12 +22,6 @@ pub(super) fn label(name: &str) -> Option<&'static str> {
         "el05_loc_kp" => "r モータ内部位置Pゲイン",
         "el05_limit_spd" => "r モータ内部速度上限",
         "el05_limit_cur" => "r モータ内部電流上限",
-        "slot0_min" => "r モータ絶対位置の下限",
-        "slot0_max" => "r モータ絶対位置の上限",
-        "slot1_min" => "θ モータ累積角度の下限",
-        "slot1_max" => "θ モータ累積角度の上限",
-        "slot2_min" => "z モータ累積角度の下限",
-        "slot2_max" => "z モータ累積角度の上限",
         "c620_esc_id" => "θ C620 ID",
         "c620_slot2_esc_id" => "z C620 ID",
         "el05_motor_id" => "r モータID",
@@ -121,30 +115,6 @@ pub(super) fn help(name: &str) -> Option<(&'static str, &'static str)> {
             "rad/s",
             "DMの位置・速度モードで送る速度上限。zの機体速度とは別の制限です。",
         ),
-        "slot0_min" => (
-            "rad",
-            "slot 0（EL05）の基板側絶対位置の下限。hostの原点採用では移動しません。",
-        ),
-        "slot0_max" => (
-            "rad",
-            "slot 0（EL05）の基板側絶対位置の上限。hostの可動域とは別に働きます。",
-        ),
-        "slot1_min" => (
-            "deg",
-            "slot 1（M3508）のモータ累積角度の下限。減速後のアーム角度ではありません。",
-        ),
-        "slot1_max" => (
-            "deg",
-            "slot 1（M3508）のモータ累積角度の上限。減速後のアーム角度ではありません。",
-        ),
-        "slot2_min" => (
-            "deg",
-            "slot 2（M3508、減速前deg）の基板側絶対位置の下限。hostの原点採用では移動しません。",
-        ),
-        "slot2_max" => (
-            "deg",
-            "slot 2（M3508、減速前deg）の基板側絶対位置の上限。hostの可動域とは別に働きます。",
-        ),
         "c620_esc_id" | "c620_slot2_esc_id" => (
             "",
             "C620のESC ID（1〜8）。実機のIDと一致させます。変更はSAFE中に反映します。",
@@ -224,7 +194,11 @@ mod tests {
             &crate::protocol::dcmd::PARAMETER_NAMES,
             &crate::protocol::serial_svmd::PARAMETER_NAMES,
         ];
-        for name in tables.into_iter().flatten() {
+        for name in tables
+            .into_iter()
+            .flatten()
+            .filter(|name| !name.starts_with("reserved_"))
+        {
             assert!(super::help(name).is_some(), "説明がありません: {name}");
             assert!(super::label(name).is_some(), "表示名がありません: {name}");
         }

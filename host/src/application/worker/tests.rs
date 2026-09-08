@@ -602,7 +602,7 @@ fn cctl_position_test_and_sensor_observation_do_not_reenable_other_axes() {
     runtime
         .request(
             &Request {
-                value: Some(0.4),
+                value: Some(469.9),
                 ..Request::new("test_output")
             },
             true,
@@ -611,7 +611,7 @@ fn cctl_position_test_and_sensor_observation_do_not_reenable_other_axes() {
     runtime.tick().unwrap();
     assert!(runtime.test.active);
     assert_eq!(runtime.telemetry.as_ref().unwrap().enabled_slots, 1);
-    assert!((runtime.telemetry.as_ref().unwrap().slots[0].measured - 0.4).abs() < 0.01);
+    assert!((runtime.telemetry.as_ref().unwrap().slots[0].measured - 0.004).abs() < 0.001);
     runtime.request(&Request::new("stop"), true).unwrap();
     runtime.tick().unwrap();
     assert!(!runtime.test.active);
@@ -806,11 +806,11 @@ fn individual_fault_blocks_held_requests_until_explicit_release() {
 }
 
 #[test]
-fn explicit_position_update_preserves_output_and_can_restart_after_a_fault() {
+fn explicit_position_update_preserves_output_and_requires_origin_after_a_fault() {
     let mut runtime = screen_runtime();
     select_test(&mut runtime, "cctl:0", "position");
     let output = Request {
-        value: Some(0.01),
+        value: Some(469.99),
         flag: Some(true),
         ..Request::new("test_output")
     };
@@ -821,6 +821,13 @@ fn explicit_position_update_preserves_output_and_can_restart_after_a_fault() {
     assert_eq!(runtime.test.started, started);
     runtime.fault("test fault".into());
     assert!(runtime.test.restart_blocked);
+    assert!(runtime.request(&output, true).is_err());
+    assert!(!runtime.test.active);
+    assert!(
+        runtime
+            .machine
+            .capture_origin(0, runtime.telemetry.as_ref())
+    );
     runtime.request(&output, true).unwrap();
     assert!(runtime.test.active);
     assert!(!runtime.test.restart_blocked);
@@ -834,7 +841,7 @@ fn leaving_test_stops_velocity_and_position_and_keeps_emergency_latched() {
         runtime
             .request(
                 &Request {
-                    value: Some(0.01),
+                    value: Some(if kind == "position" { 469.99 } else { 0.01 }),
                     ..Request::new("test_output")
                 },
                 true,
@@ -868,7 +875,7 @@ fn leaving_test_while_disconnected_still_ends_local_test_mode() {
     runtime
         .request(
             &Request {
-                value: Some(0.01),
+                value: Some(469.99),
                 ..Request::new("test_output")
             },
             true,

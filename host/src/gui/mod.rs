@@ -727,6 +727,7 @@ mod workflow_tests {
     #[test]
     fn gui_emergency_stops_individual_output_and_tab_exit_keeps_latch() {
         let mut harness = Harness::new();
+        harness.capture_origins();
         harness.app.select_cctl_test(1);
         harness.app.request(Request {
             axis: Some("cctl:1".into()),

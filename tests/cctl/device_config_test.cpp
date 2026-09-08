@@ -2,12 +2,6 @@
 
 #include "device_config.hpp"
 
-TEST_CASE("slotの絶対上限は順序が正しい") {
-    CHECK(config::limit::SLOT0_MIN < config::limit::SLOT0_MAX);
-    CHECK(config::limit::SLOT1_MIN < config::limit::SLOT1_MAX);
-    CHECK(config::limit::SLOT2_MIN < config::limit::SLOT2_MAX);
-}
-
 TEST_CASE("制御周期とWatchdogは有効") {
     CHECK(config::period::M3508_MS > 0);
     CHECK(config::period::DM_MS > 0);

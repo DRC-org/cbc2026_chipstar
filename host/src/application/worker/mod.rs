@@ -238,10 +238,10 @@ impl Runtime {
         }
         if crate::machine::PARAMETER_NAMES
             .iter()
-            .filter(|name| !name.starts_with("dm_"))
+            .filter(|name| !name.starts_with("dm_") && !name.starts_with("reserved_"))
             .any(|name| !self.cfg.machine.parameters.contains_key(*name))
         {
-            bail!("cctlの有効な全36項目をPCの機体設定で指定してください");
+            bail!("cctlの有効な全パラメータをPCの機体設定で指定してください");
         }
         if self.setup_error || !self.setup || !self.settings.ready() {
             bail!("設定の反映が確認できていません");

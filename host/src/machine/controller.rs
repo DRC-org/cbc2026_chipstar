@@ -113,9 +113,21 @@ impl MachineController {
     /// 機体座標の可動域で目標を止めるかを切り替える。
     ///
     /// 原点を採り直すときは、いまの原点から見た可動域の外へ動かす必要がある。
-    /// 外しても基板側のslot絶対可動域は効いたままなので、機構は保護される。
+    /// 無効化中は接点入力と人間の経路確認が機構保護の前提になる。
     pub fn set_soft_limits(&mut self, enabled: bool) {
         self.soft_limits = enabled;
+    }
+
+    /// 原点採用済みの機体座標を、cctlへ渡すネイティブ位置へ変換する。
+    pub fn native_position(&self, slot: u8, position: f32) -> Option<f32> {
+        let index = self
+            .profile
+            .axes
+            .iter()
+            .position(|axis| axis.slot == slot)?;
+        self.origin_captured[index].then_some(
+            self.origins_native[index] + position * self.profile.axes[index].native_per_unit,
+        )
     }
 
     /// いまの実測位置を目標として取り込む。

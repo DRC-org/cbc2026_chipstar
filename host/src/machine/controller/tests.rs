@@ -144,6 +144,12 @@ fn rejects_unknown_parameter_names() {
 }
 
 #[test]
+fn rejects_retired_cctl_position_limits() {
+    let source = profile_with_parameters("slot0_min = -1.0");
+    assert!(MachineProfile::parse(&source).is_err());
+}
+
+#[test]
 fn rejects_duplicate_slots() {
     let source = EMBEDDED_PROFILE.replace("slot = 1", "slot = 0");
     assert!(MachineProfile::parse(&source).is_err());

@@ -16,14 +16,14 @@ TEST_CASE("拘束された軸へ位置目標を蓄積せず解放時はその場
   domain::Jog jog;
   jog.command(10, 5);
   float target = 0;
-  for (int i = 0; i < 1000; ++i) target = jog.step(5, 0.01, -100, 100);
+  for (int i = 0; i < 1000; ++i) target = jog.step(5, 0.01);
   CHECK(target == doctest::Approx(6));
   jog.command(0, 5);
-  CHECK(jog.step(5, 0.01, -100, 100) == doctest::Approx(5));
+  CHECK(jog.step(5, 0.01) == doctest::Approx(5));
   jog.command(0, 5.2f);
-  CHECK(jog.step(5.2f, 0.01, -100, 100) == doctest::Approx(5));
+  CHECK(jog.step(5.2f, 0.01) == doctest::Approx(5));
   jog.reset(20);
   CHECK_FALSE(jog.active());
   jog.command(-10, 20);
-  CHECK(jog.step(20, 0.01, -100, 100) == doctest::Approx(19.9f));
+  CHECK(jog.step(20, 0.01) == doctest::Approx(19.9f));
 }

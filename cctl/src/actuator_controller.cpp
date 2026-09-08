@@ -129,32 +129,16 @@ void ActuatorController::begin() {
 }
 
 bool ActuatorController::setTarget(uint8_t slot, float value) {
-  if (!std::isfinite(value)) return false;
+  if (slot >= domain::SLOT_COUNT || !std::isfinite(value)) return false;
+  jog_[slot].reset(measured(slot));
+  targets_[slot] = value;
   switch (slot) {
     case 0:
-      if (value < parameters_.get(domain::ParamId::Slot0Min) ||
-          value > parameters_.get(domain::ParamId::Slot0Max)) {
-        return false;
-      }
-      jog_[0].reset(measured(0));
-      targets_[0] = value;
       return true;
     case 1:
-      if (value < parameters_.get(domain::ParamId::Slot1Min) ||
-          value > parameters_.get(domain::ParamId::Slot1Max)) {
-        return false;
-      }
-      jog_[1].reset(measured(1));
-      targets_[1] = value;
       slot1_.setTargetMotorDeg(value);
       return true;
     case 2:
-      if (value < parameters_.get(domain::ParamId::Slot2Min) ||
-          value > parameters_.get(domain::ParamId::Slot2Max)) {
-        return false;
-      }
-      jog_[2].reset(measured(2));
-      targets_[2] = value;
       slot2_.setTargetMotorDeg(value);
       return true;
     default:
@@ -361,10 +345,7 @@ void ActuatorController::update() {
     if (!slotActive(static_cast<uint8_t>(1U << slot))) {
       jog_[slot].reset(measured(slot));
     } else if (jog_[slot].active()) {
-      const uint8_t min_id = static_cast<uint8_t>(domain::ParamId::Slot0Min) + slot * 2;
-      targets_[slot] = jog_[slot].step(measured(slot), jog_dt,
-          parameters_.get(static_cast<domain::ParamId>(min_id)),
-          parameters_.get(static_cast<domain::ParamId>(min_id + 1)));
+      targets_[slot] = jog_[slot].step(measured(slot), jog_dt);
       if (slot == 1) slot1_.setTargetMotorDeg(targets_[slot]);
       if (slot == 2) slot2_.setTargetMotorDeg(targets_[slot]);
     }
@@ -424,7 +405,7 @@ bool ActuatorController::setParameter(uint8_t id, float value) {
   return true;
 }
 
-// 変更をデバイスへ反映する。可動域と周期は参照側が毎回読むため何もしない。
+// 変更をデバイスへ反映する。周期は参照側が毎回読むため何もしない。
 void ActuatorController::applyParameter(uint8_t id) {
   using domain::ParamId;
   switch (static_cast<ParamId>(id)) {

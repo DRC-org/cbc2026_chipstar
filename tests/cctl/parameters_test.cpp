@@ -52,8 +52,22 @@ TEST_CASE("強いゲインと高い上限は運用側の判断に任せる") {
     CHECK(parameters.set(id(ParamId::M3508PosKp), 500.0f));
     CHECK(parameters.set(id(ParamId::M3508MaxCurrentMa), 16000.0f));
     CHECK(parameters.set(id(ParamId::El05LimitCur), 11.0f));
-    // 可動域は負にも広げられる。
-    CHECK(parameters.set(id(ParamId::Slot1Min), -100000.0f));
+}
+
+TEST_CASE("廃止済みの可動域IDは書込みを拒否し旧保存値だけ読み捨てる") {
+    Parameters parameters;
+    CHECK_FALSE(parameters.set(id(ParamId::Reserved15), -100000.0f));
+    CHECK_FALSE(parameters.set(id(ParamId::Reserved20), 100000.0f));
+
+    float values[domain::PARAM_COUNT];
+    for (uint8_t i = 0; i < domain::PARAM_COUNT; ++i) values[i] = parameters.get(i);
+    values[id(ParamId::Reserved15)] = -1.32f;
+    values[id(ParamId::Reserved20)] = 36000.0f;
+    values[id(ParamId::M3508VelKp)] = 1.25f;
+    REQUIRE(parameters.restore(values, domain::PARAM_COUNT));
+    CHECK(parameters.get(ParamId::Reserved15) == 0.0f);
+    CHECK(parameters.get(ParamId::Reserved20) == 0.0f);
+    CHECK(parameters.get(ParamId::M3508VelKp) == doctest::Approx(1.25f));
 }
 
 TEST_CASE("通信IDの変更だけSAFEを要求する") {

@@ -141,19 +141,17 @@ TEST_CASE("EL05の多回転位置が確立するまでslot0のRUNを拒否する
  REQUIRE(controller.setMode(domain::RunMode::Run));
  CHECK(controller.target(0)==doctest::Approx(13.022f));
 }
-TEST_CASE("EL05の折返し後もJog目標と基板絶対制限を連続座標で扱う") {
+TEST_CASE("EL05の折返し後もJog目標を連続座標で扱う") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
- REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::Slot0Min),-20));
- REQUIRE(controller.setParameter(static_cast<uint8_t>(domain::ParamId::Slot0Max),13.2f));
  el05Position(controller,13.022f);el05Feedback(controller,-12.11f);
  REQUIRE(controller.measured(0)>13.0f);
  REQUIRE(controller.setSlotsEnabled(1,true));REQUIRE(controller.setMode(domain::RunMode::Run));
  REQUIRE(controller.setJog(0,1));tick+=20;controller.update();
- CHECK(controller.target(0)>13.0f);CHECK(controller.target(0)<=13.2f);
+  CHECK(controller.target(0)>13.0f);CHECK(controller.target(0)<=13.2f);
  el05Feedback(controller,-11.9f);tick+=20;controller.update();
  CHECK(controller.measured(0)>13.2f);
  for(int i=0;i<10;++i) {el05Feedback(controller,-11.9f);tick+=20;controller.update();}
- CHECK(controller.target(0)==doctest::Approx(13.2f));
+ CHECK(controller.target(0)>13.2f);
 }
 TEST_CASE("EL05応答喪失後はMECH_POSを再取得するまでRUNを拒否する") {
  resetBus();CanBus bus(&handle);ActuatorController controller(bus);controller.begin();
