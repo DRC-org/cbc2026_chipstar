@@ -2,6 +2,7 @@
 #include "can_bus.hpp"
 #include "device_config.hpp"
 #include "domain/can_frame.hpp"
+#include "domain/deadline.hpp"
 #include "domain/motor_discovery.hpp"
 #include "domain/command.hpp"
 #include "domain/command_queue.hpp"
@@ -359,10 +360,17 @@ extern "C" void loop(void) {
     while (commands.pop(command)) applyCommand(command);
 
     const uint32_t now = HAL_GetTick();
+    const uint32_t contact = last_contact_ms;
+    const uint32_t watchdog_ms = controller.parameters().getMs(domain::ParamId::WatchdogMs);
     if (controller.mode() == domain::RunMode::Run &&
-        now - last_contact_ms > controller.parameters().getMs(domain::ParamId::WatchdogMs)) {
+        domain::deadlineExpired(now, contact, watchdog_ms)) {
         controller.setMode(domain::RunMode::Stop);
         protocol_ready = false;
+        char text[96];
+        std::snprintf(text, sizeof(text), "WATCHDOG elapsed_ms=%lu timeout_ms=%lu",
+                      static_cast<unsigned long>(now - contact),
+                      static_cast<unsigned long>(watchdog_ms));
+        sendText(text);
     }
 
     controller.update();
