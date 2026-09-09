@@ -275,6 +275,7 @@ impl Runtime {
             self.send(&format!("TARGET {} {native:.5}", axis.slot))?;
             arrived &= (target - current.position).abs() <= tolerance;
         }
+        arrived &= self.ee_targets_reached(&step.ee);
         if arrived && elapsed >= step.wait_seconds {
             execution.index += 1;
             execution.started = None;
@@ -304,6 +305,7 @@ mod tests {
                 input_axis: None,
                 input_sign: 1.0,
                 speed_us_per_second: 100.0,
+                acceleration_us_per_second2: 2500.0,
                 minimum_us: 500,
                 maximum_us: 2500,
                 initial_us: 1500,
@@ -562,7 +564,8 @@ mod tests {
             true,
         )
         .unwrap();
-        assert_eq!(r.ee.targets["ee_grip_1"], 1500.0);
+        assert_eq!(r.ee.targets["ee_grip_1"], 611.0);
+        assert!(!r.ee_targets_reached(&BTreeMap::from([("ee_grip_1".into(), 1500.0)])));
         r.screen_control = false;
         r.gamepad_name = "test pad".into();
         start(&mut r, Stage::Prepare, Side::Left);

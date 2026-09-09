@@ -4,6 +4,8 @@ use std::collections::BTreeMap;
 #[derive(Default)]
 pub(super) struct Control {
     pub targets: BTreeMap<String, f32>,
+    pub(super) goals: BTreeMap<String, f32>,
+    velocities: BTreeMap<String, f32>,
     sent: BTreeMap<String, (f32, Instant)>,
     started: Option<Instant>,
     tick: Option<Instant>,
@@ -29,6 +31,7 @@ impl Runtime {
         anyhow::ensure!(!input.targets.is_empty(), "対象を指定してください");
         let axes = ee::axes(&self.cfg.machine);
         let mut lines = Vec::new();
+        let mut accepted = Vec::new();
         for (name, value) in &input.targets {
             let axis = axes
                 .iter()
@@ -42,18 +45,36 @@ impl Runtime {
                 "{}の基板応答を待ってください",
                 axis.label
             );
-            lines.extend(axis.commands(*value)?.into_iter().take(
-                if self.ee.targets.contains_key(name) {
-                    1
-                } else {
-                    usize::MAX
-                },
-            ));
+            let commands = axis.commands(*value)?;
+            let current = self.ee.targets.get(name).copied().unwrap_or(axis.initial);
+            if matches!(axis.target, Target::Pwm(_)) {
+                if !self.ee.targets.contains_key(name) {
+                    lines.extend(axis.commands(current)?);
+                }
+            } else {
+                lines.extend(
+                    commands
+                        .into_iter()
+                        .take(if self.ee.targets.contains_key(name) {
+                            1
+                        } else {
+                            usize::MAX
+                        }),
+                );
+            }
+            accepted.push((name.clone(), *value, current, axis.target));
         }
         // 全対象の検証が完了するまで送信しない。送信途中失敗も停止対象に含める。
-        for (name, value) in input.targets {
-            self.ee.targets.insert(name.clone(), value);
-            self.ee.sent.insert(name, (value, Instant::now()));
+        for (name, value, current, target) in accepted {
+            if matches!(target, Target::Pwm(_)) {
+                self.ee.targets.insert(name.clone(), current);
+                self.ee.goals.insert(name.clone(), value);
+                self.ee.velocities.entry(name.clone()).or_insert(0.0);
+                self.ee.sent.insert(name, (current, Instant::now()));
+            } else {
+                self.ee.targets.insert(name.clone(), value);
+                self.ee.sent.insert(name, (value, Instant::now()));
+            }
         }
         self.ee.started = Some(Instant::now());
         for line in lines {
@@ -138,6 +159,58 @@ impl Runtime {
             );
         }
         for axis in &axes {
+            if matches!(axis.target, Target::Pwm(_)) {
+                let Some(goal) = self.ee.goals.get(&axis.name).copied() else {
+                    continue;
+                };
+                let Some(previous) = self.ee.targets.get(&axis.name).copied() else {
+                    continue;
+                };
+                let error = goal - previous;
+                let mut velocity = self.ee.velocities.get(&axis.name).copied().unwrap_or(0.0);
+                let speed_scale = if self.sequence.is_none() && slow {
+                    self.cfg.machine.slow_speed_percent * 0.01
+                } else {
+                    1.0
+                };
+                let max_speed = axis.speed * speed_scale;
+                let acceleration = self
+                    .cfg
+                    .machine
+                    .pwm_servos
+                    .iter()
+                    .find(|servo| servo.name == axis.name)
+                    .expect("PWMのEE軸にはPWMサーボ設定がある")
+                    .acceleration_us_per_second2
+                    * speed_scale;
+                let next = if error.abs() <= 0.5 && velocity.abs() <= acceleration * dt {
+                    velocity = 0.0;
+                    goal
+                } else {
+                    let desired =
+                        error.signum() * max_speed.min((2.0 * acceleration * error.abs()).sqrt());
+                    let change = (desired - velocity).clamp(-acceleration * dt, acceleration * dt);
+                    velocity += change;
+                    let candidate = previous + velocity * dt;
+                    if (goal - previous) * (goal - candidate) <= 0.0 {
+                        velocity = 0.0;
+                        goal
+                    } else {
+                        candidate
+                    }
+                };
+                if self.ee.sent.get(&axis.name).is_none_or(|(value, sent)| {
+                    *value != next.round() && now.duration_since(*sent) >= Duration::from_millis(50)
+                }) {
+                    for line in axis.commands(next.round())?.into_iter().take(1) {
+                        self.send(&line)?;
+                    }
+                    self.ee.sent.insert(axis.name.clone(), (next.round(), now));
+                }
+                self.ee.targets.insert(axis.name.clone(), next);
+                self.ee.velocities.insert(axis.name.clone(), velocity);
+                continue;
+            }
             if self.sequence.is_some() {
                 continue;
             }
@@ -194,6 +267,25 @@ impl Runtime {
         }
         Ok(())
     }
+
+    pub(super) fn ee_targets_reached(&self, targets: &BTreeMap<String, f32>) -> bool {
+        targets.iter().all(|(name, target)| {
+            let is_pwm = ee::axes(&self.cfg.machine)
+                .iter()
+                .any(|axis| axis.name == *name && matches!(axis.target, Target::Pwm(_)));
+            !is_pwm
+                || (self
+                    .ee
+                    .targets
+                    .get(name)
+                    .is_some_and(|value| (target - value).abs() <= 0.5)
+                    && self
+                        .ee
+                        .velocities
+                        .get(name)
+                        .is_none_or(|value| value.abs() <= f32::EPSILON))
+        })
+    }
 }
 
 #[cfg(test)]
@@ -211,6 +303,7 @@ mod tests {
                 input_axis: None,
                 input_sign: 1.0,
                 speed_us_per_second: 100.0,
+                acceleration_us_per_second2: 2500.0,
                 minimum_us: 1400,
                 maximum_us: 1600,
                 initial_us: 1500,

@@ -348,10 +348,15 @@ impl Runtime {
             "{name}のフィードバック異常"
         );
         if matches!(phase, Phase::Prepare) {
-            anyhow::ensure!(
-                t.mode != RunMode::Run,
-                "ホーミング開始前の停止を確認できません"
-            );
+            // STOP/SAFEの送信直後は、z保持中のRUN応答が残っている。
+            // 停止が観測されるまで次の駆動指令を送らない。
+            if t.mode == RunMode::Run {
+                anyhow::ensure!(
+                    elapsed < Duration::from_millis(500),
+                    "ホーミング開始前の停止応答がありません"
+                );
+                return Ok(());
+            }
             if limit.reached(contacts) {
                 anyhow::ensure!(
                     self.machine.capture_origin(index, Some(&t)),
@@ -435,6 +440,43 @@ impl Runtime {
 mod tests {
     use super::*;
     #[test]
+    fn rehoming_waits_for_stop_response_before_enabling_motors() {
+        let mut r = crate::application::worker::tests::screen_runtime();
+        let t = r.telemetry.as_mut().unwrap();
+        t.mode = RunMode::Run;
+        t.enabled_slots = 4;
+        t.contacts = Some(0);
+        r.begin_homing(true, true, 180.0).unwrap();
+        let now = r.homing.as_ref().unwrap().since;
+        let before = r.shared.status_snapshot().logs;
+        r.tick_homing(now).unwrap();
+        r.tick_homing(now + Duration::from_millis(499)).unwrap();
+        assert_eq!(r.shared.status_snapshot().logs, before);
+        assert!(matches!(r.homing.as_ref().unwrap().phase, Phase::Prepare));
+        r.telemetry.as_mut().unwrap().mode = RunMode::Safe;
+        r.tick_homing(now + Duration::from_millis(499)).unwrap();
+        assert!(matches!(r.homing.as_ref().unwrap().phase, Phase::AwaitRun));
+        let logs = r.shared.status_snapshot().logs;
+        assert!(logs.iter().any(|line| line == "TX ENABLE 4 1"));
+        assert!(logs.iter().any(|line| line == "TX RUN"));
+    }
+
+    #[test]
+    fn rehoming_fails_if_stop_response_never_arrives() {
+        let mut r = crate::application::worker::tests::screen_runtime();
+        r.telemetry.as_mut().unwrap().mode = RunMode::Run;
+        r.begin_homing(true, true, 180.0).unwrap();
+        let now = r.homing.as_ref().unwrap().since;
+        let error = r.tick_homing(now + Duration::from_millis(500)).unwrap_err();
+        assert!(error.to_string().contains("停止応答がありません"));
+        r.fault(error.to_string());
+        assert!(r.homing.is_none());
+        assert!(!r.drive.running());
+        let logs = r.shared.status_snapshot().logs;
+        assert!(!logs.iter().any(|line| line == "TX RUN"));
+        assert_eq!(logs.iter().filter(|line| *line == "TX STOP").count(), 2);
+    }
+    #[test]
     fn homes_z_raises_and_holds_it_while_homing_r() {
         check_homing_retreat(None, None);
         check_homing_retreat(Some(25.0), Some(60.0));
@@ -485,7 +527,14 @@ mod tests {
         }
         assert!(r.begin_homing(false, true, 180.0).is_err());
         assert!(r.begin_homing(true, false, 180.0).is_err());
-        r.begin_homing(true, true, 180.0).unwrap();
+        r.screen_control = false;
+        let pressed_at = Instant::now();
+        let mut create = ControllerState::default();
+        create.buttons[4] = 1;
+        r.read_pad(ControllerState::default(), pressed_at).unwrap();
+        r.read_pad(create.clone(), pressed_at).unwrap();
+        r.read_pad(create.clone(), pressed_at + Duration::from_secs(1)).unwrap();
+        assert!(r.homing.is_some());
         assert!(r.request(&Request::new("run"), true).is_err());
         let now = Instant::now();
         {
@@ -575,6 +624,13 @@ mod tests {
         );
         r.publish();
         assert!(r.shared.status_snapshot().homing_ready);
+        let before = r.shared.status_snapshot().logs;
+        r.read_pad(create.clone(), pressed_at + Duration::from_secs(5)).unwrap();
+        r.read_pad(create, pressed_at + Duration::from_secs(7)).unwrap();
+        assert!(r.homing.is_none());
+        assert_eq!(r.shared.status_snapshot().logs, before);
+        assert_eq!(r.telemetry.as_ref().unwrap().mode, RunMode::Run);
+        assert_eq!(r.telemetry.as_ref().unwrap().enabled_slots, 4);
         r.stop(false).unwrap();
         r.begin_homing(true, true, 180.0).unwrap();
         assert!(r.homing.is_some());
