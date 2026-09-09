@@ -273,6 +273,35 @@ fn screen_jog_requires_running_and_expires_without_latching_on_restart() {
 }
 
 #[test]
+fn stopping_ee_preserves_arm_hold_but_explicit_cut_still_disables_it() {
+    for extended_sts in [false, true] {
+        let mut runtime = screen_runtime();
+        runtime.start().unwrap();
+        runtime.tick().unwrap();
+        let before = runtime.telemetry.as_ref().unwrap().clone();
+        runtime.test.peers.insert("sts", Instant::now());
+        if extended_sts {
+            runtime.sts.active = true;
+        } else {
+            runtime.ee.targets.insert("ee_rotation".into(), 2050.0);
+        }
+        runtime.request(&Request::new("stop"), true).unwrap();
+        runtime.tick().unwrap();
+        let held = runtime.telemetry.as_ref().unwrap();
+        assert_eq!(held.mode, RunMode::Run);
+        assert_eq!(held.enabled_slots, before.enabled_slots);
+        assert!(!runtime.drive.running());
+        assert!(runtime.ee.targets.is_empty());
+        assert!(!runtime.sts.active);
+        assert!(runtime.shared.status_snapshot().logs.iter().any(|l|
+            l == "TX CAN 2 800 0103000000000000"));
+        runtime.request(&Request::new("cut"), true).unwrap();
+        runtime.tick().unwrap();
+        assert_eq!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Stop);
+    }
+}
+
+#[test]
 fn gui_takeover_stops_and_revokes_the_previous_token() {
     let mut runtime = screen_runtime();
     let token = runtime

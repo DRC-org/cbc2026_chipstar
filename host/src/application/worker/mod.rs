@@ -140,12 +140,11 @@ impl Runtime {
         self.screen_input_times = [None; 6];
     }
     fn stop(&mut self, cut: bool) -> Result<()> {
+        let stop_ee = self.sts.active || !self.ee.targets.is_empty();
         let cut = cut
             // RUN送信後、応答前は保持対象が確定していない。JOG 0ではなくSTOPで競合を閉じる。
             || self.drive.awaiting().is_some()
             || self.test.enabled
-            || self.sts.active
-            || !self.ee.targets.is_empty()
             || self.homing.is_some();
         self.homing = None;
         self.pad.ee_armed = false;
@@ -176,6 +175,9 @@ impl Runtime {
             for line in self.machine.hold_lines(&telemetry, enabled_slots) {
                 self.send(&line)?;
             }
+        }
+        if !cut && stop_ee {
+            self.stop_peripherals()?;
         }
         self.reason = if cut {
             "出力停止。原点と姿勢を確認して再開"
