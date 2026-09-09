@@ -56,7 +56,7 @@ TEST_CASE("有限でない値をnanと書く") {
 TEST_CASE("slot単位の状態と接点を出力する") {
     CHECK(line(sample()) ==
           "STATE t=12345 mode=RUN en=7 a0=1.200/1.100 a1=-45.000/-44.200 "
-          "a2=0.500/0.400 err=0A,00,03 sw=5 stale=2 can=3");
+          "a2=0.500/0.400 err=0A,00,03 sw=5 stale=2 can=3 hold=0");
 }
 
 TEST_CASE("容量不足では出力しない") {

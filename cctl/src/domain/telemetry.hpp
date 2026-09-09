@@ -18,9 +18,10 @@ struct Telemetry {
     uint8_t contacts = 0;  // SW1..SW3の10ms安定値。閉で1。
     uint8_t stale_slots = 0;  // フィードバックが途絶えたslotのbit mask。
     uint8_t buses = 0;  // 使えるCANバス。bit0=FDCAN1, bit1=FDCAN2。
+    uint8_t held_slots = 0;
 };
 
-constexpr std::size_t TELEMETRY_LINE_CAPACITY = 144;
+constexpr std::size_t TELEMETRY_LINE_CAPACITY = 160;
 
 // PARAM応答はhostの指令と同じ小数5桁で返す。STATEの表示精度とは分離する。
 std::size_t formatFixed5(float value, char* out, std::size_t capacity);

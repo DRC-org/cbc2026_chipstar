@@ -29,6 +29,7 @@ enum class CommandKind : uint8_t {
     Reinit,
     // 保存済みパラメータを消して既定値へ戻す。
     ParamDefault,
+    Hold,
 };
 
 struct Command {

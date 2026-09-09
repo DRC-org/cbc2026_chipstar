@@ -14,6 +14,11 @@ Command parse(const char* line) {
 }  // namespace
 
 TEST_CASE("共通状態指令を解釈する") {
+    CHECK(parse("HOLD 4").kind == CommandKind::Hold);
+    CHECK(parse("HOLD 4").mask == 4);
+    CHECK(domain::extendsDeadline(CommandKind::Hold));
+    CHECK(parse("HOLD 0").kind == CommandKind::None);
+    CHECK(parse("HOLD 8").kind == CommandKind::None);
     CHECK(parse("STOP").kind == CommandKind::Stop);
     CHECK(parse("RUN").kind == CommandKind::Run);
     CHECK(parse("SAFE").kind == CommandKind::Safe);

@@ -125,8 +125,13 @@ impl Runtime {
                 if !self.fresh() || self.device.is_none() {
                     bail!("基板との通信復旧を待ってから再確認してください");
                 }
-                self.stop(true)?;
-                self.send("SAFE")?;
+                if self.emergency || self.telemetry.as_ref().is_some_and(|t|
+                    t.mode != RunMode::Run && t.held_slots.unwrap_or(0) == 0) {
+                    self.stop(true)?;
+                    self.send("SAFE")?;
+                } else {
+                    self.stop_with_z_hold()?;
+                }
                 self.settings = Settings::new(&self.cfg.machine);
                 self.setup = true;
                 self.setup_error = false;
@@ -152,7 +157,7 @@ impl Runtime {
             }
             "run" => self.start()?,
             "stop" => self.stop(false)?,
-            "cut" => self.stop(true)?,
+            "cut" => self.stop_with_z_hold()?,
             "safe" => {
                 self.stop(true)?;
                 self.send("SAFE")?;
@@ -266,9 +271,20 @@ impl Runtime {
                 }
                 let profile =
                     MachineProfile::parse(req.text.as_deref().context("設定本文が必要です")?)?;
-                self.stop(true)?;
                 if self.fresh() {
-                    self.send("SAFE")?;
+                    let identity_changed = ["c620_esc_id", "c620_slot2_esc_id", "el05_motor_id", "el05_host_id"]
+                        .iter().any(|key| profile.parameters.get(*key) != self.cfg.machine.parameters.get(*key))
+                        || profile.axes.iter().find(|a| a.name == "z").map(|a| a.slot)
+                            != self.cfg.machine.axes.iter().find(|a| a.name == "z").map(|a| a.slot);
+                    if identity_changed {
+                        anyhow::ensure!(self.telemetry.as_ref().is_some_and(|t|
+                            t.mode != RunMode::Run && t.held_slots == Some(0)),
+                            "通信ID・zのslot変更前に機構を支えて全トルクを解除してください");
+                        self.stop(true)?;
+                        self.send("SAFE")?;
+                    } else {
+                        self.stop_with_z_hold()?;
+                    }
                 }
                 self.cfg.machine = profile;
                 self.shared.set_config(self.cfg.clone());

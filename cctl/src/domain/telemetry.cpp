@@ -89,6 +89,7 @@ std::size_t formatTelemetry(const Telemetry& telemetry, char* out, std::size_t c
                       static_cast<unsigned>(telemetry.contacts),
                       static_cast<unsigned>(telemetry.stale_slots),
                       static_cast<unsigned>(telemetry.buses));
+    ok = ok && append(" hold=%u", static_cast<unsigned>(telemetry.held_slots));
     return ok ? length : 0;
 }
 

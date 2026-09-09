@@ -2,6 +2,7 @@ use super::*;
 use crate::protocol::telemetry::{RunMode, SlotState};
 fn telemetry(native: f32) -> Telemetry {
     Telemetry {
+        held_slots: Some(0),
         uptime_ms: 0,
         slots: [SlotState {
             measured: native,

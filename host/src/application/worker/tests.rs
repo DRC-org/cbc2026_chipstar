@@ -295,9 +295,10 @@ fn stopping_ee_preserves_arm_hold_but_explicit_cut_still_disables_it() {
         assert!(!runtime.sts.active);
         assert!(runtime.shared.status_snapshot().logs.iter().any(|l|
             l == "TX CAN 2 800 0103000000000000"));
-        runtime.request(&Request::new("cut"), true).unwrap();
+        runtime.request(&Request::new("safe"), true).unwrap();
         runtime.tick().unwrap();
-        assert_eq!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Stop);
+        assert_eq!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Safe);
+        assert_eq!(runtime.telemetry.as_ref().unwrap().held_slots, Some(0));
     }
 }
 
@@ -1034,4 +1035,30 @@ fn gain_apply_after_hold_preserves_coordinates_and_allows_run() {
     assert!(runtime.drive.running());
     assert!(runtime.machine.origin_states(runtime.telemetry.as_ref())
         .iter().all(|o| o.captured && !o.lost));
+}
+
+#[test]
+fn output_stop_and_parameter_apply_keep_z_held_until_explicit_release() {
+    let mut r = screen_runtime();
+    r.start().unwrap();r.tick().unwrap();
+    r.request(&Request::new("cut"), true).unwrap();r.tick().unwrap();
+    assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(4));
+    let before = r.shared.status_snapshot().logs.len();
+    let mut profile = r.cfg.machine.clone();
+    profile.parameters.insert("m3508_slot2_vel_kp".into(), 9.0);
+    r.request(&Request {text:Some(toml::to_string(&profile).unwrap()), ..Request::new("apply")}, true).unwrap();
+    for _ in 0..45 {
+        r.tick().unwrap();
+        assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(4));
+    }
+    assert!(r.settings.ready());
+    assert!(!r.shared.status_snapshot().logs.iter().skip(before).any(|l| l=="TX STOP" || l=="TX SAFE"));
+    r.configuration_failed("readback mismatch".into());r.tick().unwrap();
+    assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(4));
+    r.request(&Request::new("recover"), true).unwrap();
+    for _ in 0..45 {r.tick().unwrap();assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(4));}
+    r.engage_emergency().unwrap();r.tick().unwrap();
+    assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(0));
+    r.request(&Request::new("safe"), true).unwrap();r.tick().unwrap();
+    assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(0));
 }

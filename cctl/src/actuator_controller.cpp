@@ -77,13 +77,14 @@ void ActuatorController::applyAllParameters() {
 // ページ消去でCPUが数十ms止まる。SAFE中に、変更が落ち着いてから1回だけ書く。
 void ActuatorController::flushParameters() {
   constexpr uint32_t QUIET_MS = 1000;
-  if (!param_dirty_ || mode_ != domain::RunMode::Safe) return;
+  if (!param_dirty_ || mode_ != domain::RunMode::Safe || held_slots_ != 0) return;
   if (HAL_GetTick() - param_dirty_ms_ < QUIET_MS) return;
   if (param_store::save(parameters_)) param_dirty_ = false;
   else param_dirty_ms_ = HAL_GetTick();
 }
 
 bool ActuatorController::resetParameters() {
+  if (held_slots_ != 0) return false;
   if (mode_ != domain::RunMode::Safe) return false;
   parameters_.reset();
   const uint32_t failures = bus_.txFailures();
@@ -97,6 +98,7 @@ bool ActuatorController::resetParameters() {
 }
 
 bool ActuatorController::reinitialize(uint8_t slots) {
+  if (held_slots_ != 0) return false;
   if (mode_ != domain::RunMode::Safe) return false;
   const uint32_t failures = bus_.txFailures();
   for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
@@ -134,6 +136,7 @@ void ActuatorController::begin() {
 }
 
 bool ActuatorController::setTarget(uint8_t slot, float value) {
+  if (held_slots_ != 0) return false;
   if (slot >= domain::SLOT_COUNT || !std::isfinite(value)) return false;
   jog_[slot].reset(measured(slot));
   targets_[slot] = value;
@@ -152,6 +155,7 @@ bool ActuatorController::setTarget(uint8_t slot, float value) {
 }
 
 bool ActuatorController::setJog(uint8_t slot, float velocity) {
+  if (held_slots_ != 0) return false;
   if (slot >= domain::SLOT_COUNT || !std::isfinite(velocity) ||
       !slotActive(static_cast<uint8_t>(1U << slot))) return false;
   const float caps[] = {
@@ -216,7 +220,7 @@ void ActuatorController::dispatchRx(const domain::CanFrame& frame) {
 void ActuatorController::checkFeedback(uint32_t now) {
   // 判定は domain::FeedbackWatch に置いてある。指令を送っていないslotは
   // 応答も返らないので、有効になった時点から数え始める。
-  const uint8_t active = mode_ == domain::RunMode::Run ? enabled_slots_ : 0;
+  const uint8_t active = mode_ == domain::RunMode::Run ? enabled_slots_ : held_slots_;
   const uint8_t dropped =
       feedback_.update(now, active, parameters_.getMs(domain::ParamId::FeedbackTimeoutMs));
   // 出力を切る。復帰にはhostからの再有効化を要求する。
@@ -227,10 +231,11 @@ void ActuatorController::checkFeedback(uint32_t now) {
 }
 
 bool ActuatorController::slotActive(uint8_t bit) const {
-  return mode_ == domain::RunMode::Run && (enabled_slots_ & bit) != 0;
+  return ((mode_ == domain::RunMode::Run ? enabled_slots_ : held_slots_) & bit) != 0;
 }
 
 void ActuatorController::stopAfterTxFailure() {
+  held_slots_ = 0;
   mode_ = domain::RunMode::Stop;
   enabled_slots_ = 0;
   slot1_.setEnabled(false);
@@ -260,12 +265,29 @@ bool ActuatorController::applySlotStates() {
   return true;
 }
 
+bool ActuatorController::holdSlots(uint8_t mask) {
+  if (retry_stop_ || mask == 0 || (mask & ~domain::slot_bit::ALL) ||
+      (feedback_.stale() & mask)) return false;
+  if (held_slots_ == mask) return true;
+  if ((mask & 1) && !slot0_.positionReady()) return false;
+  if ((mask & 2) && !slot1_.hasFeedback()) return false;
+  if ((mask & 4) && !slot2_.hasFeedback()) return false;
+  for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot) {
+    targets_[slot] = measured(slot);
+    jog_[slot].reset(targets_[slot]);
+  }
+  held_slots_ = enabled_slots_ = mask;
+  mode_ = domain::RunMode::Safe;
+  return applySlotStates();
+}
+
 bool ActuatorController::setMode(domain::RunMode mode) {
   if (retry_stop_) {
     if (mode != domain::RunMode::Run) mode_ = mode;
     return false;
   }
-  if (mode_ == mode) return true;
+  if (mode_ == mode && held_slots_ == 0) return true;
+  held_slots_ = 0;
   if (mode != domain::RunMode::Run && !bus_.discardPending()) {
     stopAfterTxFailure();
     return false;
@@ -304,6 +326,7 @@ bool ActuatorController::setSlotsEnabled(uint8_t slots, bool enabled) {
   }
   enabled_slots_ = enabled ? static_cast<uint8_t>(enabled_slots_ | masked)
                            : static_cast<uint8_t>(enabled_slots_ & ~masked);
+  held_slots_ &= enabled_slots_;
   return applySlotStates();
 }
 
@@ -390,6 +413,7 @@ bool ActuatorController::setParameter(uint8_t id, float value) {
   if (domain::requiresSafe(id) && mode_ != domain::RunMode::Safe) return false;
   if (!domain::Parameters::valid(id, value)) return false;
   if (parameters_.get(id) == value) return true;
+  if (held_slots_ != 0 && domain::requiresSafe(id)) return false;
   const float previous = parameters_.get(id);
   if (!parameters_.set(id, value)) return false;
   const uint32_t failures = bus_.txFailures();

@@ -155,6 +155,10 @@ Command parseCommand(const char* line, std::size_t length) {
         if (parseU8(tokens[1], 1, 255, command.protocol_version)) command.kind = CommandKind::Hello;
         return command;
     }
+    if (count == 2 && equalsIgnoreCase(tokens[0], "HOLD")) {
+        if (parseU8(tokens[1], 1, 7, command.mask)) command.kind = CommandKind::Hold;
+        return command;
+    }
     // DMドライバのレジスタ。デバッグアシスタントなしでID・モードを設定するための口。
     if (count >= 2 && count <= 3 && equalsIgnoreCase(tokens[0], "DMREG")) {
         if (!parseU8(tokens[1], 0, 255, command.param_id)) return command;
@@ -214,6 +218,7 @@ bool extendsDeadline(CommandKind kind) {
         case CommandKind::Target:
         case CommandKind::Jog:
         case CommandKind::Heartbeat:
+        case CommandKind::Hold:
             return true;
         default:
             return false;

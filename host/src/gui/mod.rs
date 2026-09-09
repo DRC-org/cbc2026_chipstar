@@ -388,9 +388,9 @@ impl eframe::App for BridgeApp {
                         }
                         if ui.add_enabled(
                             status.connected && !status.emergency && !status.ai_active
-                                && !status.running && !status.outputs_active,
+                                && !status.running && !status.test_active && !status.sts.active,
                             egui::Button::new("設定を再送して確認"),
-                        ).on_hover_text("出力停止のまま設定を再送・照合します。緊停やモータ異常は解除しません")
+                        ).on_hover_text("z保持中は保持を続けて設定を再送・照合します。緊停やモータ異常は解除しません")
                             .clicked() {
                             self.operation("recover");
                         }

@@ -27,6 +27,7 @@ pub struct SlotState {
 
 #[derive(Clone, PartialEq, Debug)]
 pub struct Telemetry {
+    pub held_slots: Option<u8>,
     pub uptime_ms: u32,
     pub slots: [SlotState; 3],
     pub enabled_slots: u8,
@@ -81,6 +82,7 @@ pub fn parse_telemetry(line: &str) -> Option<Telemetry> {
     let mut error_bits = None;
     let mut contacts = None;
     let mut stale_slots = 0;
+    let mut held_slots = None;
     let mut buses = 3;
     for token in tokens {
         let (key, value) = token.split_once('=')?;
@@ -104,6 +106,7 @@ pub fn parse_telemetry(line: &str) -> Option<Telemetry> {
             }
             "sw" => contacts = Some(value.parse().ok()?),
             "stale" => stale_slots = value.parse().ok()?,
+            "hold" => held_slots = Some(value.parse().ok()?),
             "can" => buses = value.parse().ok()?,
             _ => {}
         }
@@ -117,6 +120,7 @@ pub fn parse_telemetry(line: &str) -> Option<Telemetry> {
         error_bits: error_bits?,
         contacts,
         stale_slots,
+        held_slots,
         buses,
     })
 }

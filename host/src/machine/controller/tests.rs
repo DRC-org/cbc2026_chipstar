@@ -224,6 +224,7 @@ fn deadzone_nonfinite_input_and_low_speed_are_bounded() {
 fn telemetry_with(contacts: u8, measured: [f32; 3]) -> Telemetry {
     use crate::protocol::telemetry::{RunMode, SlotState};
     Telemetry {
+        held_slots: Some(0),
         uptime_ms: 0,
         slots: [
             SlotState {

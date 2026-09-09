@@ -11,6 +11,7 @@ pub struct Simulator {
     contact: Instant,
     mode: &'static str,
     enabled: u8,
+    held: u8,
     position: [f32; 3],
     velocity: [f32; 3],
     targets: [Option<f32>; 3],
@@ -90,6 +91,7 @@ impl Simulator {
             contact: Instant::now(),
             mode: "SAFE",
             enabled: 0,
+            held: 0,
             position: [0.0; 3],
             velocity: [0.0; 3],
             targets: [None; 3],
@@ -135,13 +137,23 @@ impl Simulator {
                 );
             }
             ["HEARTBEAT"] => self.contact = Instant::now(),
+            ["HOLD", mask] => {
+                self.held = mask.parse()?;
+                self.enabled = self.held;
+                self.mode = "SAFE";
+                self.velocity = [0.0; 3];
+                self.targets = [None; 3];
+                self.contact = Instant::now();
+            }
             ["STOP"] | ["SAFE"] => {
+                self.held = 0;
                 self.mode = if line == "STOP" { "STOP" } else { "SAFE" };
                 self.velocity = [0.0; 3];
                 self.targets = [None; 3];
                 self.pending_run = None;
             }
             ["RUN"] => {
+                self.held = 0;
                 if self.delay_run {
                     self.delay_run = false;
                     self.pending_run = Some(Instant::now() + std::time::Duration::from_millis(250));
@@ -307,7 +319,8 @@ impl Simulator {
         let dt = self.tick.elapsed().as_secs_f32().min(0.1);
         self.tick = Instant::now();
         // 通信線が無音でも基板側watchdogは独立して動作する。
-        if self.contact.elapsed().as_millis() > 250 && self.mode == "RUN" {
+        if self.contact.elapsed().as_millis() > 250 && (self.mode == "RUN" || self.held != 0) {
+            self.held = 0;
             self.mode = "STOP";
             self.velocity = [0.0; 3];
         }
@@ -346,7 +359,7 @@ impl Simulator {
         let mut lines: Vec<_> = self.rx.drain(..).collect();
         let stale = std::mem::take(&mut self.stale_once);
         let errors = std::mem::take(&mut self.errors_once);
-        lines.push(format!("STATE t={} mode={} en={} a0={p0}/{p0} a1={p1}/{p1} a2={p2}/{p2} err={:02X},{:02X},{:02X} sw=7 stale={stale} can=3", self.started.elapsed().as_millis(), self.mode, self.enabled, errors[0], errors[1], errors[2], p0=self.position[0], p1=self.position[1], p2=self.position[2]));
+        lines.push(format!("STATE t={} mode={} en={} a0={p0}/{p0} a1={p1}/{p1} a2={p2}/{p2} err={:02X},{:02X},{:02X} sw=7 stale={stale} can=3 hold={}", self.started.elapsed().as_millis(), self.mode, self.enabled, errors[0], errors[1], errors[2], self.held, p0=self.position[0], p1=self.position[1], p2=self.position[2]));
         lines
     }
 }

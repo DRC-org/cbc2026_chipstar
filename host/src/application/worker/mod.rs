@@ -142,6 +142,43 @@ impl Runtime {
         }
         self.screen_input_times = [None; 6];
     }
+    fn stop_with_z_hold(&mut self) -> Result<()> {
+        anyhow::ensure!(!self.emergency, "緊停中はz保持を有効化できません");
+        if !self.fresh() {
+            anyhow::bail!("通信状態を確認できないためz保持へ移行できません");
+        }
+        let telemetry = self.telemetry.as_ref().context("実測位置がありません")?;
+        anyhow::ensure!(telemetry.held_slots.is_some(), "z保持に対応したCCTLへ書き込んでください");
+        let axis = self.cfg.machine.axes.iter().find(|a| a.name == "z")
+            .context("z軸が設定されていません")?;
+        let mask = 1u8 << axis.slot;
+        anyhow::ensure!(telemetry.stale_slots & mask == 0, "zのフィードバックがありません");
+        self.send(&format!("HOLD {mask}"))?;
+        self.homing = None;
+        self.pad.ee_armed = false;
+        self.pad.home_since = None;
+        self.pad.home_ready = false;
+        self.ee = ee_control::Control::default();
+        self.sts.cancel();
+        self.test.restart_blocked |= self.test.active;
+        self.test.active = false;
+        self.test.renewed = None;
+        self.test.started = None;
+        self.test.confirmed = false;
+        self.clear_drive();
+        self.stop_peripherals()?;
+        self.reason = "出力停止・z位置保持中".into();
+        Ok(())
+    }
+    fn configuration_failed(&mut self, error: String) {
+        self.setup_error = true;
+        if self.telemetry.as_ref().is_some_and(|t| t.held_slots.unwrap_or(0) != 0) {
+            self.error = error;
+            self.reason = "設定適用失敗・z保持を継続中".into();
+        } else {
+            self.fault(error);
+        }
+    }
     fn stop(&mut self, cut: bool) -> Result<()> {
         let stop_ee = self.sts.active || !self.ee.targets.is_empty();
         let cut = cut
@@ -183,7 +220,7 @@ impl Runtime {
             self.stop_peripherals()?;
         }
         self.reason = if cut {
-            "出力停止。原点と姿勢を確認して再開"
+            "全トルク解除。原点と姿勢を確認して再開"
         } else {
             "停止・保持中。再開操作を待っています"
         }
@@ -495,13 +532,15 @@ impl Runtime {
             }
             if line.starts_with("ERR ") {
                 // 駆動拒否でも停止するが、照合済みの設定まで失敗扱いにしない。
-                self.setup_error |= !self.settings.ready();
-                self.fault(line);
+                if !self.settings.ready() {
+                    self.configuration_failed(line);
+                } else {
+                    self.fault(line);
+                }
                 continue;
             }
             if let Err(error) = self.settings.receive(&line) {
-                self.setup_error = true;
-                self.fault(error.to_string());
+                self.configuration_failed(error.to_string());
             }
             if let Some(device) = parse_device_info(&line) {
                 if device.motor_layout != "el05,m3508,m3508" {
@@ -649,8 +688,7 @@ impl Runtime {
                 Ok(Some(line)) => self.send(&line)?,
                 Ok(None) => {}
                 Err(error) => {
-                    self.setup_error = true;
-                    self.fault(error.to_string());
+                    self.configuration_failed(error.to_string());
                 }
             }
         }
@@ -1113,7 +1151,8 @@ impl Runtime {
                 || self
                     .telemetry
                     .as_ref()
-                    .is_some_and(|t| t.mode == RunMode::Run && t.enabled_slots != 0);
+                    .is_some_and(|t| (t.mode == RunMode::Run && t.enabled_slots != 0)
+                        || t.held_slots.unwrap_or(0) != 0);
             s.operating_state = if self.emergency {
                 "ソフト緊停中"
             } else if !self.fresh() {
@@ -1128,10 +1167,12 @@ impl Runtime {
                 "運転中"
             } else if self.drive.awaiting().is_some() {
                 "運転応答待ち"
+            } else if self.telemetry.as_ref().is_some_and(|t| t.held_slots.unwrap_or(0) != 0) {
+                "出力停止・z保持"
             } else if s.outputs_active {
                 "停止・保持"
             } else {
-                "出力停止"
+                "全トルク解除"
             }
             .into();
             s.simulated = self.cfg.simulate;

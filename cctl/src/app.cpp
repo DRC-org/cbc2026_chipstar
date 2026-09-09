@@ -159,6 +159,10 @@ void applyCommand(const domain::Command& command) {
         case domain::CommandKind::Stop:
             if (!controller.setMode(domain::RunMode::Stop)) sendText("ERR code=CAN_TX");
             break;
+        case domain::CommandKind::Hold:
+            if (!protocol_ready || !controller.holdSlots(command.mask)) sendText("ERR code=HOLD_REJECTED");
+            else sendText("OK");
+            break;
         case domain::CommandKind::Run:
             if (protocol_ready) {
                 if (!controller.setMode(domain::RunMode::Run)) sendText("ERR code=CAN_TX");
@@ -174,6 +178,7 @@ void applyCommand(const domain::Command& command) {
             if (!controller.setSlotsEnabled(command.mask, command.value)) sendText("ERR code=CAN_TX");
             break;
         case domain::CommandKind::Home:
+            if (controller.heldSlots()) { sendText("ERR code=HOLD_ACTIVE"); break; }
             controller.home(command.mask);
             break;
         case domain::CommandKind::Target:
@@ -284,6 +289,7 @@ void sendTelemetry() {
     }
     telemetry.contacts = inputs.stable();
     telemetry.stale_slots = controller.staleSlots();
+    telemetry.held_slots = controller.heldSlots();
     telemetry.buses = static_cast<uint8_t>(
         (motor_bus_ready && !motor_bus.busOff() ? 1 : 0) |
         (peripheral_bus_ready && !peripheral_bus.busOff() ? 2 : 0));
@@ -393,7 +399,7 @@ extern "C" void loop(void) {
     const uint32_t now = HAL_GetTick();
     const uint32_t contact = last_contact_ms;
     const uint32_t watchdog_ms = controller.parameters().getMs(domain::ParamId::WatchdogMs);
-    if (controller.mode() == domain::RunMode::Run &&
+    if ((controller.mode() == domain::RunMode::Run || controller.heldSlots() != 0) &&
         domain::deadlineExpired(now, contact, watchdog_ms)) {
         controller.setMode(domain::RunMode::Stop);
         protocol_ready = false;

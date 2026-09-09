@@ -197,16 +197,16 @@ impl BridgeApp {
                         ui.add_enabled_ui(!status.ai_active, |ui| {
                             ui.horizontal(|ui| {
                                 if ui
-                                    .button("設定待機へ移行")
-                                    .on_hover_text("cctlへSAFEを送り、モータ出力を切って設定可能な状態へ移行します")
+                                    .button("全トルク解除")
+                                    .on_hover_text("zの位置保持も解除します。自重で下がる機構は支えてください")
                                     .clicked()
                                 {
                                     self.operation("safe");
                                 }
                                 if ui
-                                    .button(RichText::new("全出力停止").color(DANGER))
+                                    .button(RichText::new("出力停止・z保持").color(DANGER))
                                     .on_hover_text(
-                                        "位置保持を解除。位置追跡が継続していれば原点は維持",
+                                        "r・θと周辺機構を停止し、zの現在位置だけを保持します",
                                     )
                                     .clicked()
                                 {

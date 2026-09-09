@@ -21,6 +21,7 @@ fn fixture() -> (MachineController, ControllerState, Telemetry) {
     });
     let mut machine = MachineController::new(profile);
     let mut t = Telemetry {
+        held_slots: Some(0),
         uptime_ms: 0,
         mode: RunMode::Run,
         enabled_slots: 1,

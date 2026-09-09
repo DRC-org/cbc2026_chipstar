@@ -22,6 +22,8 @@ class ActuatorController {
   void update();
 
   bool setMode(domain::RunMode mode);
+  bool holdSlots(uint8_t mask);
+  uint8_t heldSlots() const { return held_slots_; }
   domain::RunMode mode() const { return mode_; }
   bool setSlotsEnabled(uint8_t slots, bool enabled);
   uint8_t enabledSlots() const { return enabled_slots_; }
@@ -66,6 +68,7 @@ class ActuatorController {
   int16_t c620Rpm(uint8_t slot = 1) const { return (slot == 2 ? slot2_ : slot1_).rpm(); }
 
  private:
+  uint8_t held_slots_ = 0;
   bool applySlotStates();
   void stopAfterTxFailure();
   bool retry_stop_ = false;

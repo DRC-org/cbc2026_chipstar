@@ -208,6 +208,22 @@ TEST_CASE("C620再開では停止中に手動移動した両軸の現在位置�
  CHECK(c.target(2)==c.measured(2));
  CHECK(current(accepted.back(),1)==0);
 }
+TEST_CASE("指定slotの保持中はSAFEで設定でき出力解除や再初期化を混入させない") {
+ resetBus();CanBus bus(&handle);ActuatorController c(bus);c.begin();
+ feedback(c,1,1000);feedback(c,2,2000);
+ REQUIRE(c.setSlotsEnabled(6,true));REQUIRE(c.setMode(domain::RunMode::Run));
+ REQUIRE(c.holdSlots(4));const float held=c.target(2);
+ CHECK(c.mode()==domain::RunMode::Safe);CHECK(c.heldSlots()==4);
+ feedback(c,2,2200);c.update();
+ CHECK(c.target(2)==held);
+ CHECK_FALSE(c.setJog(2,100));CHECK_FALSE(c.setTarget(2,0));
+ REQUIRE(c.setParameter(static_cast<uint8_t>(domain::ParamId::M3508Slot2PosKp),9));
+ CHECK(c.heldSlots()==4);CHECK(c.target(2)==held);
+ CHECK_FALSE(c.setParameter(static_cast<uint8_t>(domain::ParamId::C620Slot2EscId),3));
+ CHECK_FALSE(c.reinitialize(4));CHECK_FALSE(c.resetParameters());
+ REQUIRE(c.setMode(domain::RunMode::Stop));CHECK(c.heldSlots()==0);
+ CHECK(current(accepted.back(),1)==0);
+}
 TEST_CASE("2台目の電流上限と過熱判定と応答喪失は独立する") {
  resetBus();CanBus bus(&handle);ActuatorController c(bus);c.begin();
  REQUIRE(c.setParameter(static_cast<uint8_t>(domain::ParamId::M3508Slot2MaxCurrentMa),100));
