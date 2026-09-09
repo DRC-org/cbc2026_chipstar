@@ -107,17 +107,23 @@ pub struct SerialServoProfile {
     #[serde(default = "one")]
     pub input_sign: f32,
     pub speed_position_per_second: f32,
-    /// フィールド基準0°の位置カウント。先端回転はこの端点を0°状態に使う。
-    pub minimum_position: u16,
-    /// フィールド基準180°の位置カウント。先端回転はこの端点を180°状態に使う。
-    pub maximum_position: u16,
-    pub initial_position: u16,
     pub acceleration: u8,
-    /// θ回転を打ち消してフィールド基準を保つ係数[count/deg]。0で補正なし。
-    #[serde(default)]
-    pub theta_follow: f32,
+    /// θ=0のとき先端がフィールド0°になるサーボ位置カウント（取付オフセット）。
+    /// 実機で2点ティーチして決める永続定数。
+    #[serde(default = "default_zero0_count")]
+    pub zero0_count: f32,
+    /// EE実角に対するサーボのcount/deg（符号込み）。16T→48Tなら
+    /// 4096×3/360≈34.13。フィールド角の写像とθ補正に使う。
+    #[serde(default = "default_counts_per_deg")]
+    pub counts_per_deg: f32,
     #[serde(default)]
     pub enabled: bool,
+}
+fn default_zero0_count() -> f32 {
+    2048.0
+}
+fn default_counts_per_deg() -> f32 {
+    4096.0 / 360.0
 }
 
 /// serial_svmdはcctlのFDCAN2経由で繋ぐ。接続先はcctlのリンクなので持たない。
@@ -237,8 +243,44 @@ impl MachineProfile {
     }
 
     pub fn parse(source: &str) -> Result<Self> {
-        let mut profile: Self =
+        let mut value: toml::Value =
             toml::from_str(source).context("機体プロファイルの形式が不正です")?;
+        // 旧0°/180°端点を同じ物理写像へ移行する。仮の既定値で置換しない。
+        if let Some(servos) = value
+            .get_mut("serial_svmd")
+            .and_then(|b| b.get_mut("servos"))
+            .and_then(toml::Value::as_array_mut)
+        {
+            for servo in servos {
+                if let Some(table) = servo.as_table_mut()
+                    && !table.contains_key("zero0_count")
+                    && let Some(min) = table
+                        .get("minimum_position")
+                        .and_then(toml::Value::as_integer)
+                {
+                    table.insert("zero0_count".into(), toml::Value::Float(min as f64));
+                    if let Some(max) = table
+                        .get("maximum_position")
+                        .and_then(toml::Value::as_integer)
+                    {
+                        let ratio = (max - min) as f64 / 180.0;
+                        if table.get("name").and_then(toml::Value::as_str) == Some("ee_rotation")
+                            && let Some(follow) =
+                                table.get("theta_follow").and_then(toml::Value::as_float)
+                            && (follow - ratio).abs() > 0.001
+                        {
+                            bail!(
+                                "旧EE回転の端点とθ補正が一致しません。2点較正でzero0_count/counts_per_degを設定してください"
+                            );
+                        }
+                        table.insert("counts_per_deg".into(), toml::Value::Float(ratio));
+                    }
+                }
+            }
+        }
+        let mut profile: Self = value
+            .try_into()
+            .context("機体プロファイルの形式が不正です")?;
         profile.sync_motor_speed_limits();
         profile.validate()?;
         Ok(profile)
@@ -474,14 +516,12 @@ impl MachineProfile {
                 }
                 if !servo.input_sign.is_finite()
                     || !servo.speed_position_per_second.is_finite()
-                    || !servo.theta_follow.is_finite()
+                    || !servo.counts_per_deg.is_finite()
+                    || servo.counts_per_deg == 0.0
                     || servo.input_sign.abs() != 1.0
                     || servo.speed_position_per_second < 0.0
                     || servo.speed_position_per_second > 1000.0
-                    || servo.maximum_position > 4095
-                    || servo.minimum_position >= servo.maximum_position
-                    || !(servo.minimum_position..=servo.maximum_position)
-                        .contains(&servo.initial_position)
+                    || !servo.zero0_count.is_finite()
                     || servo.acceleration > 254
                 {
                     bail!("STS3215設定の範囲が不正です: {}", servo.name);

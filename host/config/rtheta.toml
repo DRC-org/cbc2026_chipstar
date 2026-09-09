@@ -105,11 +105,9 @@ name = "ee_rotation"
 id = 1
 input_sign = 1.0
 speed_position_per_second = 1000.0
-minimum_position = 1024
-maximum_position = 3072
-initial_position = 2048
 acceleration = 10
-theta_follow = -11.377778
+zero0_count = 1024.0
+counts_per_deg = 34.133335
 enabled = true
 
 [parameters]

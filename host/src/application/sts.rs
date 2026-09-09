@@ -55,6 +55,13 @@ pub enum Operation {
     Sequence {
         steps: Vec<Step>,
     },
+    Teach {
+        id: u8,
+    },
+    Capture {
+        field_deg: u16,
+    },
+    EndTeach,
     Renew,
 }
 pub fn signed(value: i16) -> u16 {
@@ -98,8 +105,19 @@ pub struct Sample {
     pub current_ma: f32,
     pub moving: bool,
 }
+#[derive(Clone, Copy, Debug, Serialize)]
+pub struct TeachPoint {
+    pub field_deg: f32,
+    pub count: f32,
+    pub theta_deg: f32,
+}
+
 #[derive(Clone, Default, Serialize)]
 pub struct Status {
+    pub teach_id: Option<u8>,
+    pub teach_result_id: Option<u8>,
+    pub teach_zero: Option<TeachPoint>,
+    pub teach_half: Option<TeachPoint>,
     pub elapsed_ms: u64,
     pub active: bool,
     pub busy: bool,

@@ -107,7 +107,7 @@ impl Runtime {
             "通常運転を再開してからEEを操作してください"
         );
         anyhow::ensure!(
-            (0.0..=180.0).contains(&field_deg),
+            field_deg == 0.0 || field_deg == 180.0,
             "先端回転はフィールド基準0°または180°です"
         );
         self.ready()?;

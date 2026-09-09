@@ -27,31 +27,52 @@ impl BridgeApp {
                     for (name, label) in ee::ROLES {
                         ui.label(label);
                         if let Some(axis) = axes.iter().find(|a| a.name == name) {
-                            let value = self.ee_values.entry(name.into()).or_insert(axis.initial);
-                            *value = value.clamp(axis.min, axis.max);
-                            ui.add(
-                                egui::DragValue::new(value)
-                                    .range(axis.min..=axis.max)
-                                    .speed(1.0)
-                                    .suffix(format!(" {}", axis.unit()))
-                                    .min_decimals(0),
-                            );
-                            let selected = *value;
-                            if ui
-                                .add_enabled(can && axis.enabled, egui::Button::new("移動"))
-                                .on_hover_text("指定位置へ移動し、その位置を保持します")
-                                .clicked()
-                            {
-                                command.insert(name.to_string(), selected);
-                            }
-                            if ui
-                                .add_enabled(
-                                    !status.ai_active && !status.emergency,
-                                    egui::Button::new("テスト"),
-                                )
-                                .clicked()
-                            {
-                                self.select_ee_test(axis.target, selected);
+                            if name == "ee_rotation" {
+                                // 先端回転はフィールド基準0°/180°のトグル。
+                                let field = self.ee_values.entry(name.into()).or_insert(0.0);
+                                if ui
+                                    .add_enabled(can && axis.enabled, egui::Button::new("0°へ"))
+                                    .clicked()
+                                {
+                                    *field = 0.0;
+                                    command.insert(name.to_string(), 0.0);
+                                }
+                                if ui
+                                    .add_enabled(can && axis.enabled, egui::Button::new("180°へ"))
+                                    .clicked()
+                                {
+                                    *field = 180.0;
+                                    command.insert(name.to_string(), 180.0);
+                                }
+                                ui.label("");
+                            } else {
+                                let value =
+                                    self.ee_values.entry(name.into()).or_insert(axis.initial);
+                                *value = value.clamp(axis.min, axis.max);
+                                ui.add(
+                                    egui::DragValue::new(value)
+                                        .range(axis.min..=axis.max)
+                                        .speed(1.0)
+                                        .suffix(format!(" {}", axis.unit()))
+                                        .min_decimals(0),
+                                );
+                                let selected = *value;
+                                if ui
+                                    .add_enabled(can && axis.enabled, egui::Button::new("移動"))
+                                    .on_hover_text("指定位置へ移動し、その位置を保持します")
+                                    .clicked()
+                                {
+                                    command.insert(name.to_string(), selected);
+                                }
+                                if ui
+                                    .add_enabled(
+                                        !status.ai_active && !status.emergency,
+                                        egui::Button::new("テスト"),
+                                    )
+                                    .clicked()
+                                {
+                                    self.select_ee_test(axis.target, selected);
+                                }
                             }
                             if let Some(target) = status.ee_targets.get(name) {
                                 ui.label(format!("指令 {target:.0}"));
@@ -102,6 +123,67 @@ impl BridgeApp {
             }
         });
     }
+    fn ee_calibration(&mut self, ui: &mut egui::Ui) {
+        use crate::application::sts::Operation;
+        let status = self.shared.status_snapshot();
+        let applied = self
+            .shared
+            .config()
+            .machine
+            .serial_svmd
+            .and_then(|b| b.servos.into_iter().find(|s| s.name == "ee_rotation"));
+        let mut operation = None;
+        panel().show(ui, |ui| {
+            ui.label(RichText::new("フィールド方向の2点較正").strong());
+            ui.label("θの原点を採用して停止した後、較正を開始します。対象STSだけを脱力します。手でEEを0°、次に90°または180°へ向けて、それぞれ取り込んでください。");
+            ui.label("取込中はθとEEを静止させてください。サーボの0/4095境界をまたがない姿勢で行います。180°まで回せない減速機構では、2点目に90°を使えます。");
+            if status.sts.teach_id.is_none() {
+                if ui.add_enabled(applied.is_some() && status.connected && status.configured && !status.running && !status.emergency && !status.ai_active && !status.test_mode && !status.sts.active,
+                    egui::Button::new("較正開始・EE回転を脱力")).clicked() {
+                    operation = Some(Operation::Teach { id: applied.as_ref().unwrap().id });
+                }
+            } else {
+                if let Some(sample) = status.sts.samples.back() {
+                    ui.label(format!("STS ID {}：実測 {} count", sample.id, sample.position));
+                }
+                ui.horizontal(|ui| {
+                    for field_deg in [0, 90, 180] {
+                        if ui.button(format!("この向きを{field_deg}°として取込")).clicked() {
+                            operation = Some(Operation::Capture { field_deg });
+                        }
+                    }
+                    if ui.button("較正終了（脱力を維持）").clicked() { operation = Some(Operation::EndTeach); }
+                });
+            }
+            for p in [status.sts.teach_zero, status.sts.teach_half].into_iter().flatten() {
+                ui.label(format!("{}°：{} count、θ={:.2}°", p.field_deg, p.count, p.theta_deg));
+            }
+            if let (Some(a), Some(b)) = (status.sts.teach_zero, status.sts.teach_half) {
+                match ee::calibrate(a, b) {
+                    Ok((offset, ratio)) => {
+                        ui.label(format!("計算結果：オフセット {offset:.2} count、換算係数 {ratio:.5} count/deg"));
+                        if (ratio * 180.0).abs() > 4095.0 {
+                            ui.colored_label(WARNING, "この減速比では同じθで0°・180°の両方へ移動できません。現行の通常操作はサーボ単回転範囲です。");
+                        }
+                        if ui.add_enabled(status.sts.teach_id.is_none() && self.edit.serial_svmd.as_ref().is_some_and(|b| b.servos.iter().any(|s| s.name == "ee_rotation" && Some(s.id) == status.sts.teach_result_id)), egui::Button::new("計算結果を編集値へ反映")).clicked()
+                            && let Some(s) = self.edit.serial_svmd.as_mut().and_then(|b| b.servos.iter_mut().find(|s| s.name == "ee_rotation")) {
+                            s.zero0_count = offset;
+                            s.counts_per_deg = ratio;
+                        }
+                    }
+                    Err(e) => { ui.colored_label(WARNING, e.to_string()); }
+                }
+            }
+            ui.label("較正終了 → 編集値へ反映 → 設定を適用・保存、の順で確定します。再組付けやサーボ内部の原点変更時は再較正してください。");
+            ui.label(&status.sts.message);
+        });
+        if let Some(op) = operation {
+            self.request(Request {
+                text: Some(toml::to_string(&op).unwrap()),
+                ..Request::new("sts")
+            });
+        }
+    }
     pub(super) fn tune_ee(&mut self, ui: &mut egui::Ui) -> bool {
         let before = toml::to_string(&self.edit).unwrap_or_default();
         section(
@@ -113,6 +195,7 @@ impl BridgeApp {
             WARNING,
             "初期値は安全な校正値ではありません。単体テストで方向と端点を確認してから通常出力を許可してください。",
         );
+        let previous_axis = self.tune_ee_axis.clone();
         ui.horizontal_wrapped(|ui| {
             ui.label("調整する機構");
             for (name, label) in ee::ROLES {
@@ -125,6 +208,9 @@ impl BridgeApp {
                 ui.selectable_value(&mut self.tune_ee_axis, name.into(), text);
             }
         });
+        if previous_axis != self.tune_ee_axis {
+            self.end_test_on_tab_change();
+        }
         ui.add_space(6.0);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -168,11 +254,9 @@ impl BridgeApp {
                                 input_axis: None,
                                 input_sign: 1.0,
                                 speed_position_per_second: 100.0,
-                                minimum_position: 1024,
-                                maximum_position: 3072,
-                                initial_position: 2048,
                                 acceleration: 10,
-                                theta_follow: 0.0,
+                                zero0_count: 2048.0,
+                                counts_per_deg: -11.377778,
                                 enabled: false,
                             });
                         }
@@ -252,14 +336,12 @@ impl BridgeApp {
                         ui.add(egui::DragValue::new(&mut s.id));
                     });
                     ui.horizontal_wrapped(|ui| {
-                        ui.label("0°位置");
-                        ui.add(egui::DragValue::new(&mut s.minimum_position).suffix(" count"))
-                            .on_hover_text("フィールド基準0°のときのSTS位置カウント（θ=0基準）");
-                        ui.label("180°位置");
-                        ui.add(egui::DragValue::new(&mut s.maximum_position).suffix(" count"))
-                            .on_hover_text("フィールド基準180°のときのSTS位置カウント（θ=0基準）");
-                        ui.label("開始位置");
-                        ui.add(egui::DragValue::new(&mut s.initial_position).suffix(" count"));
+                        ui.label("取付オフセット");
+                        ui.add(egui::DragValue::new(&mut s.zero0_count).suffix(" count"))
+                            .on_hover_text("θ=0°でEEがフィールド0°を向くカウント。下の2点較正で求めます。");
+                        ui.label("回転換算係数");
+                        ui.add(egui::DragValue::new(&mut s.counts_per_deg).speed(0.01).suffix(" count/deg"))
+                            .on_hover_text("減速比と回転方向を含み、フィールド角とθ補正に共通で使います。");
                     });
                     ui.horizontal_wrapped(|ui| {
                         ui.label("サーボ内部の加速度");
@@ -269,16 +351,9 @@ impl BridgeApp {
                             egui::DragValue::new(&mut s.speed_position_per_second)
                                 .suffix(" count/s"),
                         );
-                        ui.label("θ追従");
-                        ui.add(
-                            egui::DragValue::new(&mut s.theta_follow)
-                                .speed(0.1)
-                                .suffix(" count/deg"),
-                        )
-                        .on_hover_text("θ回転を打ち消しフィールド基準を保つ係数。符号は実機で確認します。");
                     });
                     ui.label(
-                        RichText::new("△ボタンで0°/180°を切り替え、θの回転はθ追従係数で打ち消します。")
+                        RichText::new("△ボタンで0°/180°を切り替え、θの回転は回転換算係数で打ち消します。")
                             .size(12.0)
                             .color(MUTED),
                     );
@@ -299,10 +374,13 @@ impl BridgeApp {
             }
         });
         ui.label(
-            RichText::new("EE全体回転はSTS3215で、フィールド基準0°/180°を△で切り替えます。θの回転はθ追従係数で打ち消します。")
+            RichText::new("EE全体回転はSTS3215で、フィールド基準0°/180°を△で切り替えます。θの回転は回転換算係数で打ち消します。")
                 .size(12.0)
                 .color(MUTED),
         );
+        if self.tune_ee_axis == "ee_rotation" {
+            self.ee_calibration(ui);
+        }
         before != toml::to_string(&self.edit).unwrap_or_default()
     }
 }

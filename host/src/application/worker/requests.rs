@@ -79,7 +79,7 @@ impl Runtime {
         if req.action == "sts" {
             return self.sts_request(req);
         }
-        if (self.sts.active || self.sts.control_busy())
+        if (self.sts.active || self.sts.control_busy() || self.sts.teach_id.is_some())
             && !matches!(
                 req.action.as_str(),
                 "stop" | "cut" | "safe" | "heartbeat" | "release" | "fault"

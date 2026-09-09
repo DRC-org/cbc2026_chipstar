@@ -144,6 +144,7 @@ impl BridgeApp {
         !status.emergency
             && status.homing.is_none()
             && !status.sts.active
+            && status.sts.teach_id.is_none()
             && !status.sts.busy
             && !status.test_active
             && !status.ai_active
@@ -155,6 +156,7 @@ impl BridgeApp {
         !status.emergency
             && status.homing.is_none()
             && !status.sts.active
+            && status.sts.teach_id.is_none()
             && !status.sts.busy
             && !status.test_active
             && !status.ai_active
@@ -165,6 +167,7 @@ impl BridgeApp {
         !status.emergency
             && status.homing.is_none()
             && !status.sts.active
+            && status.sts.teach_id.is_none()
             && !status.sts.busy
             && !status.test_mode
             && !status.ai_active
@@ -174,7 +177,7 @@ impl BridgeApp {
     }
     fn end_test_on_tab_change(&mut self) {
         let status = self.shared.status_snapshot();
-        if status.sts.active || status.sts.busy {
+        if status.sts.active || status.sts.busy || status.sts.teach_id.is_some() {
             self.dispatch(Action::Stop);
         }
         if self.shared.status_snapshot().test_mode {
@@ -724,6 +727,21 @@ mod workflow_tests {
             let stopped = harness.wait(|status| !status.test_mode && !status.test_active);
             assert!(!stopped.outputs_active);
         }
+    }
+
+    #[test]
+    fn gui_leaving_ee_calibration_ends_teaching_without_restarting() {
+        let mut harness = Harness::new();
+        harness.capture_origins();
+        harness.app.screen = Screen::Tune;
+        harness.app.request(Request {
+            text: Some("operation=\"teach\"\nid=1".into()),
+            ..Request::new("sts")
+        });
+        harness.wait(|s| s.sts.teach_id == Some(1));
+        harness.app.switch_screen(Screen::Documents);
+        let stopped = harness.wait(|s| s.sts.teach_id.is_none() && !s.sts.busy);
+        assert!(!stopped.running && !stopped.sts.active);
     }
 
     #[test]

@@ -10,6 +10,8 @@ struct Command {
 #[derive(Default)]
 pub(super) struct Control {
     pub interested: bool,
+    pub teach_id: Option<u8>,
+    capture: Option<u16>,
     pub active: bool,
     armed: bool,
     queue: VecDeque<Command>,
@@ -34,6 +36,10 @@ impl Control {
         self.tag
     }
     pub fn cancel(&mut self) {
+        if self.teach_id.take().is_some() {
+            self.monitor.clear();
+        }
+        self.capture = None;
         self.active = false;
         self.armed = false;
         self.queue.clear();
@@ -104,6 +110,17 @@ impl Control {
 }
 
 impl Runtime {
+    pub(super) fn fail_sts(&mut self, error: String) {
+        self.sts.stop_monitoring();
+        self.shared.update_status(|s| s.sts.message = error.clone());
+        if self.sts.teach_id.is_some() {
+            // 較正は読み出しだけ。読取り失敗でアームの保持を解除しない。
+            self.sts.cancel();
+        } else {
+            self.fault(error);
+        }
+    }
+
     pub(super) fn sts_request(&mut self, req: &Request) -> Result<Reply> {
         let operation: Operation =
             toml::from_str(req.text.as_deref().context("STS操作のTOMLが必要です")?)?;
@@ -121,6 +138,15 @@ impl Runtime {
             !self.drive.running() && self.drive.awaiting().is_none() && !self.test.enabled,
             "通常運転と個別テストを終了してください"
         );
+        if matches!(operation, Operation::EndTeach) {
+            anyhow::ensure!(self.sts.teach_id.is_some(), "較正は開始されていません");
+            self.sts.cancel();
+            return Ok(Reply::accepted());
+        }
+        anyhow::ensure!(
+            self.sts.teach_id.is_none() || matches!(operation, Operation::Capture { .. }),
+            "較正を終了してから他のSTS操作を行ってください"
+        );
         anyhow::ensure!(
             !self.sts.control_busy(),
             "STS操作の完了を待つか停止してください"
@@ -131,6 +157,60 @@ impl Runtime {
         self.sts.interested = true;
         self.send("CAN 2 800 0100000000000000")?;
         match operation {
+            Operation::Teach { id } => {
+                anyhow::ensure!(!self.sts.active, "STS出力を停止してください");
+                anyhow::ensure!(
+                    self.cfg.machine.serial_svmd.as_ref().is_some_and(|b| b
+                        .servos
+                        .iter()
+                        .any(|s| s.name == "ee_rotation" && s.id == id)),
+                    "適用済みEE回転のIDを選んでください"
+                );
+                anyhow::ensure!(
+                    self.machine
+                        .axis_position("theta", self.telemetry.as_ref())
+                        .is_some(),
+                    "先にθの原点を採用してください"
+                );
+                self.sts.teach_id = Some(id);
+                self.sts.monitor = vec![id];
+                self.shared.update_status(|s| {
+                    s.sts.teach_result_id = Some(id);
+                    s.sts.teach_zero = None;
+                    s.sts.teach_half = None;
+                    s.sts.samples.clear();
+                });
+                self.send(
+                    &crate::protocol::serial_svmd::Command::Enable { id, enabled: false }
+                        .to_cctl_line(),
+                )?;
+                // 実際のトルクOFFを読戻してから取り込みを許可する。
+                self.sts.command(20, id, [40, 1, 0, 0], Some(0));
+            }
+            Operation::Capture { field_deg } => {
+                anyhow::ensure!(
+                    matches!(field_deg, 0 | 90 | 180),
+                    "取込角度は0°・90°・180°です"
+                );
+                let id = self.sts.teach_id.context("較正を開始してください")?;
+                anyhow::ensure!(
+                    self.machine
+                        .axis_position("theta", self.telemetry.as_ref())
+                        .is_some(),
+                    "θの原点と通信状態を確認してください"
+                );
+                self.shared.update_status(|s| {
+                    if field_deg == 0 {
+                        s.sts.teach_zero = None;
+                    } else {
+                        s.sts.teach_half = None;
+                    }
+                });
+                self.sts.capture = Some(field_deg);
+                self.sts.command(20, id, [40, 1, 0, 0], Some(0));
+                self.sts.command(20, id, [56, 2, 0, 0], None);
+            }
+            Operation::EndTeach => unreachable!(),
             Operation::Monitor { ids } => {
                 anyhow::ensure!(
                     ids.len() <= 16 && ids.iter().all(|id| (1..=253).contains(id)),
@@ -260,11 +340,36 @@ impl Runtime {
         if let Some(expected) = command.expected {
             anyhow::ensure!(
                 expected == value,
-                "ID {} のモードが不一致です（設定={}、要求={}）",
+                "ID {} の読戻しが不一致です（設定={}、要求={}）。モードが不一致またはトルクOFF未確認",
                 reply[2],
                 value,
                 expected
             );
+        }
+        if reply[1] == 20
+            && command.packet[4] == 56
+            && let Some(field) = self.sts.capture.take()
+        {
+            let theta = self
+                .machine
+                .axis_position("theta", self.telemetry.as_ref())
+                .context("θの原点または実測値が失われたため取込を中止しました")?;
+            anyhow::ensure!(
+                self.fresh() && value <= 4095,
+                "較正には有効な単回転位置が必要です"
+            );
+            let point = sts::TeachPoint {
+                field_deg: f32::from(field),
+                count: f32::from(value),
+                theta_deg: theta,
+            };
+            self.shared.update_status(|s| {
+                if field == 0 {
+                    s.sts.teach_zero = Some(point);
+                } else {
+                    s.sts.teach_half = Some(point);
+                }
+            });
         }
         if reply[1] == 23 {
             self.sts.armed = true;
@@ -474,6 +579,73 @@ mod tests {
             true,
         )
         .unwrap();
+    }
+    #[test]
+    fn teaching_reads_fresh_positions_preserves_z_hold_and_blocks_run() {
+        let mut r = crate::application::worker::tests::screen_runtime();
+        r.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
+        r.stop_with_z_hold().unwrap();
+        pump(&mut r, 2);
+        request(&mut r, Operation::Teach { id: 1 });
+        pump(&mut r, 6);
+        assert_eq!(r.sts.teach_id, Some(1), "{}", r.error);
+        assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(4));
+        assert!(r.request(&Request::new("run"), true).is_err());
+        request(&mut r, Operation::Capture { field_deg: 0 });
+        pump(&mut r, 8);
+        let point = r.shared.status_snapshot().sts.teach_zero.unwrap();
+        assert_eq!(point.count, 2048.0);
+        assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(4));
+        request(&mut r, Operation::EndTeach);
+        assert!(r.sts.teach_id.is_none());
+        assert!(r.sts.monitor.is_empty());
+        assert!(!r.sts.active);
+        assert!(r.shared.status_snapshot().sts.teach_zero.is_some());
+    }
+    #[test]
+    fn teaching_read_failure_preserves_main_arm_hold_and_discards_capture() {
+        let mut r = crate::application::worker::tests::screen_runtime();
+        r.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
+        r.stop_with_z_hold().unwrap();
+        pump(&mut r, 2);
+        request(&mut r, Operation::Teach { id: 1 });
+        pump(&mut r, 6);
+        request(&mut r, Operation::Capture { field_deg: 0 });
+        r.tick_sts(Instant::now()).unwrap();
+        // 未応答の取込READをタイムアウトさせる。
+        r.sts.pending.as_mut().unwrap().1 = Instant::now() - Duration::from_secs(2);
+        // receiveを通さずtick_stsのエラー経路を再現する。
+        let error = r.tick_sts(Instant::now()).unwrap_err();
+        assert!(error.to_string().contains("確認応答"));
+        r.fail_sts(error.to_string());
+        pump(&mut r, 4);
+        assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(4));
+        assert!(r.sts.capture.is_none());
+        assert!(r.shared.status_snapshot().sts.teach_zero.is_none());
+    }
+
+    #[test]
+    fn teaching_rejects_missing_theta_and_stop_cancels_pending_capture() {
+        let mut r = crate::application::worker::tests::screen_runtime();
+        r.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
+        request(&mut r, Operation::Teach { id: 1 });
+        pump(&mut r, 6);
+        request(&mut r, Operation::Capture { field_deg: 0 });
+        r.stop(false).unwrap();
+        pump(&mut r, 8);
+        assert!(r.sts.teach_id.is_none());
+        assert!(r.shared.status_snapshot().sts.teach_zero.is_none());
+        r.machine = MachineController::new(r.cfg.machine.clone());
+        assert!(
+            r.request(
+                &Request {
+                    text: Some("operation=\"teach\"\nid=1".into()),
+                    ..Request::new("sts")
+                },
+                true
+            )
+            .is_err()
+        );
     }
     #[test]
     fn monitoring_read_does_not_block_motion_or_accept_its_late_reply() {

@@ -96,7 +96,7 @@ impl Runtime {
                             .with_context(|| format!("{name}が未割当です"))?;
                         if axis.name == "ee_rotation" {
                             anyhow::ensure!(
-                                (0.0..=180.0).contains(value),
+                                *value == 0.0 || *value == 180.0,
                                 "先端回転はフィールド基準0°または180°です"
                             );
                         } else {

@@ -419,10 +419,7 @@ impl Runtime {
                 self.fault_ee(error.to_string());
             }
             if let Err(error) = self.observe_sts(&line) {
-                self.sts.stop_monitoring();
-                self.shared
-                    .update_status(|s| s.sts.message = error.to_string());
-                self.fault(error.to_string());
+                self.fail_sts(error.to_string());
             }
             for board in [
                 crate::protocol::board::Board::Dcmd,
@@ -734,10 +731,7 @@ impl Runtime {
             self.fault_ee(error.to_string());
         }
         if let Err(error) = self.tick_sts(now) {
-            self.sts.stop_monitoring();
-            self.shared
-                .update_status(|s| s.sts.message = error.to_string());
-            self.fault(error.to_string());
+            self.fail_sts(error.to_string());
         }
         self.poll_servo_health(now)?;
         if self.emergency {
@@ -1143,6 +1137,7 @@ impl Runtime {
                 .selected
                 .map(|(_, kind)| kind.key().into())
                 .unwrap_or_default();
+            s.sts.teach_id = self.sts.teach_id;
             s.sts.elapsed_ms = self.sts.elapsed_ms();
             s.sts.active = self.sts.active;
             s.sts.busy = self.sts.busy();

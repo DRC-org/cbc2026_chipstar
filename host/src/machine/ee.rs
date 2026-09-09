@@ -25,8 +25,10 @@ pub struct Axis {
     pub sign: f32,
     pub speed: f32,
     pub acceleration: u8,
-    /// θを打ち消してフィールド基準を保つ係数[count/deg]。0で補正なし。
-    pub theta_follow: f32,
+    /// θ=0で先端がフィールド0°になるサーボカウント（取付オフセット）。
+    pub zero0_count: f32,
+    /// サーボの count/deg（符号込み）。フィールド角写像とθ補正に共用。
+    pub counts_per_deg: f32,
 }
 impl Axis {
     pub fn pad_value(&self, input: &crate::input::ControllerState) -> f32 {
@@ -53,11 +55,12 @@ impl Axis {
         }
     }
 
-    /// フィールド基準角[deg]（0°=下限端点・180°=上限端点）と現在θ[deg]から、
-    /// θ回転を打ち消した先端回転のSTS位置カウントを求める。
+    /// フィールド基準角[deg]と現在θ[deg]から、θ回転を打ち消した先端回転の
+    /// STS位置カウントを求める。count = zero0 + cpds×(field − θ)。
     pub fn rotation_count(&self, field_deg: f32, theta_deg: f32) -> u16 {
-        let base = self.min + (self.max - self.min) * (field_deg / 180.0);
-        (base - theta_deg * self.theta_follow).round().clamp(0.0, 4095.0) as u16
+        (self.zero0_count + self.counts_per_deg * (field_deg - theta_deg))
+            .round()
+            .clamp(0.0, 4095.0) as u16
     }
 
     /// 先端回転のSTS指令行。initialのときだけトルク有効化とRUNも添える。
@@ -137,7 +140,8 @@ pub fn axes(profile: &MachineProfile) -> Vec<Axis> {
                     sign: s.input_sign,
                     speed: s.speed_us_per_second,
                     acceleration: 0,
-                    theta_follow: 0.0,
+                    zero0_count: 0.0,
+                    counts_per_deg: 0.0,
                 })
             } else {
                 profile
@@ -150,15 +154,16 @@ pub fn axes(profile: &MachineProfile) -> Vec<Axis> {
                         name: s.name.clone(),
                         label,
                         target: Target::Sts(s.id),
-                        min: s.minimum_position.into(),
-                        max: s.maximum_position.into(),
-                        initial: s.initial_position.into(),
+                        min: 0.0,
+                        max: 4095.0,
+                        initial: s.zero0_count,
                         enabled: s.enabled,
                         input_axis: s.input_axis,
                         sign: s.input_sign,
                         speed: s.speed_position_per_second,
                         acceleration: s.acceleration,
-                        theta_follow: s.theta_follow,
+                        zero0_count: s.zero0_count,
+                        counts_per_deg: s.counts_per_deg,
                     })
             }
         })
@@ -182,7 +187,8 @@ mod tests {
             sign: 1.0,
             speed: 100.0,
             acceleration: 0,
-            theta_follow: 0.0,
+            zero0_count: 2048.0,
+            counts_per_deg: 11.377778,
         };
         let mut input = crate::input::ControllerState::default();
         input.axes[2] = -0.75;
@@ -208,23 +214,112 @@ mod tests {
             name: "ee_rotation".into(),
             label: "test",
             target: Target::Sts(1),
-            min: 1024.0,
-            max: 3072.0,
-            initial: 2048.0,
+            min: 0.0,
+            max: 4095.0,
+            initial: 1024.0,
             enabled: true,
             input_axis: None,
             sign: 1.0,
             speed: 1000.0,
             acceleration: 10,
-            theta_follow: -10.0,
+            zero0_count: 1024.0,
+            counts_per_deg: 10.0,
         };
-        // θ=0では端点そのもの。
+        // θ=0では field角×cpds のオフセット。
         assert_eq!(axis.rotation_count(0.0, 0.0), 1024);
-        assert_eq!(axis.rotation_count(180.0, 0.0), 3072);
-        // θが+10degならcountは -theta_follow*θ = +100 ずれてフィールド基準を保つ。
-        assert_eq!(axis.rotation_count(0.0, 10.0), 1124);
+        assert_eq!(axis.rotation_count(180.0, 0.0), 2824);
+        // θが+10degなら cpds×(−θ)= −100 ずれてフィールド基準を保つ。
+        assert_eq!(axis.rotation_count(0.0, 10.0), 924);
         // 0〜4095でクランプする。
-        assert_eq!(axis.rotation_count(180.0, 200.0), 4095);
-        assert_eq!(axis.rotation_count(0.0, -200.0), 0);
+        assert_eq!(axis.rotation_count(180.0, -200.0), 4095);
+        assert_eq!(axis.rotation_count(0.0, 200.0), 0);
+    }
+}
+
+/// 2点で取付オフセットと符号付き減速比を求める。θを動かした場合も補正する。
+pub fn calibrate(
+    zero: crate::application::sts::TeachPoint,
+    half: crate::application::sts::TeachPoint,
+) -> Result<(f32, f32)> {
+    let angle = (half.field_deg - zero.field_deg) - (half.theta_deg - zero.theta_deg);
+    ensure!(
+        angle.is_finite() && angle.abs() > 0.001,
+        "2点の相対角が同じため較正できません"
+    );
+    let ratio = (half.count - zero.count) / angle;
+    let offset = zero.count - ratio * (zero.field_deg - zero.theta_deg);
+    ensure!(
+        ratio.is_finite() && ratio.abs() > 0.001 && offset.is_finite(),
+        "異なる向きで2点を取り込んでください"
+    );
+    Ok((offset, ratio))
+}
+
+#[cfg(test)]
+mod calibration_tests {
+    use super::*;
+    use crate::application::sts::TeachPoint as P;
+    #[test]
+    fn two_point_calibration_supports_reduction_reverse_and_moving_theta() {
+        let (offset, ratio) = calibrate(
+            P {
+                field_deg: 0.0,
+                count: 3000.0,
+                theta_deg: 10.0,
+            },
+            P {
+                field_deg: 180.0,
+                count: 1400.0,
+                theta_deg: 30.0,
+            },
+        )
+        .unwrap();
+        assert_eq!((offset, ratio), (2900.0, -10.0));
+        let (zero, geared) = calibrate(
+            P {
+                field_deg: 0.0,
+                count: 100.0,
+                theta_deg: 0.0,
+            },
+            P {
+                field_deg: 90.0,
+                count: 3172.0,
+                theta_deg: 0.0,
+            },
+        )
+        .unwrap();
+        assert_eq!(zero, 100.0);
+        assert!((geared - 4096.0 / 120.0).abs() < 0.001);
+        assert_eq!(offset + ratio * (180.0 - 30.0), 1400.0);
+        assert!(
+            calibrate(
+                P {
+                    field_deg: 0.0,
+                    count: 1.0,
+                    theta_deg: 0.0
+                },
+                P {
+                    field_deg: 180.0,
+                    count: 2.0,
+                    theta_deg: 180.0
+                }
+            )
+            .is_err()
+        );
+        assert!(
+            calibrate(
+                P {
+                    field_deg: 0.0,
+                    count: 1.0,
+                    theta_deg: 0.0
+                },
+                P {
+                    field_deg: 0.0,
+                    count: 1.0,
+                    theta_deg: 0.0
+                }
+            )
+            .is_err()
+        );
     }
 }

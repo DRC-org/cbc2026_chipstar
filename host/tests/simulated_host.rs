@@ -520,3 +520,33 @@ fn api_emergency_revokes_the_token_and_cannot_be_reset_remotely() {
     assert!(host.call(Request::new("stop")).ok);
     assert_eq!(host.status()["emergency"].as_bool(), Some(true));
 }
+
+#[test]
+fn ee_teaching_over_socket_captures_feedback_and_preserves_z_hold() {
+    let host = Host::new();
+    let token = host.claim();
+    host.origins(&token);
+    assert!(host.request("cut", &token).ok);
+    host.wait(|s| s["operating_state"].as_str() == Some("出力停止・z保持"));
+    let sts = |text: &str| host.call(Request {
+        token: Some(token.clone()), text: Some(text.into()), ..Request::new("sts")
+    });
+    assert!(sts("operation=\"teach\"\nid=1").ok);
+    host.wait(|s| s["sts"].get("teach_id").and_then(toml::Value::as_integer) == Some(1));
+    assert!(!host.request("run", &token).ok);
+    // 読戻し中は再要求が拒否されるため、確認の完了を待つ。
+    let start = Instant::now();
+    loop {
+        if sts("operation=\"capture\"\nfield_deg=0").ok { break; }
+        assert!(start.elapsed() < Duration::from_secs(3));
+        thread::sleep(Duration::from_millis(40));
+    }
+    let captured = host.wait(|s| s["sts"].get("teach_zero").is_some());
+    assert_eq!(captured["sts"]["teach_zero"]["field_deg"].as_float(), Some(0.0));
+    assert_eq!(captured["operating_state"].as_str(), Some("出力停止・z保持"));
+    assert!(sts("operation=\"end_teach\"").ok);
+    let ended = host.wait(|s| s["sts"].get("teach_id").is_none());
+    assert_eq!(ended["outputs_active"].as_bool(), Some(true));
+    assert_eq!(ended["running"].as_bool(), Some(false));
+    assert!(ended["sts"].get("teach_zero").is_some());
+}
