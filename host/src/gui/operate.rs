@@ -186,6 +186,8 @@ impl BridgeApp {
             .find(|a| a.name == "z")
             .map(|a| a.homing_retreat_mm())
             .unwrap_or(0.0);
+        let retreat = config.machine.axes.iter().find(|a| a.name == "r")
+            .map(|a| a.homing_retreat_mm()).unwrap_or(0.0);
         ui.label(format!(
             "{}：正面をθ=0°として、z上昇後にθを{:+.0}°へ旋回します。",
             court.label(),
@@ -193,7 +195,7 @@ impl BridgeApp {
         ));
         ui.label(
             RichText::new(format!(
-                "z下端で原点設定 → zを{rise:.0} mm上昇 → θ旋回 → r前端で原点設定・完了"
+                "z下端で原点設定 → zを{rise:.0} mm上昇 → θ旋回 → r前端で原点設定 → rを{retreat:.0} mm後退・完了"
             ))
             .size(13.0)
             .color(MUTED),
@@ -246,6 +248,6 @@ impl BridgeApp {
             }
         }
         ui.add_space(6.0);
-        ui.label(RichText::new("停止中にCreateを1秒長押ししても同じ動作を開始できます。r前端で終了し、θ・zの保持を続けます。").size(12.0).color(MUTED));
+        ui.label(RichText::new("停止中にCreateを1秒長押ししても同じ動作を開始できます。rを後退して終了し、θ・zの保持を続けます。").size(12.0).color(MUTED));
     }
 }

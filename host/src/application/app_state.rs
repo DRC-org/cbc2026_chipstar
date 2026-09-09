@@ -43,8 +43,8 @@ pub enum Court {
 impl Court {
     pub fn homing_theta(self) -> f32 {
         match self {
-            Self::Red => 90.0,
-            Self::Blue => -90.0,
+            Self::Red => -90.0,
+            Self::Blue => 90.0,
         }
     }
     pub fn label(self) -> &'static str {

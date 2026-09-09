@@ -13,6 +13,9 @@ enum Phase {
     MoveClearance,
     AwaitRotationRun,
     Rotate,
+    AwaitRadialStop,
+    AwaitRetreatRun,
+    MoveRadialRetreat,
     AwaitHold,
 }
 pub(super) struct Homing {
@@ -47,7 +50,7 @@ impl Runtime {
         );
         anyhow::ensure!(
             human && confirmed,
-            "機体が真正面を向き、z下降・上昇・θ旋回・r前進の経路に干渉がないことを確認してください"
+            "機体が真正面を向き、z下降・上昇・θ旋回・r前進・後退の経路に干渉がないことを確認してください"
         );
         anyhow::ensure!(
             self.homing_idle(),
@@ -100,6 +103,17 @@ impl Runtime {
                 a.speed_per_second > 0.0,
                 "ホーミングには正の軸速度が必要です"
             );
+            if name == "r" {
+                anyhow::ensure!(a.unit == "mm", "r軸の単位はmmにしてください");
+                anyhow::ensure!(
+                    a.homing_retreat_mm() > 0.0,
+                    "rのホーミング戻し量を0より大きく設定してください"
+                );
+                anyhow::ensure!(
+                    (a.minimum..=a.maximum).contains(&(a.origin_position - a.homing_retreat_mm())),
+                    "r原点から設定量だけ後退した位置が可動域外です"
+                );
+            }
             if name == "z" {
                 anyhow::ensure!(a.unit == "mm", "z軸の単位はmmにしてください");
                 anyhow::ensure!(
@@ -198,7 +212,7 @@ impl Runtime {
                 "θ・zの保持中にフィードバック異常を検出しました"
             );
         }
-        if matches!(phase, Phase::AwaitHold) {
+        if matches!(phase, Phase::AwaitRadialStop) {
             let index = self
                 .cfg
                 .machine
@@ -206,7 +220,7 @@ impl Runtime {
                 .iter()
                 .position(|a| a.name == "r")
                 .unwrap();
-            let radial = &self.cfg.machine.axes[index];
+            let radial = self.cfg.machine.axes[index].clone();
             anyhow::ensure!(
                 radial.limit.is_some_and(|l| l.reached(contacts))
                     && t.stale_slots & (1 << radial.slot) == 0
@@ -218,12 +232,89 @@ impl Runtime {
                     self.machine.capture_origin(index, Some(&t)),
                     "rの停止位置を原点に設定できません"
                 );
-                self.homing = None;
-                self.reason = "ホーミング完了。r前端で原点を設定し、θ・zを保持しています".into();
+                self.send(&format!("ENABLE {} 1", 1 << radial.slot))?;
+                let h = self.homing.as_mut().unwrap();
+                h.phase = Phase::AwaitRetreatRun;
+                h.since = now;
+                h.label = "rの原点を設定しました。設定した戻し位置へ後退します".into();
             } else {
                 anyhow::ensure!(
                     elapsed < Duration::from_millis(500),
                     "ホーミング完了時の保持応答がありません"
+                );
+            }
+            return Ok(());
+        }
+        if matches!(
+            phase,
+            Phase::AwaitRetreatRun | Phase::MoveRadialRetreat | Phase::AwaitHold
+        ) {
+            let index = self
+                .cfg
+                .machine
+                .axes
+                .iter()
+                .position(|a| a.name == "r")
+                .unwrap();
+            let radial = self.cfg.machine.axes[index].clone();
+            let enabled = holding | (1 << radial.slot);
+            anyhow::ensure!(
+                t.stale_slots & enabled == 0 && t.error_bits[usize::from(radial.slot)] == 0,
+                "r後退中にフィードバック異常を検出しました"
+            );
+            if matches!(phase, Phase::AwaitHold) {
+                if t.mode == RunMode::Run && t.enabled_slots == holding {
+                    self.homing = None;
+                    self.reason = "ホーミング完了。rを後退し、θ・zを保持しています".into();
+                } else {
+                    anyhow::ensure!(
+                        elapsed < Duration::from_millis(500),
+                        "ホーミング完了時の保持応答がありません"
+                    );
+                }
+                return Ok(());
+            }
+            let target = radial.origin_position - radial.homing_retreat_mm();
+            if matches!(phase, Phase::AwaitRetreatRun) {
+                if t.mode == RunMode::Run && t.enabled_slots == enabled {
+                    let native_target = self
+                        .machine
+                        .set_position_target(radial.slot, target)
+                        .context("r原点が確認されていません")?;
+                    self.send(&format!("TARGET {} {native_target:.5}", radial.slot))?;
+                    let h = self.homing.as_mut().unwrap();
+                    h.phase = Phase::MoveRadialRetreat;
+                    h.since = now;
+                    h.axis_started = now;
+                    h.label = "rを設定した戻し位置へ後退しています（θ・z保持中）".into();
+                } else {
+                    anyhow::ensure!(
+                        elapsed < Duration::from_millis(500),
+                        "r後退開始の応答がありません"
+                    );
+                }
+                return Ok(());
+            }
+            anyhow::ensure!(
+                t.mode == RunMode::Run && t.enabled_slots == enabled,
+                "r後退中の出力状態が変化しました"
+            );
+            let origin = &self.machine.origin_states(Some(&t))[index];
+            anyhow::ensure!(origin.captured, "r後退中に原点を失いました");
+            if (origin.position - target).abs() <= 1.0 {
+                anyhow::ensure!(
+                    !radial.limit.unwrap().reached(contacts),
+                    "r後退後もリミットが作動しています"
+                );
+                self.send(&format!("ENABLE {} 0", 1 << radial.slot))?;
+                let h = self.homing.as_mut().unwrap();
+                h.phase = Phase::AwaitHold;
+                h.since = now;
+                h.label = "r後退完了。停止を確認しています（θ・z保持中）".into();
+            } else {
+                anyhow::ensure!(
+                    now.duration_since(home.axis_started).as_secs_f32() < home.timeout_seconds,
+                    "rが設定した後退位置に到達せず時間超過しました"
                 );
             }
             return Ok(());
@@ -483,7 +574,7 @@ impl Runtime {
                 Phase::AwaitStop
             } else {
                 self.send(&format!("ENABLE {bit} 0"))?;
-                Phase::AwaitHold
+                Phase::AwaitRadialStop
             };
             let h = self.homing.as_mut().unwrap();
             h.phase = next_phase;
@@ -581,6 +672,7 @@ mod tests {
             .find(|a| a.name == "r")
             .unwrap();
         radial.homing_retreat_mm = r_distance;
+        let r_distance = radial.homing_retreat_mm();
         radial.speed_per_second = 100.0;
         radial.homing_speed_percent = 25.0;
         radial.native_per_unit = 0.5;
@@ -695,6 +787,20 @@ mod tests {
         assert!(!r.machine.origin_states(r.telemetry.as_ref())[0].captured);
         r.telemetry.as_mut().unwrap().enabled_slots = 6;
         r.tick_homing(now + Duration::from_millis(700)).unwrap();
+        assert!(matches!(
+            r.homing.as_ref().unwrap().phase,
+            Phase::AwaitRetreatRun
+        ));
+        r.telemetry.as_mut().unwrap().enabled_slots = 7;
+        r.tick_homing(now + Duration::from_millis(750)).unwrap();
+        r.tick_homing(now + Duration::from_millis(800)).unwrap();
+        assert!(r.homing.is_some());
+        r.telemetry.as_mut().unwrap().slots[0].measured = -r_distance * 0.5;
+        r.telemetry.as_mut().unwrap().contacts = Some(0);
+        r.tick_homing(now + Duration::from_millis(850)).unwrap();
+        assert!(matches!(r.homing.as_ref().unwrap().phase, Phase::AwaitHold));
+        r.telemetry.as_mut().unwrap().enabled_slots = 6;
+        r.tick_homing(now + Duration::from_millis(900)).unwrap();
         assert!(r.homing.is_none());
         assert!(!r.drive.running());
         let logs = r.shared.status_snapshot().logs;
@@ -705,7 +811,10 @@ mod tests {
                 .any(|l| l.contains(&format!("TARGET 2 {:.5}", z_distance * 2.0)))
         );
         assert!(logs.iter().any(|l| l.contains("JOG 0 12.50000")));
-        assert!(!logs.iter().any(|l| l.contains("TARGET 0 ")));
+        assert!(
+            logs.iter()
+                .any(|l| l == &format!("TX TARGET 0 {:.5}", -r_distance * 0.5))
+        );
         assert!(logs.iter().any(|l| l.contains("ENABLE 1 0")));
         assert!(logs.iter().any(|l| l == "TX JOG 1 0"));
         let origins = r.machine.origin_states(r.telemetry.as_ref());
@@ -718,7 +827,9 @@ mod tests {
             .unwrap()
             .origin_position;
         assert!(
-            (origins.iter().find(|a| a.name == "r").unwrap().position - r_origin).abs() < 0.001
+            (origins.iter().find(|a| a.name == "r").unwrap().position - (r_origin - r_distance))
+                .abs()
+                < 0.001
         );
         assert_eq!(
             origins.iter().find(|a| a.name == "z").unwrap().position,
@@ -796,7 +907,7 @@ mod tests {
             .iter_mut()
             .find(|a| a.name == "theta")
             .unwrap()
-            .maximum = 45.0;
+            .minimum = -45.0;
         assert!(r.begin_homing(true, true, 180.0).is_err());
         assert_eq!(r.shared.status_snapshot().tx_count, count);
     }
@@ -827,6 +938,49 @@ mod tests {
                     .iter()
                     .any(|line| line == "TX ENABLE 1 1")
             );
+        }
+    }
+    #[test]
+    fn radial_retreat_rejects_bad_feedback_timeout_and_stuck_limit() {
+        for failure in 0..3 {
+            let mut r = crate::application::worker::tests::screen_runtime();
+            r.begin_homing(true, true, 180.0).unwrap();
+            for index in 0..3 {
+                assert!(r.machine.capture_origin(index, r.telemetry.as_ref()));
+            }
+            let now = Instant::now();
+            let h = r.homing.as_mut().unwrap();
+            h.stage = 1;
+            h.phase = Phase::MoveRadialRetreat;
+            h.axis_started = now;
+            h.since = now;
+            let radial = &r.cfg.machine.axes[0];
+            let retreat_native = radial.homing_retreat_mm() * radial.native_per_unit;
+            let t = r.telemetry.as_mut().unwrap();
+            t.mode = RunMode::Run;
+            t.enabled_slots = 7;
+            t.contacts = Some(0);
+            let check_at = match failure {
+                0 => {
+                    t.stale_slots = 2;
+                    now
+                }
+                1 => now + Duration::from_secs(181),
+                _ => {
+                    t.slots[0].measured -= retreat_native;
+                    t.contacts = Some(1);
+                    now
+                }
+            };
+            let error = r.tick_homing(check_at).unwrap_err().to_string();
+            assert!(error.contains(match failure {
+                0 => "フィードバック",
+                1 => "時間超過",
+                _ => "リミット",
+            }));
+            r.fault(error);
+            assert!(r.homing.is_none());
+            assert!(!r.drive.running());
         }
     }
 }

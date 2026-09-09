@@ -426,10 +426,14 @@ fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> b
             if axis.limit.is_some() || axis.name == "theta" {
                 let description =
                     "自動ホーミングで使う速度です。θの旋回とr・zの探索速度を、軸の最高速度に対する1〜100%で指定します。";
-                if axis.name == "z" {
+                if matches!(axis.name.as_str(), "r" | "z") {
                     let mut distance = axis.homing_retreat_mm();
-                    let help = "z原点を設定した後、θを旋回する前に上昇する距離です。旋回経路に干渉しない高さを設定してください。";
-                    ui.label("ホーミング上昇量").on_hover_text(help);
+                    let (label, help) = if axis.name == "r" {
+                        ("ホーミング戻し量", "r前端で原点を設定した後に後退する距離です。0より大きい値を設定してください。")
+                    } else {
+                        ("ホーミング上昇量", "z原点を設定した後、θを旋回する前に上昇する距離です。旋回経路に干渉しない高さを設定してください。")
+                    };
+                    ui.label(label).on_hover_text(help);
                     if ui.add(egui::DragValue::new(&mut distance)
                         .speed(1.0).range(0.0..=f32::MAX).suffix(" mm"))
                         .on_hover_text(help).changed() {
