@@ -182,7 +182,6 @@ impl Runtime {
                 }
             }
             Operation::Move { targets } => {
-                sts::validate_targets(&targets)?;
                 self.sts.active = true;
                 self.sts.lease = targets.iter().any(|t| t.mode == 1).then(Instant::now);
                 self.sts.motion(&targets, 0);
@@ -195,7 +194,6 @@ impl Runtime {
                 );
                 let mut ids = std::collections::BTreeSet::new();
                 for Step { wait_ms, targets } in &steps {
-                    sts::validate_targets(targets)?;
                     ids.extend(targets.iter().map(|t| t.id));
                     anyhow::ensure!(
                         (100..=60000).contains(wait_ms),

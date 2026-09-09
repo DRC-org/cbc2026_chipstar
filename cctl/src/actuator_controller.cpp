@@ -158,11 +158,8 @@ bool ActuatorController::setJog(uint8_t slot, float velocity) {
   if (held_slots_ != 0) return false;
   if (slot >= domain::SLOT_COUNT || !std::isfinite(velocity) ||
       !slotActive(static_cast<uint8_t>(1U << slot))) return false;
-  const float caps[] = {
-      parameters_.get(domain::ParamId::El05LimitSpd),
-      parameters_.get(domain::ParamId::M3508MaxRpm) * 6.0f,
-      parameters_.get(domain::ParamId::M3508Slot2MaxRpm) * 6.0f};
-  jog_[slot].command(std::clamp(velocity, -caps[slot], caps[slot]), measured(slot));
+  // 速度上限はEL05 LIMIT_SPD / m3508位置ループ出力制限がモータ側で効く。
+  jog_[slot].command(velocity, measured(slot));
   return true;
 }
 

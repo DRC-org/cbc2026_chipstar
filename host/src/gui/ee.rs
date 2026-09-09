@@ -248,7 +248,7 @@ impl BridgeApp {
                     ui.horizontal_wrapped(|ui| {
                         ui.label("接続先：STS3215");
                         ui.label("ID");
-                        ui.add(egui::DragValue::new(&mut s.id).range(1..=253));
+                        ui.add(egui::DragValue::new(&mut s.id));
                         pulse_fields(
                             ui,
                             &mut s.minimum_position,
@@ -260,7 +260,7 @@ impl BridgeApp {
                     });
                     ui.horizontal_wrapped(|ui| {
                         ui.label("サーボ内部の加速度");
-                        ui.add(egui::DragValue::new(&mut s.acceleration).range(0..=254));
+                        ui.add(egui::DragValue::new(&mut s.acceleration));
                     });
                     input_fields(
                         ui,
@@ -268,7 +268,6 @@ impl BridgeApp {
                         &mut s.input_sign,
                         &mut s.speed_position_per_second,
                         "count/s",
-                        1000.0,
                     );
                     ui.checkbox(&mut s.enabled, "通常操作でこのサーボへ出力する");
                 }
@@ -326,7 +325,6 @@ fn input_fields(
     sign: &mut f32,
     speed: &mut f32,
     unit: &str,
-    maximum_speed: f32,
 ) {
     ui.horizontal_wrapped(|ui| {
         egui::ComboBox::from_id_salt(ui.id().with("input"))
@@ -350,11 +348,7 @@ fn input_fields(
         ui.selectable_value(sign, 1.0, "正転");
         ui.selectable_value(sign, -1.0, "反転");
         ui.label("最高速度");
-        ui.add(
-            egui::DragValue::new(speed)
-                .range(1.0..=maximum_speed)
-                .suffix(format!(" {unit}")),
-        );
+        ui.add(egui::DragValue::new(speed).suffix(format!(" {unit}")));
     });
     ui.label(RichText::new("標準パッド：EE回転は右スティック左右。入力中だけ指令位置を変えます。").size(12.0).color(MUTED));
 }

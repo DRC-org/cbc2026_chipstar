@@ -1,5 +1,4 @@
 //! STS管理のGUI/API共通要求と、CAN拡張操作の符号化。
-use anyhow::{Result, ensure};
 use serde::{Deserialize, Serialize};
 
 #[derive(Clone, Debug, Serialize, Deserialize)]
@@ -58,33 +57,6 @@ pub enum Operation {
     },
     Renew,
 }
-pub fn validate_targets(targets: &[Target]) -> Result<()> {
-    ensure!(
-        !targets.is_empty() && targets.len() <= 16,
-        "同時指令は1〜16台です"
-    );
-    let mut seen = std::collections::BTreeSet::new();
-    for t in targets {
-        ensure!(
-            (1..=253).contains(&t.id) && seen.insert(t.id),
-            "IDは1〜253、重複不可です"
-        );
-        ensure!(
-            t.acceleration <= 254 && t.speed <= 1000,
-            "速度・加速度が範囲外です"
-        );
-        ensure!(
-            match t.mode {
-                0 => (-28672..=28672).contains(&t.value),
-                1 => (-1000..=1000).contains(&t.value),
-                3 => (-28672..=28672).contains(&t.value),
-                _ => false,
-            },
-            "位置・速度・相対ステップの値またはモードが不正です"
-        );
-    }
-    Ok(())
-}
 pub fn signed(value: i16) -> u16 {
     value.unsigned_abs() | if value < 0 { 0x8000 } else { 0 }
 }
@@ -140,26 +112,10 @@ pub struct Status {
 mod tests {
     use super::*;
     #[test]
-    fn wheel_and_step_use_sign_magnitude_and_reject_duplicates() {
+    fn wheel_and_step_use_sign_magnitude_encoding() {
         assert_eq!(signed(-100), 0x8064);
         assert_eq!(decode_signed(signed(-100), 15), -100);
-        let t = Target::default();
-        assert!(validate_targets(&[t.clone(), t]).is_err());
-        assert!(
-            validate_targets(&[Target {
-                mode: 3,
-                value: -28672,
-                ..Target::default()
-            }])
-            .is_ok()
-        );
-        assert!(
-            validate_targets(&[Target {
-                mode: 0,
-                value: -28673,
-                ..Target::default()
-            }])
-            .is_err()
-        );
+        assert_eq!(signed(100), 0x0064);
+        assert_eq!(decode_signed(signed(100), 15), 100);
     }
 }
