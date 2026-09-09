@@ -94,7 +94,7 @@ impl BridgeApp {
                 ),
                 Home => (
                     "3. 原点を設定する",
-                    "機体を真正面に向け、移動経路に干渉がない状態でホーミングを開始してください。",
+                    "θの保持を解除した状態で機体を真正面に向け、移動経路を確認してホーミングを開始してください。",
                 ),
                 Position => (
                     "4. 開始姿勢に合わせる",
@@ -273,7 +273,7 @@ impl BridgeApp {
                 "preparation_restart",
             );
             ui.label(
-                RichText::new("コート選択からやり直します。原点も再設定します。").color(MUTED),
+                RichText::new("θの保持を解除し、コート選択からやり直します。保持中のzはそのままです。原点も再設定します。").color(MUTED),
             );
         });
         if status.gamepad.is_empty() {

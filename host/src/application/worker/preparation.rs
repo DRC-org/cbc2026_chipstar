@@ -1,6 +1,27 @@
 use super::*;
 
 impl Runtime {
+    // 正面合わせではθを手で回せるようにする。既に保持しているzだけを残し、
+    // それまで無効だったzを新たに有効化しない。
+    fn stop_for_homing_setup(&mut self) -> Result<()> {
+        let z = self.cfg.machine.axes.iter().find(|a| a.name == "z");
+        let holding_z = self.fresh()
+            && self.telemetry.as_ref().zip(z).is_some_and(|(t, z)| {
+                let active = if t.mode == RunMode::Run {
+                    t.enabled_slots
+                } else {
+                    t.held_slots.unwrap_or(0)
+                };
+                active & (1 << z.slot) != 0
+            });
+        if !self.emergency && holding_z {
+            self.stop_with_z_hold()?;
+        } else {
+            self.stop(true)?;
+        }
+        Ok(())
+    }
+
     pub(super) fn preparation_ready(&self) -> Result<()> {
         anyhow::ensure!(self.court.is_some(), "赤コートか青コートを選んでください");
         anyhow::ensure!(
@@ -59,7 +80,7 @@ impl Runtime {
         );
         match req.action.as_str() {
             "preparation_restart" => {
-                self.stop(false)?;
+                self.stop_for_homing_setup()?;
                 self.manual_input = ControllerState::default();
                 self.machine.invalidate_origins();
                 self.court = None;
@@ -84,6 +105,7 @@ impl Runtime {
                     Some("blue") => Court::Blue,
                     _ => bail!("赤コートか青コートを選んでください"),
                 };
+                self.stop_for_homing_setup()?;
                 if self.court != Some(court) {
                     self.machine.invalidate_origins();
                     self.court = Some(court);
@@ -118,7 +140,16 @@ impl Runtime {
                 Ok(Reply::accepted())
             }
             "preparation_return" => {
-                self.stop(false)?;
+                if self
+                    .machine
+                    .origin_states(self.telemetry.as_ref())
+                    .iter()
+                    .any(|o| !o.captured)
+                {
+                    self.stop_for_homing_setup()?;
+                } else {
+                    self.stop(false)?;
+                }
                 self.preparation = PreparationPhase::Setting;
                 Ok(Reply::data(
                     "準備画面に戻りました。必要な操作から準備を再開してください".into(),
@@ -158,10 +189,7 @@ mod tests {
     }
     fn wait(runtime: &mut Runtime) {
         runtime
-            .request(
-                &Request::new("preparation_wait"),
-                true,
-            )
+            .request(&Request::new("preparation_wait"), true)
             .unwrap();
     }
 
@@ -277,5 +305,80 @@ mod tests {
                 .iter()
                 .all(|a| !a.captured)
         );
+    }
+    #[test]
+    fn restarting_preparation_releases_theta_and_keeps_only_existing_z_hold() {
+        for enabled in [0, 2, 4, 6, 7] {
+            let mut r = prepared();
+            if enabled != 0 {
+                r.send(&format!("ENABLE {enabled} 1")).unwrap();
+                r.send("RUN").unwrap();
+                r.tick().unwrap();
+            }
+            r.request(&Request::new("preparation_restart"), true)
+                .unwrap();
+            r.tick().unwrap();
+            let t = r.telemetry.as_ref().unwrap();
+            assert_ne!(t.mode, RunMode::Run);
+            assert_eq!(t.held_slots.unwrap_or(0), enabled & 4);
+            assert!(r.court.is_none());
+            assert!(!r.drive.running());
+            r.request(
+                &Request {
+                    text: Some("blue".into()),
+                    ..Request::new("preparation_court")
+                },
+                true,
+            )
+            .unwrap();
+            r.tick().unwrap();
+            assert_eq!(
+                r.telemetry.as_ref().unwrap().held_slots.unwrap_or(0),
+                enabled & 4
+            );
+            assert!(r.homing_idle());
+            assert!(r.homing.is_none());
+        }
+    }
+
+    #[test]
+    fn court_selection_releases_old_theta_hold_and_restart_keeps_estop_latched() {
+        let mut r = prepared();
+        r.send("ENABLE 6 1").unwrap();
+        r.send("RUN").unwrap();
+        r.tick().unwrap();
+        r.request(
+            &Request {
+                text: Some("blue".into()),
+                ..Request::new("preparation_court")
+            },
+            true,
+        )
+        .unwrap();
+        r.tick().unwrap();
+        assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(4));
+        r.engage_emergency().unwrap();
+        r.tick().unwrap();
+        r.request(&Request::new("preparation_restart"), true)
+            .unwrap();
+        r.tick().unwrap();
+        assert!(r.emergency);
+        assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(0));
+    }
+
+    #[test]
+    fn returning_to_lost_origins_releases_theta_without_dropping_z() {
+        let mut r = prepared();
+        r.send("ENABLE 6 1").unwrap();
+        r.send("RUN").unwrap();
+        r.tick().unwrap();
+        r.machine.invalidate_origins();
+        r.preparation = PreparationPhase::Recovery;
+        r.request(&Request::new("preparation_return"), true)
+            .unwrap();
+        r.tick().unwrap();
+        assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(4));
+        assert_ne!(r.telemetry.as_ref().unwrap().mode, RunMode::Run);
+        assert_eq!(r.preparation_step(), PreparationStep::Home);
     }
 }
