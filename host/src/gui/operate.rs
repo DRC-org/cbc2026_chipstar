@@ -3,6 +3,18 @@ use super::*;
 impl BridgeApp {
     pub(super) fn operate(&mut self, ui: &mut egui::Ui) {
         let status = self.shared.status_snapshot();
+        if !self.preparation_panel(ui, &status) {
+            return;
+        }
+        if status.preparation == crate::application::app_state::PreparationPhase::Setting {
+            ui.columns(2, |columns| {
+                self.manual_controls(&mut columns[0], &status);
+                self.operate_ee(&mut columns[1], &status);
+            });
+            self.operate_sequence(ui, &status);
+            return;
+        }
+        ui.add_space(8.0);
         let config = self.shared.config();
         ui.horizontal(|ui| {
             ui.label(RichText::new("機体を操縦").size(20.0).strong());

@@ -72,7 +72,7 @@ impl BridgeApp {
                 );
             }
             gamepad::monitor(ui, status, &self.shared.config().machine);
-            self.homing_controls(ui, status);
+
         });
     }
 

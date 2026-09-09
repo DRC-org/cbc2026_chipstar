@@ -27,6 +27,7 @@ enum Screen {
 }
 
 pub struct BridgeApp {
+    preparation_confirmed: bool,
     sequences: sequence::Panel,
     shared: Arc<Shared>,
     screen: Screen,
@@ -75,6 +76,7 @@ impl BridgeApp {
             .unwrap_or_default();
         let source = toml::to_string_pretty(&edit).unwrap_or_default();
         Self {
+            preparation_confirmed: false,
             sequences: sequence::Panel::new(shared.sequence_config()),
             connection: crate::application::app_state::Connection {
                 serial_device: config.serial_device,
@@ -164,6 +166,9 @@ impl BridgeApp {
             && self.draft_matches_applied()
     }
     fn can_run(status: &Status) -> bool {
+        if status.preparation.locked() {
+            return false;
+        }
         !status.emergency
             && status.homing.is_none()
             && !status.sts.active
@@ -568,6 +573,7 @@ mod gamepad;
 mod parameter_help;
 
 mod shell;
+mod preparation;
 
 #[cfg(test)]
 mod workflow_tests {

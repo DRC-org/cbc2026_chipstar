@@ -70,8 +70,25 @@ pub struct CanDeviceStatus {
     pub age_ms: Option<u64>,
 }
 
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PreparationPhase {
+    #[default]
+    Setting,
+    Waiting,
+    Active,
+    Recovery,
+}
+impl PreparationPhase {
+    pub fn locked(self) -> bool {
+        matches!(self, Self::Waiting | Self::Recovery)
+    }
+}
+
 #[derive(Clone, Default, Serialize)]
 pub struct Status {
+    pub preparation: PreparationPhase,
+    pub preparation_blocker: String,
     pub sequence: super::sequence::Status,
     pub sequence_saved: bool,
     pub homing: Option<String>,

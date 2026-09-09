@@ -15,7 +15,7 @@ impl Runtime {
         self.pad.previous = input.buttons;
         let buttons = input.buttons;
         self.gamepad_input = Some(input.clone());
-        if !self.screen_control {
+        if !self.screen_control && !self.preparation.locked() {
             self.manual_input = input.clone();
         }
         // 停止は操作権に関係なく優先し、押下中は他の操作を受け付けない。
@@ -28,7 +28,7 @@ impl Runtime {
             }
             return Ok(());
         }
-        if self.authority.active() || self.screen_control || self.emergency || self.sequence.is_some() {
+        if self.preparation.locked() || self.authority.active() || self.screen_control || self.emergency || self.sequence.is_some() {
             self.pad.home_since = None;
             self.pad.home_ready = false;
             self.pad.ee_armed = false;

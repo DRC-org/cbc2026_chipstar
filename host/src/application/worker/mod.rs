@@ -2,7 +2,7 @@
 use super::authority::Authority;
 use crate::{
     application::app_state::{
-        BridgeConfig, CanBusStatus, CanDeviceStatus, CommunicationHealth, Shared,
+        BridgeConfig, CanBusStatus, CanDeviceStatus, CommunicationHealth, PreparationPhase, Shared,
     },
     application::command::{Reply, Request},
     application::settings::Settings,
@@ -41,6 +41,7 @@ impl DriveState {
 }
 
 struct Runtime {
+    preparation: PreparationPhase,
     shared: Arc<Shared>,
     cfg: BridgeConfig,
     link: Link,
@@ -88,6 +89,7 @@ impl Runtime {
     fn new(shared: Arc<Shared>) -> Self {
         let cfg = shared.config();
         Self {
+            preparation: PreparationPhase::Setting,
             link: Link::new(&cfg.serial_device, cfg.baud_rate, cfg.simulate),
             machine: MachineController::new(cfg.machine.clone()),
             settings: Settings::new(&cfg.machine),
@@ -181,6 +183,9 @@ impl Runtime {
         }
     }
     fn stop(&mut self, cut: bool) -> Result<()> {
+        if self.preparation == PreparationPhase::Waiting {
+            self.preparation = PreparationPhase::Recovery;
+        }
         let stop_ee = self.sts.active || !self.ee.targets.is_empty();
         let cut = cut
             // RUN送信後、応答前は保持対象が確定していない。JOG 0ではなくSTOPで競合を閉じる。
@@ -253,6 +258,9 @@ impl Runtime {
         self.stop(true)
     }
     fn fault(&mut self, reason: String) {
+        if self.preparation != PreparationPhase::Setting {
+            self.preparation = PreparationPhase::Recovery;
+        }
         let _ = self.stop(true);
         self.reason = reason.clone();
         self.error = reason;
@@ -372,6 +380,10 @@ impl Runtime {
         Ok(())
     }
     fn start(&mut self) -> Result<()> {
+        anyhow::ensure!(
+            !self.preparation.locked(),
+            "開始待ちです。準備画面で開始または再確認してください"
+        );
         anyhow::ensure!(self.homing.is_none(), "ホーミングを停止してください");
         anyhow::ensure!(
             !self.sts.active && !self.sts.busy(),
@@ -721,6 +733,9 @@ impl Runtime {
             self.shared
                 .log("通信復旧: 基板応答を確認。出力停止を維持".into());
             self.reason = "通信復旧。原点を確認して再開してください".into();
+        }
+        if self.preparation == PreparationPhase::Waiting && self.ready().is_err() {
+            self.fault("開始待ち中に機体状態を失いました。準備を再確認してください".into());
         }
         self.tick_sequence(now)?;
         self.tick_test(now)?;
@@ -1141,6 +1156,9 @@ impl Runtime {
             s.sts.elapsed_ms = self.sts.elapsed_ms();
             s.sts.active = self.sts.active;
             s.sts.busy = self.sts.busy();
+            s.preparation = self.preparation;
+            s.preparation_blocker = self.preparation_ready()
+                .err().map(|e| e.to_string()).unwrap_or_default();
             s.emergency = self.emergency;
             s.outputs_active = self.homing.is_some()
                 || !self.ee.targets.is_empty()
@@ -1304,6 +1322,7 @@ mod ee_control;
 mod homing;
 mod pad_control;
 mod requests;
+mod preparation;
 mod sequence_control;
 mod sts_control;
 mod test_control;

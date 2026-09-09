@@ -29,6 +29,13 @@ impl Runtime {
         {
             bail!("ソフト緊停中です。人間が解除するまで操作できません");
         }
+        if req.action.starts_with("preparation_") {
+            return self.preparation_request(req, manual);
+        }
+        if self.preparation.locked() && !matches!(req.action.as_str(),
+            "stop" | "cut" | "safe" | "fault" | "heartbeat" | "release") {
+            bail!("開始待ちの操作ロック中です。準備画面から開始または再確認してください");
+        }
         if req.action == "claim" {
             if manual || self.authority.active() || self.test.enabled {
                 bail!("操作権は使用中です");

@@ -67,7 +67,7 @@ impl BridgeApp {
             egui::Layout::left_to_right(egui::Align::Center),
             |ui| {
                 for (screen, label) in [
-                    (Screen::Operate, "1  操縦"),
+                    (Screen::Operate, "1  準備・操縦"),
                     (Screen::Tune, "2  調整"),
                     (Screen::Diagnose, "3  診断"),
                     (Screen::Documents, "4  文書"),
@@ -211,7 +211,7 @@ impl BridgeApp {
 }
 
 fn top_level_tab(ui: &mut egui::Ui, label: &str, selected: bool) -> egui::Response {
-    let (rect, response) = ui.allocate_exact_size(egui::vec2(82.0, 30.0), egui::Sense::click());
+    let (rect, response) = ui.allocate_exact_size(egui::vec2(106.0, 30.0), egui::Sense::click());
     let hovered = response.hovered();
     ui.painter()
         .rect_filled(rect, 4.0, if selected || hovered { SURFACE } else { BG });
