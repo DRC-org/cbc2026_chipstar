@@ -48,6 +48,17 @@ impl Runtime {
             if now.duration_since(since) >= Duration::from_secs(1) {
                 self.pad.home_ready = false;
                 self.pad.home_since = None;
+                let theta = self
+                    .cfg
+                    .machine
+                    .axes
+                    .iter()
+                    .position(|axis| axis.name == "theta")
+                    .context("θ軸の設定が必要です")?;
+                anyhow::ensure!(
+                    self.machine.capture_origin(theta, self.telemetry.as_ref()),
+                    "θの現在位置を原点に採用できません"
+                );
                 return self.begin_homing(true, true, 180.0).map(|_| ());
             }
         } else {
@@ -162,6 +173,16 @@ mod tests {
     fn home_requires_release_and_one_second_and_never_resumes() {
         let mut r = runtime();
         let now = Instant::now();
+        let theta = r
+            .cfg
+            .machine
+            .axes
+            .iter()
+            .position(|axis| axis.name == "theta")
+            .unwrap();
+        let theta_slot = usize::from(r.cfg.machine.axes[theta].slot);
+        r.machine.invalidate_origin(theta);
+        r.telemetry.as_mut().unwrap().slots[theta_slot].measured = 132.0;
         r.read_pad(home_button(), now).unwrap();
         r.read_pad(home_button(), now + Duration::from_secs(3))
             .unwrap();
@@ -174,6 +195,14 @@ mod tests {
         r.read_pad(home_button(), now + Duration::from_secs(1))
             .unwrap();
         assert!(r.homing.is_some());
+        let theta_origin = r
+            .machine
+            .origin_states(r.telemetry.as_ref())
+            .into_iter()
+            .find(|axis| axis.name == "theta")
+            .unwrap();
+        assert!(theta_origin.captured);
+        assert_eq!(theta_origin.position, 0.0);
         assert!(!r.drive.running() && r.drive.awaiting().is_none());
         r.stop(false).unwrap();
         r.read_pad(home_button(), now + Duration::from_secs(5))
@@ -198,6 +227,18 @@ mod tests {
         r.disconnect_pad();
         assert!(r.homing.is_none());
         assert!(!r.drive.running());
+    }
+    #[test]
+    fn options_restarts_operation_after_origins_are_ready() {
+        let mut r = runtime();
+        let now = Instant::now();
+        r.read_pad(ControllerState::default(), now).unwrap();
+        let mut options = ControllerState::default();
+        options.buttons[6] = 1;
+        r.read_pad(options, now).unwrap();
+        assert!(r.drive.awaiting().is_some());
+        r.tick().unwrap();
+        assert!(r.drive.running());
     }
     fn add_grips(r: &mut Runtime) {
         for i in 1..=3 {

@@ -118,7 +118,7 @@ impl BridgeApp {
             ui.colored_label(
                 WARNING,
                 format!(
-                    "Create長押し {:.1}/1.0秒：EEの向きと移動経路を確認済みなら保持してください",
+                    "Create長押し {:.1}/1.0秒：θ=0°の姿勢と移動経路を確認済みなら保持してください",
                     seconds.min(1.0)
                 ),
             );

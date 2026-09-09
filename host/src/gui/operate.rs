@@ -203,7 +203,7 @@ impl BridgeApp {
             }
         });
         ui.label(
-            RichText::new("z下端 → zを設定量上昇 → r前端 → rを設定量後退。DualSenseでは停止中にCreateを1秒長押し。")
+            RichText::new("現在のθを0°に採用 → z下端 → zを設定量上昇 → r前端 → rを設定量後退。DualSenseでは停止中にCreateを1秒長押し。")
                 .size(12.0)
                 .color(MUTED),
         );
