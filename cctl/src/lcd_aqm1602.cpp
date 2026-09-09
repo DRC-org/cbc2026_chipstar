@@ -104,5 +104,6 @@ void Aqm1602::sendData(uint8_t value) {
 
 void Aqm1602::writeByte(uint8_t control, uint8_t value) {
   uint8_t packet[2] = {control, value};
-  HAL_I2C_Master_Transmit(i2c_, static_cast<uint16_t>(address_ << 1), packet, 2, HAL_MAX_DELAY);
+  healthy_ = HAL_I2C_Master_Transmit(i2c_, static_cast<uint16_t>(address_ << 1),
+                                     packet, 2, 2) == HAL_OK;
 }

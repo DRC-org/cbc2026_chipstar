@@ -1,45 +1,46 @@
 #include "ui.hpp"
 
 
-#include <cstdio>
-
-void Ui::playTone(uint32_t frequency_hz, uint32_t duration_ms) {
-  // TIM15 のカウントは 1MHz。周期から分周後のカウント値を求める。
-  const uint32_t period = (1000000U / frequency_hz) - 1U;
-
-  __HAL_TIM_SET_AUTORELOAD(buzzer_tim_, period);
-  __HAL_TIM_SET_COMPARE(buzzer_tim_, TIM_CHANNEL_2, (period + 1U) / 2U);
-
-  HAL_TIM_PWM_Start(buzzer_tim_, TIM_CHANNEL_2);
-  HAL_Delay(duration_ms);
-  HAL_TIM_PWM_Stop(buzzer_tim_, TIM_CHANNEL_2);
-}
+#include <cstring>
 
 void Ui::begin() {
   lcd_.begin();
-  lcd_.clear();
-  lcd_.setCursor(0, 0);
-  lcd_.print("DRC-CCTL2026");
-  lcd_.setCursor(0, 1);
-  lcd_.print("actuator device");
-
-  playTone(988, 80);
-  playTone(1319, 120);
 }
 
-void Ui::showStatus(float slot0, float slot1, float slot2, uint8_t error) {
-  char line0[17] = {};
-  char line1[17] = {};
+void Ui::update(uint32_t now, const domain::IndicatorState& state) {
+  const auto frame = domain::indicatorFrame(state);
+  const uint32_t frequency = tone_.update(now, state, frame.alarm);
+  if (frequency != frequency_) {
+    HAL_TIM_PWM_Stop(buzzer_tim_, TIM_CHANNEL_2);
+    if (frequency) {
+      const uint32_t period = 1000000U / frequency - 1U;
+      __HAL_TIM_SET_AUTORELOAD(buzzer_tim_, period);
+      __HAL_TIM_SET_COUNTER(buzzer_tim_, 0);
+      __HAL_TIM_SET_COMPARE(buzzer_tim_, TIM_CHANNEL_2, (period + 1U) / 2U);
+      HAL_TIM_PWM_Start(buzzer_tim_, TIM_CHANNEL_2);
+    }
+    frequency_ = frequency;
+  }
 
-  std::snprintf(line0, sizeof(line0), "0:%-4d 1:%-4d", static_cast<int>(slot0),
-                static_cast<int>(slot1));
-  std::snprintf(line1, sizeof(line1), "2:%-4d err:%X", static_cast<int>(slot2), error & 0x0F);
-
-  lcd_.clear();
-  lcd_.setCursor(0, 0);
-  lcd_.print(line0);
-  lcd_.setCursor(0, 1);
-  lcd_.print(line1);
+  if (lcd_failed_ && now - lcd_retry_ms_ < 1000) return;
+  // 一度に1文字だけ更新。長い行の送信で制御周期を占有しない。
+  for (uint8_t count = 0; count < 32; ++count) {
+    const uint8_t row = cursor_ / 16;
+    const uint8_t col = cursor_ % 16;
+    cursor_ = (cursor_ + 1) % 32;
+    if (displayed_[row][col] == frame.lines[row][col]) continue;
+    lcd_.setCursor(col, row);
+    if (lcd_.healthy()) lcd_.write(frame.lines[row][col]);
+    if (!lcd_.healthy()) {
+      std::memset(displayed_, 0, sizeof(displayed_));
+      lcd_failed_ = true;
+      lcd_retry_ms_ = now;
+      return;
+    }
+    lcd_failed_ = false;
+    displayed_[row][col] = frame.lines[row][col];
+    break;
+  }
 }
 
 void Ui::updateLeds(uint32_t tick_ms, domain::Status status) {

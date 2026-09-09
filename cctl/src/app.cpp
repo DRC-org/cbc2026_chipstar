@@ -41,6 +41,7 @@ domain::LineReader usb_line;
 domain::CommandQueue commands;
 volatile uint32_t last_contact_ms = 0;
 bool protocol_ready = false;
+bool host_timed_out = false;
 bool peripheral_bus_ready = false;
 bool motor_bus_ready = false;
 domain::DigitalInputs inputs(7);
@@ -166,11 +167,13 @@ void applyCommand(const domain::Command& command) {
         case domain::CommandKind::Run:
             if (protocol_ready) {
                 if (!controller.setMode(domain::RunMode::Run)) sendText("ERR code=CAN_TX");
+                else host_timed_out = false;
             }
             else sendText("ERR code=NOT_READY");
             break;
         case domain::CommandKind::Safe:
             if (!controller.setMode(domain::RunMode::Safe)) sendText("ERR code=CAN_TX");
+            else host_timed_out = false;
             break;
         case domain::CommandKind::Heartbeat:
             break;
@@ -403,6 +406,7 @@ extern "C" void loop(void) {
         domain::deadlineExpired(now, contact, watchdog_ms)) {
         controller.setMode(domain::RunMode::Stop);
         protocol_ready = false;
+        host_timed_out = true;
         char text[96];
         std::snprintf(text, sizeof(text), "WATCHDOG elapsed_ms=%lu timeout_ms=%lu",
                       static_cast<unsigned long>(now - contact),
@@ -429,14 +433,16 @@ extern "C" void loop(void) {
         peripheral_bus.recover();
     }
 
-    static uint32_t last_lcd_ms = 0;
-    if (now - last_lcd_ms >= config::period::LCD_MS) {
-        last_lcd_ms = now;
-        // LCDは1行に収めるため、slotの異常をORして「どこかで異常」として出す。
-        ui.showStatus(controller.target(0), controller.target(1), controller.target(2),
-                      static_cast<uint8_t>(controller.errorBits(0) | controller.errorBits(1) |
-                                           controller.errorBits(2)));
-    }
+    domain::IndicatorState indicator;
+    indicator.mode = controller.mode();
+    indicator.host_ready = protocol_ready;
+    indicator.host_timeout = host_timed_out;
+    indicator.bus_ready = motor_bus_ready && peripheral_bus_ready;
+    indicator.stop_pending = controller.stopPending();
+    indicator.enabled = controller.enabledSlots();
+    for (uint8_t slot = 0; slot < domain::SLOT_COUNT; ++slot)
+        indicator.errors[slot] = controller.errorBits(slot);
+    ui.update(HAL_GetTick(), indicator);
 
     static uint32_t last_current_diagnostic_ms = 0;
     if (now - last_current_diagnostic_ms >= 100) {

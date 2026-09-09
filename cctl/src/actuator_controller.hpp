@@ -25,6 +25,7 @@ class ActuatorController {
   bool holdSlots(uint8_t mask);
   uint8_t heldSlots() const { return held_slots_; }
   domain::RunMode mode() const { return mode_; }
+  bool stopPending() const { return retry_stop_; }
   bool setSlotsEnabled(uint8_t slots, bool enabled);
   uint8_t enabledSlots() const { return enabled_slots_; }
   void home(uint8_t slots);

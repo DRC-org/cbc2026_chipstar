@@ -7,6 +7,7 @@ class Aqm1602 {
   explicit Aqm1602(I2C_HandleTypeDef* i2c, uint8_t address = 0x3E);
 
   bool begin();
+  bool healthy() const { return healthy_; }
   void clear();
   void home();
   void setCursor(uint8_t col, uint8_t row);
@@ -33,4 +34,5 @@ class Aqm1602 {
 
   I2C_HandleTypeDef* i2c_;
   uint8_t address_;
+  bool healthy_ = true;
 };
