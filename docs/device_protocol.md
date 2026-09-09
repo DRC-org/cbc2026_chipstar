@@ -22,7 +22,7 @@ host と各基板の間で使う、改行区切りASCIIプロトコル。1行は
 `key=value` 形式にする。
 
 ```text
-DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=stored jog=1 motors=el05,m3508,m3508
+DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=stored jog=1 tone=1 motors=el05,m3508,m3508
 ERR code=BAD_COMMAND
 ERR code=OUT_OF_RANGE
 ```
@@ -441,3 +441,11 @@ slot 1・2は停止中にもC620の周期応答から累積角度を更新する
 
 RUNは現在位置の保持目標と出力有効化のみを行い、モータの再初期化待機を含まない。
 EL05を単独で再通電した場合は、SAFEでslot 0のREINITを実行してから原点を確認しRUNする。
+
+## CCTLの操作音
+
+能力通知に`tone=1`がある場合だけ、hostは`TONE <cue>`を送信できる。
+`cue`は1（操作受付）、2（操作拒否）、3（長押し成立）のいずれか。
+それ以外の値・引数個数は不正な指令として扱う。正常な音指令には個別の応答を返さない。
+音は制御ループを止めずに再生し、モータの状態・目標・Watchdog期限を変更しない。
+機体異常の警報を優先し、警報中は操作音を再生しない。連続した操作音は最新の音に置き換える。

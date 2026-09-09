@@ -3,6 +3,7 @@
 #include "domain/command.hpp"
 
 #include <cstring>
+#include <initializer_list>
 
 using domain::Command;
 using domain::CommandKind;
@@ -160,4 +161,15 @@ TEST_CASE("再初期化の不正な指定を拒否する") {
     CHECK(parse("REINIT 8").kind == CommandKind::None);
     CHECK(parse("REINIT").kind == CommandKind::None);
     CHECK(parse("PARAMDEF 1").kind == CommandKind::None);
+}
+
+TEST_CASE("operation tone accepts only bounded cues and never feeds the watchdog") {
+    for (const char* line : {"TONE 1", "TONE 2", "TONE 3"}) {
+        CHECK(parse(line).kind == CommandKind::Tone);
+    }
+    CHECK(parse("TONE 3").param_id == 3);
+    for (const char* line : {"TONE", "TONE 0", "TONE 4", "TONE -1", "TONE 1 2"}) {
+        CHECK(parse(line).kind == CommandKind::None);
+    }
+    CHECK_FALSE(domain::extendsDeadline(CommandKind::Tone));
 }

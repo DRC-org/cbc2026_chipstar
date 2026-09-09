@@ -23,7 +23,8 @@ impl Runtime {
             self.pad.home_ready = false;
             self.pad.ee_armed = false;
             if previous[5] == 0 {
-                self.stop(false)?;
+                if self.guide.enabled { self.request(&Request::new("stop"), true)?; }
+                else { self.stop(false)?; }
             }
             return Ok(());
         }

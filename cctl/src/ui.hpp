@@ -17,6 +17,7 @@ class Ui {
 
   // LCD の初期化。表示と起動音はupdateから開始する。
   void begin();
+  void feedback(uint32_t now, uint8_t cue) { tone_.feedback(now, cue); }
 
   // 毎ループ呼び出す。LCDは1文字ずつ転送し、鳴動中も制御を継続する。
   void update(uint32_t now, const domain::IndicatorState& state);

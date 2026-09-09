@@ -1165,6 +1165,7 @@ impl Runtime {
             s.pad_guide = self.guide.enabled;
             s.preparation_step = self.preparation_step();
             s.guide_release = self.guide.confirmed;
+            s.operation_sound_available = self.fresh() && self.device.as_ref().is_some_and(|d| d.tone);
             s.preparation_blocker = self.preparation_ready()
                 .err().map(|e| e.to_string()).unwrap_or_default();
             s.emergency = self.emergency;

@@ -10,6 +10,7 @@ pub struct DeviceInfo {
     /// 基板が保存済みの調整値で動いているか。旧FWは通知しないので `false`。
     pub parameters_stored: bool,
     pub jog: bool,
+    pub tone: bool,
     pub motor_layout: String,
 }
 
@@ -25,6 +26,7 @@ pub fn parse_device_info(line: &str) -> Option<DeviceInfo> {
     let mut can_buses = Vec::new();
     let mut parameters_stored = false;
     let mut jog = false;
+    let mut tone = false;
     let mut motor_layout = String::new();
     for token in tokens {
         let (key, value) = token.split_once('=')?;
@@ -42,6 +44,7 @@ pub fn parse_device_info(line: &str) -> Option<DeviceInfo> {
             "watchdog_ms" => watchdog_ms = Some(value.parse().ok()?),
             "motors" => motor_layout = value.to_owned(),
             "jog" => jog = value == "1",
+            "tone" => tone = value == "1",
             "params" => parameters_stored = value == "stored",
             _ => {}
         }
@@ -55,6 +58,7 @@ pub fn parse_device_info(line: &str) -> Option<DeviceInfo> {
         parameters_stored,
         motor_layout,
         jog,
+        tone,
     })
 }
 
@@ -72,15 +76,17 @@ mod tests {
         assert_eq!(info.can_buses, vec![2]);
         assert_eq!(info.watchdog_ms, 250);
         assert!(!info.parameters_stored);
+        assert!(!info.tone);
     }
 
     #[test]
     fn reads_the_stored_parameter_flag() {
         let info = parse_device_info(
-            "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=stored",
+            "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=stored tone=1",
         )
         .unwrap();
         assert!(info.parameters_stored);
+        assert!(info.tone);
     }
 
     #[test]

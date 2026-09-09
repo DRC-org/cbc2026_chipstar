@@ -2,6 +2,17 @@ use super::*;
 
 impl Runtime {
     pub(super) fn request(&mut self, req: &Request, manual: bool) -> Result<Reply> {
+        let audible = manual && self.guide.enabled && matches!(req.action.as_str(),
+            "preparation_court" | "preparation_restart" | "preparation_return" |
+            "preparation_wait" | "preparation_start" | "home" | "run" | "stop" | "estop_reset");
+        let result = self.request_inner(req, manual);
+        if audible {
+            self.operation_feedback(if result.as_ref().is_ok_and(|reply| reply.ok) { 1 } else { 2 });
+        }
+        result
+    }
+
+    fn request_inner(&mut self, req: &Request, manual: bool) -> Result<Reply> {
         if req.action == "estop" {
             self.engage_emergency()?;
             return Ok(Reply::accepted());

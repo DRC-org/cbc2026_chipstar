@@ -147,10 +147,10 @@ void applyCommand(const domain::Command& command) {
                 sendText("ERR code=BAD_VERSION");
                 break;
             } else {
-                char text[128];
+                char text[160];
                 std::snprintf(text, sizeof(text),
                               "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=%lu "
-                              "params=%s jog=1 motors=el05,m3508,m3508",
+                              "params=%s jog=1 tone=1 motors=el05,m3508,m3508",
                               static_cast<unsigned long>(
                                   controller.parameters().getMs(domain::ParamId::WatchdogMs)),
                               param_store::present() ? "stored" : "default");
@@ -174,6 +174,9 @@ void applyCommand(const domain::Command& command) {
         case domain::CommandKind::Safe:
             if (!controller.setMode(domain::RunMode::Safe)) sendText("ERR code=CAN_TX");
             else host_timed_out = false;
+            break;
+        case domain::CommandKind::Tone:
+            if (protocol_ready) ui.feedback(HAL_GetTick(), command.param_id);
             break;
         case domain::CommandKind::Heartbeat:
             break;

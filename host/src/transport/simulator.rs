@@ -122,8 +122,9 @@ impl Simulator {
             return Ok(());
         }
         match words.as_slice() {
+            ["TONE", "1" | "2" | "3"] => {},
             ["HELLO", "1"] => self.rx.push_back(
-                "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=default jog=1 motors=el05,m3508,m3508"
+                "DEVICE protocol=1 board=cctl slots=3 can=2 watchdog_ms=250 params=default jog=1 tone=1 motors=el05,m3508,m3508"
                     .into(),
             ),
             ["CANSTAT"] => {

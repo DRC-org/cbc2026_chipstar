@@ -198,7 +198,8 @@ mod tests {
         let mut r = prepared();
         let before = r.shared.status_snapshot().tx_count;
         wait(&mut r);
-        assert_eq!(r.shared.status_snapshot().tx_count, before);
+        assert_eq!(r.shared.status_snapshot().tx_count, before + 1);
+        assert_eq!(r.shared.status_snapshot().logs.back().unwrap(), "TX TONE 1");
         for action in [
             "run",
             "home",

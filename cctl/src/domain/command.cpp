@@ -182,6 +182,10 @@ Command parseCommand(const char* line, std::size_t length) {
         if (parseU8(tokens[1], 1, slot_bit::ALL, command.mask)) command.kind = CommandKind::Reinit;
         return command;
     }
+    if (count == 2 && equalsIgnoreCase(tokens[0], "TONE")) {
+        if (parseU8(tokens[1], 1, 3, command.param_id)) command.kind = CommandKind::Tone;
+        return command;
+    }
     if (count == 2 && equalsIgnoreCase(tokens[0], "HOME")) {
         if (parseU8(tokens[1], 1, slot_bit::ALL, command.mask)) command.kind = CommandKind::Home;
         return command;

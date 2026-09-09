@@ -276,6 +276,9 @@ impl BridgeApp {
                 RichText::new("θの保持を解除し、コート選択からやり直します。保持中のzはそのままです。原点も再設定します。").color(MUTED),
             );
         });
+        if !status.operation_sound_available {
+            ui.label(RichText::new("操作音は使用できません：CCTLが未接続、または操作音対応FWへの更新が必要です。").color(MUTED));
+        }
         if status.gamepad.is_empty() {
             ui.label(RichText::new("コントローラ未接続：マウスで操作できます。").color(MUTED));
         }

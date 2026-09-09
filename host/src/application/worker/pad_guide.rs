@@ -29,6 +29,15 @@ impl Guide {
 }
 
 impl Runtime {
+    pub(super) fn operation_feedback(&mut self, cue: u8) {
+        if self.fresh()
+            && self.device.as_ref().is_some_and(|d| d.tone)
+            && let Err(error) = self.send(&format!("TONE {cue}"))
+        {
+            self.shared.log(format!("操作音を送信できません: {error}"));
+        }
+    }
+
     /// trueなら入力を消費済み。falseのときだけ既存の機体操縦へ渡す。
     pub(super) fn read_guide(&mut self, input: &ControllerState, now: Instant) -> Result<bool> {
         if !self.guide.enabled {
@@ -73,12 +82,17 @@ impl Runtime {
                     .enumerate()
                     .all(|(i, b)| *b == 0 || i == button);
             if !only_button {
+                self.operation_feedback(2);
                 self.guide.reset_input();
                 return Ok(true);
             }
             let long = matches!(button, 0 | 1 | 2 | 4 | 6);
             if input.buttons[button] != 0 {
-                self.guide.confirmed = !long || now.duration_since(since) >= Duration::from_secs(1);
+                let confirmed = !long || now.duration_since(since) >= Duration::from_secs(1);
+                if long && confirmed && !self.guide.confirmed {
+                    self.operation_feedback(3);
+                }
+                self.guide.confirmed = confirmed;
                 return Ok(true);
             }
             let confirmed = !long || now.duration_since(since) >= Duration::from_secs(1);
@@ -86,6 +100,8 @@ impl Runtime {
             if confirmed {
                 self.guide_action(button)?;
                 self.error.clear();
+            } else {
+                self.operation_feedback(2);
             }
             return Ok(true);
         }
@@ -110,7 +126,7 @@ impl Runtime {
 
     fn guide_action(&mut self, button: usize) -> Result<()> {
         if button == 1 {
-            self.preparation_request(&Request::new("preparation_restart"), true)?;
+            self.request(&Request::new("preparation_restart"), true)?;
             return Ok(());
         }
         if self.emergency {
@@ -121,16 +137,16 @@ impl Runtime {
         }
         match (self.preparation, button) {
             (PreparationPhase::Waiting, 6) => {
-                self.preparation_request(&Request::new("preparation_start"), true)?;
+                self.request(&Request::new("preparation_start"), true)?;
             }
             (PreparationPhase::Recovery, 6) => {
-                self.preparation_request(&Request::new("preparation_return"), true)?;
+                self.request(&Request::new("preparation_return"), true)?;
             }
             (PreparationPhase::Active, 6) => {
-                self.start()?;
+                self.request(&Request::new("run"), true)?;
             }
             (PreparationPhase::Setting, 13 | 14) if self.court.is_none() => {
-                self.preparation_request(
+                self.request(
                     &Request {
                         text: Some(if button == 14 { "blue" } else { "red" }.into()),
                         ..Request::new("preparation_court")
@@ -139,13 +155,20 @@ impl Runtime {
                 )?;
             }
             (PreparationPhase::Setting, 4) => {
-                self.begin_homing(true, true, 180.0)?;
+                self.request(
+                    &Request {
+                        flag: Some(true),
+                        value: Some(180.0),
+                        ..Request::new("home")
+                    },
+                    true,
+                )?;
             }
             (PreparationPhase::Setting, 6) if self.court.is_some() => {
-                self.start()?;
+                self.request(&Request::new("run"), true)?;
             }
             (PreparationPhase::Setting, 0) => {
-                self.preparation_request(&Request::new("preparation_wait"), true)?;
+                self.request(&Request::new("preparation_wait"), true)?;
             }
             _ => {}
         }
@@ -402,5 +425,55 @@ mod tests {
             .unwrap();
         assert!(!r.preparation.locked());
         assert!(r.court.is_none());
+    }
+    #[test]
+    fn operation_sound_matches_mouse_pad_rejection_and_hold_threshold_once() {
+        let mut r = runtime();
+        assert!(r.device.as_ref().unwrap().tone);
+        let cues = |r: &Runtime| {
+            r.shared
+                .status_snapshot()
+                .logs
+                .iter()
+                .filter(|line| line.starts_with("TX TONE "))
+                .cloned()
+                .collect::<Vec<_>>()
+        };
+        r.request(
+            &Request {
+                text: Some("blue".into()),
+                ..Request::new("preparation_court")
+            },
+            true,
+        )
+        .unwrap();
+        assert_eq!(cues(&r), vec!["TX TONE 1"]);
+        let now = Instant::now();
+        r.read_pad(ControllerState::default(), now).unwrap();
+        r.read_pad(button(4), now).unwrap();
+        r.read_pad(button(4), now + Duration::from_secs(1)).unwrap();
+        r.read_pad(button(4), now + Duration::from_secs(2)).unwrap();
+        assert_eq!(cues(&r), vec!["TX TONE 1", "TX TONE 3"]);
+        r.read_pad(ControllerState::default(), now + Duration::from_secs(2))
+            .unwrap();
+        assert!(r.homing.is_some());
+        assert_eq!(cues(&r), vec!["TX TONE 1", "TX TONE 3", "TX TONE 1"]);
+        assert!(r.request(&Request::new("preparation_wait"), true).is_err());
+        assert_eq!(cues(&r).last().unwrap(), "TX TONE 2");
+        let count = cues(&r).len();
+        r.request(
+            &Request {
+                flag: Some(false),
+                ..Request::new("preparation_guide")
+            },
+            true,
+        )
+        .unwrap();
+        r.request(&Request::new("stop"), true).unwrap();
+        assert_eq!(cues(&r).len(), count);
+        r.guide.enabled = true;
+        r.device.as_mut().unwrap().tone = false;
+        r.operation_feedback(1);
+        assert_eq!(cues(&r).len(), count);
     }
 }

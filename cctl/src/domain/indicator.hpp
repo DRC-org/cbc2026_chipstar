@@ -65,8 +65,19 @@ inline IndicatorFrame indicatorFrame(const IndicatorState& state) {
 // 経過時間で音を切り替える。警報は発生時の3音のみで、継続中は再鳴動しない。
 class IndicatorTone {
  public:
+  // 1=受付、2=拒否、3=長押し成立。警報中は操作音を受け付けない。
+  void feedback(uint32_t now, uint8_t cue) {
+    if (alarm_ || cue < 1 || cue > 3) return;
+    start(now, static_cast<uint8_t>(4 + cue));
+    feedback_ = true;
+  }
   uint32_t update(uint32_t now, const IndicatorState& state, bool alarm) {
-    if (!initialized_ || (alarm && !alarm_)) start(now, alarm ? 3 : 1);
+    if (alarm && (!initialized_ || !alarm_)) {
+      feedback_ = false;
+      start(now, 3);
+    } else if (feedback_) {
+      if (alarm || now - started_ >= 600) { feedback_ = false; pattern_ = 0; }
+    } else if (!initialized_) start(now, 1);
     else if (!alarm && (state.mode != mode_ || state.enabled != enabled_))
       start(now, state.mode == RunMode::Run && state.enabled ? 2 : 4);
     else if (!alarm && alarm_) pattern_ = 0;
@@ -81,11 +92,15 @@ class IndicatorTone {
       case 2: return elapsed < 80 ? 1319 : elapsed < 160 ? 1760 : 0;
       case 3: return elapsed < 600 && elapsed % 200 < 100 ? 2200 : 0;
       case 4: return elapsed < 120 ? 660 : 0;
+      case 5: return elapsed < 80 ? 1568 : 0;
+      case 6: return elapsed < 240 && elapsed % 160 < 80 ? 440 : 0;
+      case 7: return elapsed < 60 ? 1319 : elapsed < 120 ? 1760 : 0;
       default: return 0;
     }
   }
  private:
   void start(uint32_t now, uint8_t pattern) { started_ = now; pattern_ = pattern; }
+  bool feedback_ = false;
   bool initialized_ = false;
   bool alarm_ = false;
   RunMode mode_ = RunMode::Safe;

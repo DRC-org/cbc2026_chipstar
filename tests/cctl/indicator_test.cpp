@@ -54,3 +54,31 @@ TEST_CASE("tone finishes across clock wrap and alarm preempts start") {
   CHECK(tone.update(5001, state, false) == 0);
   CHECK(tone.update(5002, state, true) == 2200);
 }
+
+TEST_CASE("operation tones distinguish ready accepted rejected and yield to alarms") {
+  domain::IndicatorTone tone;
+  domain::IndicatorState state;
+  tone.update(0, state, false);
+  tone.feedback(1000, 3);
+  CHECK(tone.update(1000, state, false) == 1319);
+  CHECK(tone.update(1060, state, false) == 1760);
+  CHECK(tone.update(1120, state, false) == 0);
+  tone.feedback(1200, 1);
+  state.mode = domain::RunMode::Run;
+  state.enabled = 4;
+  CHECK(tone.update(1200, state, false) == 1568);
+  CHECK(tone.update(1280, state, false) == 0);
+  tone.feedback(1400, 2);
+  CHECK(tone.update(1400, state, false) == 440);
+  CHECK(tone.update(1480, state, false) == 0);
+  CHECK(tone.update(1560, state, false) == 440);
+  CHECK(tone.update(1570, state, true) == 2200);
+  tone.feedback(1580, 1);
+  CHECK(tone.update(1670, state, true) == 0);
+  CHECK(tone.update(1770, state, true) == 2200);
+  CHECK(tone.update(2200, state, true) == 0);
+  CHECK(tone.update(2201, state, false) == 0);
+  tone.feedback(0xfffffff0U, 1);
+  CHECK(tone.update(16, state, false) == 1568);
+  CHECK(tone.update(64, state, false) == 0);
+}
