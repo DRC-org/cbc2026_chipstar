@@ -221,7 +221,7 @@ Sts3215::Result Sts3215::setTorque(uint8_t id, bool enable) {
 }
 
 Sts3215::Result Sts3215::setTarget(const Target& target) {
-  if (target.position > MAX_POSITION) {
+  if (target.position == 0x8000 || (target.position & 0x7fff) > MAX_POSITION) {
     return Result::ArgumentError;
   }
 
@@ -248,7 +248,9 @@ Sts3215::Result Sts3215::writeAbsoluteVerified(uint8_t id, uint8_t address,
 Sts3215::Result Sts3215::syncWriteTargets(const Target* targets, std::size_t count) {
   if (!targets || count == 0 || count > MAX_SYNC_TARGETS) return Result::ArgumentError;
   for (std::size_t i = 0; i < count; ++i) {
-    if (targets[i].position > MAX_POSITION) return Result::ArgumentError;
+    if (targets[i].position == 0x8000 || (targets[i].position & 0x7fff) > MAX_POSITION) {
+      return Result::ArgumentError;
+    }
   }
   return syncWriteRawTargets(targets, count);
 }
@@ -285,7 +287,8 @@ Sts3215::Result Sts3215::readPosition(uint8_t id, uint16_t& position) {
   }
 
   position = proto::decodeUint16(data);
-  return position <= MAX_POSITION ? Result::Ok : Result::ProtocolError;
+  return position != 0x8000 && (position & 0x7fff) <= MAX_POSITION ? Result::Ok
+                                                                  : Result::ProtocolError;
 }
 
 Sts3215::Result Sts3215::writeVerified(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length) {

@@ -28,7 +28,7 @@ pub enum Command {
     },
     Target {
         id: u8,
-        position: u16,
+        position: i16,
         speed: u16,
         acceleration: u8,
     },
@@ -49,6 +49,7 @@ impl Command {
                 speed,
                 acceleration,
             } => {
+                let position = encode_signed(position);
                 data[1] = 4;
                 data[2] = id;
                 data[3] = acceleration;
@@ -93,7 +94,7 @@ pub fn parameter_line(id: u8, value: f32) -> String {
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ServoState {
     pub id: u8,
-    pub position: u16,
+    pub position: i32,
     pub enabled: bool,
     pub error: u8,
 }
@@ -109,10 +110,23 @@ pub fn parse_state(line: &str) -> Option<ServoState> {
     }
     Some(ServoState {
         id: byte(1)?,
-        position: u16::from(byte(2)?) << 8 | u16::from(byte(3)?),
+        position: decode_signed(u16::from(byte(2)?) << 8 | u16::from(byte(3)?)),
         enabled: byte(4)? != 0,
         error: byte(5)?,
     })
+}
+
+fn encode_signed(value: i16) -> u16 {
+    value.unsigned_abs() | if value < 0 { 0x8000 } else { 0 }
+}
+
+fn decode_signed(value: u16) -> i32 {
+    let magnitude = i32::from(value & 0x7fff);
+    if value & 0x8000 != 0 {
+        -magnitude
+    } else {
+        magnitude
+    }
 }
 
 /// サーボ通信失敗の詳細（0x325）。値はSts3215::Resultに対応する。
@@ -141,7 +155,9 @@ pub fn parse_diagnostic(line: &str) -> Option<(u8, String)> {
     if byte(2)? == 8 && byte(6)? != byte(7)? {
         detail.push_str(&format!(
             " / address={} expected=0x{:02X} actual=0x{:02X}",
-            byte(5)?, byte(6)?, byte(7)?
+            byte(5)?,
+            byte(6)?,
+            byte(7)?
         ));
     }
     Some((byte(1)?, detail))
@@ -172,6 +188,16 @@ mod tests {
     fn encodes_commands_for_cctl_gateway() {
         assert_eq!(Command::Hello.to_cctl_line(), "CAN 2 800 0100000000000000");
         assert_eq!(Command::Stop.to_cctl_line(), "CAN 2 800 0103000000000000");
+        assert_eq!(
+            Command::Target {
+                id: 12,
+                position: -6144,
+                speed: 0,
+                acceleration: 50,
+            }
+            .to_cctl_line(),
+            "CAN 2 800 01040C3298000000"
+        );
         assert_eq!(
             Command::Target {
                 id: 12,
@@ -210,6 +236,12 @@ mod tests {
             })
         );
         assert!(parse_state("CAN_RX bus=2 id=801 data=0100000000000000").is_none());
+        assert_eq!(
+            parse_state("CAN_RX bus=2 id=802 data=010C980001000000")
+                .unwrap()
+                .position,
+            -6144
+        );
         assert!(parse_state("STATE t=1 mode=RUN").is_none());
     }
 }

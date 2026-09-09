@@ -65,14 +65,14 @@ impl Axis {
 
     /// フィールド基準角[deg]と現在θ[deg]から、θ回転を打ち消した先端回転の
     /// STS位置カウントを求める。count = zero0 + cpds×(field − θ)。
-    pub fn rotation_count(&self, field_deg: f32, theta_deg: f32) -> u16 {
+    pub fn rotation_count(&self, field_deg: f32, theta_deg: f32) -> i16 {
         (self.zero0_count + self.counts_per_deg * (field_deg - theta_deg))
             .round()
-            .clamp(0.0, 4095.0) as u16
+            .clamp(-28672.0, 28672.0) as i16
     }
 
     /// 先端回転のSTS指令行。initialのときだけトルク有効化とRUNも添える。
-    pub fn rotation_command(&self, count: u16, initial: bool) -> Vec<String> {
+    pub fn rotation_command(&self, count: i16, initial: bool) -> Vec<String> {
         let Target::Sts(id) = self.target else {
             return Vec::new();
         };
@@ -118,7 +118,7 @@ impl Axis {
             Target::Sts(id) => vec![
                 serial_svmd::Command::Target {
                     id,
-                    position: value as u16,
+                    position: value as i16,
                     // 操作速度とサーボ内部速度を同じ値にし、二重の速度設定を作らない。
                     speed: self.sts_speed(),
                     acceleration: self.acceleration,
@@ -240,9 +240,30 @@ mod tests {
         assert_eq!(axis.rotation_count(180.0, 0.0), 2824);
         // θが+10degなら cpds×(−θ)= −100 ずれてフィールド基準を保つ。
         assert_eq!(axis.rotation_count(0.0, 10.0), 924);
-        // 0〜4095でクランプする。
-        assert_eq!(axis.rotation_count(180.0, -200.0), 4095);
-        assert_eq!(axis.rotation_count(0.0, 200.0), 0);
+        assert_eq!(axis.rotation_count(180.0, -3000.0), 28672);
+        assert_eq!(axis.rotation_count(0.0, 3000.0), -28672);
+    }
+
+    #[test]
+    fn three_to_one_rotation_uses_multi_turn_target() {
+        let axis = Axis {
+            name: "ee_rotation".into(),
+            label: "test",
+            target: Target::Sts(1),
+            min: 0.0,
+            max: 4095.0,
+            initial: 1024.0,
+            enabled: true,
+            input_axis: None,
+            sign: 1.0,
+            speed: 0.0,
+            acceleration: 50,
+            zero0_count: 1024.0,
+            counts_per_deg: 4096.0 * 3.0 / 360.0,
+        };
+        assert_eq!(axis.rotation_count(0.0, -82.5), 3840);
+        assert_eq!(axis.rotation_count(180.0, -82.5), 9984);
+        assert!(axis.rotation_command(9984, false)[0].contains("2700"));
     }
 }
 

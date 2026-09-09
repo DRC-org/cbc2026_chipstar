@@ -168,13 +168,23 @@ TEST_CASE("速度モードやサーボ異常では位置操作を開始しない
  regs[33]=1;CHECK(bus.preparePosition(1)==Sts3215::Result::UnsupportedMode);CHECK(regs[40]==0);
  regs[33]=0;fault=4;CHECK(bus.preparePosition(1)==Sts3215::Result::ServoError);CHECK(bus.lastServoError()==4);
  fault=0;uint16_t pos=0;CHECK(bus.readPosition(1,pos)==Sts3215::Result::Ok);CHECK(bus.lastServoError()==0);
- regs[57]=0x80;CHECK(bus.readPosition(1,pos)==Sts3215::Result::ProtocolError);
+ regs[56]=0x00;regs[57]=0x98;CHECK(bus.readPosition(1,pos)==Sts3215::Result::Ok);CHECK(pos==0x9800);
+ regs[56]=0x01;regs[57]=0xF0;CHECK(bus.readPosition(1,pos)==Sts3215::Result::ProtocolError);
 }
 TEST_CASE("目標の符号化が公式SDKの7byte指令と一致する") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
  REQUIRE(bus.setTarget({1,50,2048,0,500})==Sts3215::Result::Ok);
  const std::vector<uint8_t> expected{255,255,254,12,131,41,7,1,50,0,8,0,0,244,1,18};
  CHECK(sent[0]==expected);
+}
+TEST_CASE("通常位置指令も正負7回転の多回転値を送れる") {
+ reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ REQUIRE(bus.setTarget({1,50,0x1800,0,0})==Sts3215::Result::Ok);
+ CHECK(regs[42]==0x00);CHECK(regs[43]==0x18);
+ REQUIRE(bus.setTarget({1,50,0x9800,0,0})==Sts3215::Result::Ok);
+ CHECK(regs[42]==0x00);CHECK(regs[43]==0x98);
+ CHECK(bus.setTarget({1,50,0x7001,0,0})==Sts3215::Result::ArgumentError);
+ CHECK(bus.setTarget({1,50,0x8000,0,0})==Sts3215::Result::ArgumentError);
 }
 
 namespace {

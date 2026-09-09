@@ -354,13 +354,14 @@ impl Runtime {
                 .machine
                 .axis_position("theta", self.telemetry.as_ref())
                 .context("θの原点または実測値が失われたため取込を中止しました")?;
+            let position = sts::decode_signed(value, 15);
             anyhow::ensure!(
-                self.fresh() && value <= 4095,
-                "較正には有効な単回転位置が必要です"
+                self.fresh() && position.abs() <= 28672,
+                "較正には有効な多回転位置が必要です"
             );
             let point = sts::TeachPoint {
                 field_deg: f32::from(field),
-                count: f32::from(value),
+                count: position as f32,
                 theta_deg: theta,
             };
             self.shared.update_status(|s| {

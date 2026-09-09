@@ -5,7 +5,11 @@
 
 namespace domain::servo_can {
 namespace {
-constexpr uint16_t MAX_POSITION = 4095;
+constexpr uint16_t MAX_POSITION = 28672;
+
+bool validPosition(uint16_t position) {
+    return position != 0x8000 && (position & 0x7fff) <= MAX_POSITION;
+}
 
 bool validId(uint8_t id) {
     return id >= 1 && id <= 253;
@@ -88,7 +92,7 @@ bool parse(const uint8_t* data, std::size_t length, ServoCommand& out) {
         case Op::ParamSet:
             return false;  // 上で処理済み
         case Op::Target:
-            if (!validId(id) || flag > config::MAX_ACCELERATION || position > MAX_POSITION ||
+            if (!validId(id) || flag > config::MAX_ACCELERATION || !validPosition(position) ||
                 speed > config::MAX_SPEED) {
                 return false;
             }

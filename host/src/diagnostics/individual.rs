@@ -173,7 +173,7 @@ impl Target {
             Self::Sts(id) => vec![
                 serial_svmd::Command::Target {
                     id,
-                    position: value as u16,
+                    position: value as i16,
                     speed: 100,
                     acceleration: 10,
                 }

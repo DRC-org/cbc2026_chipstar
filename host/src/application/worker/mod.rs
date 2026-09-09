@@ -80,7 +80,7 @@ struct Runtime {
 #[derive(Clone)]
 struct ServoFeedback {
     seen: Instant,
-    position: u16,
+    position: i32,
     error: u8,
     detail: String,
 }

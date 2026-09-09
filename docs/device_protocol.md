@@ -278,8 +278,8 @@ CAN送信は`HELLO 1`が成功した後だけ受理する。FDCAN2を開始で�
 
 ## serial_svmd
 
-ID・内部設定管理、速度/多回転、同期指令、計測取得のCAN拡張op20〜27は
-[STS管理の通信仕様](sts_management.md)に定める。以下は従来の単回転位置操作。
+ID・内部設定管理、同期指令、計測取得のCAN拡張op20〜27は
+[STS管理の通信仕様](sts_management.md)に定める。以下は通常位置操作。
 
 | 指令 | 意味 |
 |---|---|
@@ -288,7 +288,9 @@ ID・内部設定管理、速度/多回転、同期指令、計測取得のCAN�
 | `SERVO READ <id>` | 現在位置を取得する |
 | `INPUT READ` | 接点入力とDIPの状態を返す |
 
-IDは1..253、positionは0..4095とする。範囲外の指令はサーボへ送らない。
+IDは1..253、positionはbit15を符号とする絶対値形式で−28672..28672とする。
+多回転にはモード0と、サーボ内の最小・最大角度がともに0の設定が必要。
+範囲外の指令はサーボへ送らない。
 speedは0..1000、accelは0..254。最大16個のIDをRAM上に保持し、RUN中に250ms以上
 RUN・TARGET・HEARTBEATが途切れると全サーボへトルクOFFを送る。HELLOやREADでは期限を延長しない。
 
@@ -324,13 +326,13 @@ cctlの1本にまとめる。USART2のASCIIは基板単体で触るための口�
 | 1 | 0=HELLO、1=SAFE、2=RUN、3=STOP、4=TARGET、5=HEARTBEAT、6=ENABLE、7=READ、8=INPUT READ |
 | 2 | サーボID（1..253）。IDを取らない指令は0 |
 | 3 | ENABLEの`0|1`、TARGETの加速度（0..254）。それ以外は0 |
-| 4..5 | TARGETの位置（0..4095）、big endian。それ以外は0 |
+| 4..5 | TARGETの位置（bit15符号、絶対値0..28672）、big endian。それ以外は0 |
 | 6..7 | TARGETの速度（0..1000）、big endian。それ以外は0 |
 
 指令の受理結果は標準ID `0x321`（801）で
 `[1, status, mode, servo_count, 0, 0, 0, 0]`。statusは0=OK、1=拒否、2=timeout、
 modeは0=SAFE、1=RUN、2=STOP。READの応答は `0x322`（802）で
-`[1, id, pos_hi, pos_lo, enabled, error, 0, 0]`。INPUT READの応答は `0x323`（803）で、
+`[1, id, pos_hi, pos_lo, enabled, error, 0, 0]`。位置もbit15符号形式。INPUT READの応答は `0x323`（803）で、
 形式は接点入力の表に従う。
 
 サーボ通信失敗時は`0x325`（805）で`[1, id, result, hal, flags, 0, 0, 0]`も通知する。

@@ -42,6 +42,18 @@ TEST_CASE("位置指令はID・加速度・位置・速度を運ぶ") {
     CHECK(command.speed == 500);
 }
 
+TEST_CASE("通常位置指令は符号付き多回転位置を運ぶ") {
+    const uint8_t positive[8] = {1, 4, 12, 50, 0x18, 0x00, 0x00, 0x00};
+    const auto plus = parse_frame(positive);
+    CHECK(plus.kind == ServoCommandKind::Target);
+    CHECK(plus.position == 6144);
+
+    const uint8_t negative[8] = {1, 4, 12, 50, 0x98, 0x00, 0x00, 0x00};
+    const auto minus = parse_frame(negative);
+    CHECK(minus.kind == ServoCommandKind::Target);
+    CHECK(minus.position == 0x9800);
+}
+
 TEST_CASE("トルク切替と位置取得を解釈する") {
     const uint8_t enable[8] = {1, 6, 253, 1, 0, 0, 0, 0};
     const auto on = parse_frame(enable);
@@ -71,8 +83,8 @@ TEST_CASE("不正なversion、長さ、op、範囲を拒否する") {
     data[2] = 254;
     CHECK_FALSE(parse(data, 8, command));
     data[2] = 12;
-    data[4] = 0x10;  // 位置4096
-    data[5] = 0x00;
+    data[4] = 0x70;  // 位置28673
+    data[5] = 0x01;
     CHECK_FALSE(parse(data, 8, command));
     data[4] = 0x08;
     data[6] = 0x03;  // 速度1001

@@ -9,7 +9,7 @@ namespace domain::sts3215 {
 
 constexpr uint8_t HEADER = 0xFF;
 constexpr uint8_t BROADCAST_ID = 0xFE;
-constexpr uint16_t MAX_POSITION = 4095;
+constexpr uint16_t MAX_POSITION = 28672;
 constexpr uint8_t BAUD_CODE_115200 = 4;
 
 constexpr uint8_t INSTRUCTION_PING = 0x01;
