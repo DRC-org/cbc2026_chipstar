@@ -10,6 +10,8 @@ use std::{
 
 pub use crate::application::command::{Reply, Request};
 
+const MAX_FRAME_SIZE: usize = 1024 * 1024;
+
 pub fn default_socket() -> PathBuf {
     if let Some(path) = std::env::var_os("XDG_RUNTIME_DIR") {
         PathBuf::from(path).join("catchrobo-host.sock")
@@ -20,7 +22,7 @@ pub fn default_socket() -> PathBuf {
 }
 pub fn write_frame(stream: &mut UnixStream, value: &impl Serialize) -> Result<()> {
     let data = toml::to_string(value)?;
-    if data.len() > 131072 {
+    if data.len() > MAX_FRAME_SIZE {
         bail!("要求が大きすぎます");
     }
     stream.write_all(&(data.len() as u32).to_be_bytes())?;
@@ -31,7 +33,7 @@ pub fn read_frame<T: for<'de> Deserialize<'de>>(stream: &mut UnixStream) -> Resu
     let mut length = [0; 4];
     stream.read_exact(&mut length)?;
     let size = u32::from_be_bytes(length) as usize;
-    if size > 131072 {
+    if size > MAX_FRAME_SIZE {
         bail!("要求が大きすぎます");
     }
     let mut data = vec![0; size];
