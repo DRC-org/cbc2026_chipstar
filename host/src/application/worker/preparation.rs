@@ -58,6 +58,18 @@ impl Runtime {
             "準備の切替は人間が画面またはコントローラから行ってください"
         );
         match req.action.as_str() {
+            "preparation_restart" => {
+                self.stop(false)?;
+                self.manual_input = ControllerState::default();
+                self.machine.invalidate_origins();
+                self.court = None;
+                self.preparation = PreparationPhase::Setting;
+                self.guide.reset_input();
+                self.pad.home_ready = false;
+                self.pad.home_since = None;
+                self.pad.ee_armed = false;
+                Ok(Reply::data("停止してコート選択に戻りました".into()))
+            }
             "preparation_court" => {
                 anyhow::ensure!(
                     self.preparation == PreparationPhase::Setting

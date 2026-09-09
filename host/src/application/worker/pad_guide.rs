@@ -3,8 +3,6 @@ use super::*;
 
 pub(super) struct Guide {
     pub enabled: bool,
-    pub step: PreparationStep,
-    pub blue: bool,
     pub confirmed: bool,
     armed: bool,
     pending: Option<(usize, Instant)>,
@@ -14,8 +12,6 @@ impl Default for Guide {
     fn default() -> Self {
         Self {
             enabled: true,
-            step: PreparationStep::Court,
-            blue: false,
             confirmed: false,
             armed: false,
             pending: None,
@@ -35,24 +31,20 @@ impl Guide {
 impl Runtime {
     /// trueなら入力を消費済み。falseのときだけ既存の機体操縦へ渡す。
     pub(super) fn read_guide(&mut self, input: &ControllerState, now: Instant) -> Result<bool> {
-        if !self.guide.enabled || self.screen_control {
+        if !self.guide.enabled {
             self.guide.reset_input();
             return Ok(false);
         }
-        if self.authority.active()
-            || self.test.enabled
-            || self.sts.control_busy()
-            || self.sequence.is_some()
-        {
+        if self.authority.active() || self.test.enabled || self.sts.control_busy() {
             self.guide.reset_input();
             return Ok(true);
         }
         let moving = self.drive.running() || self.drive.awaiting().is_some();
         let context = (
             self.preparation,
-            self.guide.step,
+            self.preparation_step(),
             moving,
-            self.homing.is_some(),
+            self.homing.is_some() || self.sequence.is_some(),
             self.emergency,
         );
         if self.guide.context != Some(context) {
@@ -66,16 +58,12 @@ impl Runtime {
             self.guide.armed = released;
             return Ok(true);
         }
-        if self.homing.is_some() {
-            return Ok(true);
-        }
-        if moving {
-            // 操縦中の×・○・Options・Createはガイド操作に使わない。PS停止後に再度中立を要求する。
-            return Ok(false);
-        }
-        if self.preparation == PreparationPhase::Active {
-            // PS停止後も明示した再開操作を使う。
-            self.guide.step = PreparationStep::Position;
+        // ○だけは操縦・ホーミング中も「停止して最初へ戻る」として受け付ける。
+        if (moving || self.homing.is_some() || self.sequence.is_some())
+            && input.buttons[1] == 0
+            && !self.guide.pending.is_some_and(|(button, _)| button == 1)
+        {
+            return Ok(self.homing.is_some() || self.sequence.is_some());
         }
         if let Some((button, since)) = self.guide.pending {
             let only_button = neutral_axes
@@ -88,12 +76,7 @@ impl Runtime {
                 self.guide.reset_input();
                 return Ok(true);
             }
-            let long = button == 2
-                || button == 4
-                || button == 6
-                || (button == 0
-                    && self.guide.step == PreparationStep::Finish
-                    && self.preparation == PreparationPhase::Setting);
+            let long = matches!(button, 0 | 1 | 2 | 4 | 6);
             if input.buttons[button] != 0 {
                 self.guide.confirmed = !long || now.duration_since(since) >= Duration::from_secs(1);
                 return Ok(true);
@@ -126,90 +109,68 @@ impl Runtime {
     }
 
     fn guide_action(&mut self, button: usize) -> Result<()> {
-        use PreparationStep::*;
+        if button == 1 {
+            self.preparation_request(&Request::new("preparation_restart"), true)?;
+            return Ok(());
+        }
         if self.emergency {
             if button == 2 {
                 self.request(&Request::new("estop_reset"), true)?;
             }
             return Ok(());
         }
-        match self.preparation {
-            PreparationPhase::Waiting => {
-                if button == 6 {
-                    self.preparation_request(&Request::new("preparation_start"), true)?;
-                } else if button == 1 {
-                    self.preparation_request(&Request::new("preparation_return"), true)?;
-                    self.guide.step = Finish;
-                }
-                return Ok(());
+        match (self.preparation, button) {
+            (PreparationPhase::Waiting, 6) => {
+                self.preparation_request(&Request::new("preparation_start"), true)?;
             }
-            PreparationPhase::Recovery => {
-                if button == 1 {
-                    self.preparation_request(&Request::new("preparation_return"), true)?;
-                    self.guide.step = Connection;
-                }
-                return Ok(());
+            (PreparationPhase::Recovery, 6) => {
+                self.preparation_request(&Request::new("preparation_return"), true)?;
             }
-            PreparationPhase::Active => {
-                if button == 6 {
-                    self.start()?;
-                }
-                if button == 1 {
-                    self.preparation_request(&Request::new("preparation_return"), true)?;
-                    self.guide.step = Position;
-                }
-                return Ok(());
+            (PreparationPhase::Active, 6) => {
+                self.start()?;
             }
-            PreparationPhase::Setting => {}
-        }
-        if button == 1 {
-            self.guide.step = match self.guide.step {
-                Court => Court,
-                Connection => Court,
-                Home => Connection,
-                Position => Home,
-                Finish => Position,
-            };
-            return Ok(());
-        }
-        match (self.guide.step, button) {
-            (Court, 13) => self.guide.blue = false,
-            (Court, 14) => self.guide.blue = true,
-            (Court, 0) => {
+            (PreparationPhase::Setting, 13 | 14) if self.court.is_none() => {
                 self.preparation_request(
                     &Request {
-                        text: Some(if self.guide.blue { "blue" } else { "red" }.into()),
+                        text: Some(if button == 14 { "blue" } else { "red" }.into()),
                         ..Request::new("preparation_court")
                     },
                     true,
                 )?;
-                self.guide.step = Connection;
             }
-            (Connection, 0) => {
-                self.axes_ready(false)?;
-                anyhow::ensure!(self.settings.ready(), "機体設定の反映を待ってください");
-                self.guide.step = Home;
-            }
-            (Home, 4) => {
+            (PreparationPhase::Setting, 4) => {
                 self.begin_homing(true, true, 180.0)?;
             }
-            (Home, 0) => {
-                self.ready()?;
-                self.guide.step = Position;
-            }
-            (Position, 6) => {
+            (PreparationPhase::Setting, 6) if self.court.is_some() => {
                 self.start()?;
             }
-            (Position, 0) => {
-                self.preparation_ready()?;
-                self.guide.step = Finish;
-            }
-            (Finish, 0) => {
+            (PreparationPhase::Setting, 0) => {
                 self.preparation_request(&Request::new("preparation_wait"), true)?;
             }
             _ => {}
         }
         Ok(())
+    }
+
+    pub(super) fn preparation_step(&self) -> PreparationStep {
+        if self.court.is_none() {
+            return PreparationStep::Court;
+        }
+        if self.homing.is_some() {
+            return PreparationStep::Home;
+        }
+        if self.axes_ready(false).is_err() {
+            return PreparationStep::Connection;
+        }
+        if self
+            .machine
+            .origin_states(self.telemetry.as_ref())
+            .iter()
+            .any(|o| !o.captured)
+        {
+            return PreparationStep::Home;
+        }
+        PreparationStep::Position
     }
 }
 
@@ -248,20 +209,17 @@ mod tests {
     fn controller_walks_from_court_to_waiting_and_explicit_start() {
         let mut r = runtime();
         press(&mut r, 14, 1).unwrap();
-        assert!(r.guide.blue);
+        assert_eq!(r.court, Some(Court::Blue));
         assert!(r.ee.targets.is_empty());
-        press(&mut r, 0, 1).unwrap();
         assert_eq!(r.court, Some(Court::Blue));
         assert_eq!(r.court.unwrap().homing_theta(), 90.0);
         assert_eq!(Court::Red.homing_theta(), -90.0);
-        press(&mut r, 0, 1).unwrap();
-        assert_eq!(r.guide.step, PreparationStep::Home);
-        assert!(press(&mut r, 0, 1).is_err());
-        assert_eq!(r.guide.step, PreparationStep::Home);
+        assert_eq!(r.preparation_step(), PreparationStep::Home);
+        assert!(press(&mut r, 0, 1000).is_err());
+        assert_eq!(r.preparation_step(), PreparationStep::Home);
         // ホーミング完了時と同じ原点状態を与え、後続のガイド遷移を検証する。
         origins(&mut r);
-        press(&mut r, 0, 1).unwrap();
-        assert_eq!(r.guide.step, PreparationStep::Position);
+        assert_eq!(r.preparation_step(), PreparationStep::Position);
         press(&mut r, 6, 999).unwrap();
         assert!(r.drive.awaiting().is_none());
         press(&mut r, 6, 1000).unwrap();
@@ -269,11 +227,9 @@ mod tests {
         r.tick().unwrap();
         assert!(r.drive.running());
         press(&mut r, 0, 1000).unwrap();
-        assert_eq!(r.guide.step, PreparationStep::Position);
+        assert_eq!(r.preparation_step(), PreparationStep::Position);
         press(&mut r, 5, 1).unwrap();
         r.tick().unwrap();
-        press(&mut r, 0, 1).unwrap();
-        assert_eq!(r.guide.step, PreparationStep::Finish);
         press(&mut r, 0, 999).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Setting);
         press(&mut r, 0, 1000).unwrap();
@@ -288,31 +244,31 @@ mod tests {
     fn held_buttons_changes_of_context_and_deflection_never_confirm() {
         let mut r = runtime();
         let now = Instant::now();
-        r.read_pad(button(0), now).unwrap();
-        r.read_pad(button(0), now + Duration::from_secs(3)).unwrap();
+        r.read_pad(button(14), now).unwrap();
+        r.read_pad(button(14), now + Duration::from_secs(3))
+            .unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
         assert!(r.court.is_none());
-        r.read_pad(button(0), now).unwrap();
-        r.read_pad(button(0), now + Duration::from_secs(3)).unwrap();
-        assert!(r.court.is_none()); // 離す前は決定しない。
+        r.read_pad(button(14), now).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
-        assert_eq!(r.guide.step, PreparationStep::Connection);
-        r.read_pad(button(0), now).unwrap();
+        assert_eq!(r.preparation_step(), PreparationStep::Home);
+        // コート選択を離した直後から押されているCreateは実行しない。
+        r.read_pad(button(4), now).unwrap();
+        r.read_pad(button(4), now + Duration::from_secs(2)).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
-        assert_eq!(r.guide.step, PreparationStep::Connection);
-        r.read_pad(button(0), now).unwrap();
-        let mut mixed = button(0);
+        assert!(r.homing.is_none());
+        r.read_pad(button(4), now).unwrap();
+        let mut mixed = button(4);
         mixed.axes[0] = 0.5;
         r.read_pad(mixed, now).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
-        assert_eq!(r.guide.step, PreparationStep::Connection);
+        assert!(r.homing.is_none());
         assert!(r.manual_input.axes.iter().all(|v| *v == 0.0));
     }
     #[test]
     fn homing_requires_long_release_and_ps_cancels_pending_action() {
         let mut r = runtime();
         r.court = Some(Court::Red);
-        r.guide.step = PreparationStep::Home;
         press(&mut r, 4, 999).unwrap();
         assert!(r.homing.is_none());
         let now = Instant::now();
@@ -344,9 +300,9 @@ mod tests {
         r.read_pad(button(6), now + Duration::from_secs(2)).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Waiting);
-        press(&mut r, 1, 1).unwrap();
+        press(&mut r, 1, 1000).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Setting);
-        assert_eq!(r.guide.step, PreparationStep::Finish);
+        assert_eq!(r.preparation_step(), PreparationStep::Court);
         r.engage_emergency().unwrap();
         press(&mut r, 6, 1000).unwrap();
         assert!(r.emergency);
@@ -383,5 +339,68 @@ mod tests {
         r.read_pad(button(6), now + Duration::from_secs(2)).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Waiting);
+    }
+    #[test]
+    fn mouse_and_pad_share_actions_and_restart_cancels_motion_and_homing() {
+        for homing in [false, true] {
+            let mut r = runtime();
+            r.screen_control = true;
+            // マウスでコートを選び、画面操縦の設定のままパッドでホーミングできる。
+            r.request(
+                &Request {
+                    text: Some("red".into()),
+                    ..Request::new("preparation_court")
+                },
+                true,
+            )
+            .unwrap();
+            assert_eq!(r.preparation_step(), PreparationStep::Home);
+            if homing {
+                press(&mut r, 4, 1000).unwrap();
+                assert!(r.homing.is_some());
+                press(&mut r, 1, 1000).unwrap();
+            } else {
+                origins(&mut r);
+                r.request(&Request::new("run"), true).unwrap();
+                r.tick().unwrap();
+                assert!(r.drive.running());
+                r.request(&Request::new("preparation_restart"), true)
+                    .unwrap();
+            }
+            assert!(r.homing.is_none());
+            assert!(!r.drive.running() && r.drive.awaiting().is_none());
+            assert_eq!(r.preparation, PreparationPhase::Setting);
+            assert_eq!(r.preparation_step(), PreparationStep::Court);
+            assert!(r.court.is_none());
+            assert!(
+                r.machine
+                    .origin_states(r.telemetry.as_ref())
+                    .iter()
+                    .all(|o| !o.captured)
+            );
+        }
+    }
+
+    #[test]
+    fn guide_does_not_clear_mouse_jog_and_waiting_can_restart_by_mouse() {
+        let mut r = runtime();
+        r.screen_control = true;
+        r.manual_input.axes[0] = 0.5;
+        r.read_pad(ControllerState::default(), Instant::now())
+            .unwrap();
+        assert_eq!(r.manual_input.axes[0], 0.5);
+        r.manual_input = ControllerState::default();
+        r.court = Some(Court::Blue);
+        origins(&mut r);
+        r.request(&Request::new("preparation_wait"), true).unwrap();
+        assert!(r.preparation.locked());
+        assert!(
+            r.request(&Request::new("preparation_restart"), false)
+                .is_err()
+        );
+        r.request(&Request::new("preparation_restart"), true)
+            .unwrap();
+        assert!(!r.preparation.locked());
+        assert!(r.court.is_none());
     }
 }

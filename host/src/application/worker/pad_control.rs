@@ -28,7 +28,7 @@ impl Runtime {
             return Ok(());
         }
         if self.read_guide(&input, now)? {
-            self.manual_input = ControllerState::default();
+            if !self.screen_control { self.manual_input = ControllerState::default(); }
             self.pad.home_since = None;
             self.pad.home_ready = false;
             return Ok(());

@@ -228,18 +228,13 @@ impl BridgeApp {
                 self.dispatch(Action::Stop);
             }
         } else {
-            ui.checkbox(
-                &mut self.homing_confirmed,
-                "機体を真正面に向け、移動経路に干渉がないことを確認しました",
-            );
             if ui
                 .add_enabled(
-                    self.homing_confirmed && status.homing_ready,
+                    status.homing_ready,
                     egui::Button::new("自動ホーミングを開始する"),
                 )
                 .clicked()
             {
-                self.homing_confirmed = false;
                 self.request(Request {
                     flag: Some(true),
                     value: Some(self.homing_timeout),

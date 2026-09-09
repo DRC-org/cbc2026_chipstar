@@ -1162,9 +1162,8 @@ impl Runtime {
             s.sts.busy = self.sts.busy();
             s.court = self.court;
             s.preparation = self.preparation;
-            s.pad_guide = self.guide.enabled && !self.screen_control;
-            s.preparation_step = self.guide.step;
-            s.guide_blue = self.guide.blue;
+            s.pad_guide = self.guide.enabled;
+            s.preparation_step = self.preparation_step();
             s.guide_release = self.guide.confirmed;
             s.preparation_blocker = self.preparation_ready()
                 .err().map(|e| e.to_string()).unwrap_or_default();

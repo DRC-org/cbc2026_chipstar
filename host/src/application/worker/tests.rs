@@ -631,11 +631,12 @@ fn cctl_position_test_and_sensor_observation_do_not_reenable_other_axes() {
     let mut runtime = screen_runtime();
     assert!(runtime.test.peers.is_empty()); // 未設定・未選択の基板へは送信しない。
     assert_eq!(runtime.telemetry.as_ref().unwrap().mode, RunMode::Safe);
+    let axis = runtime.cfg.machine.axes[0].clone();
     select_test(&mut runtime, "cctl:0", "position");
     runtime
         .request(
             &Request {
-                value: Some(469.9),
+                value: Some(axis.origin_position - 0.1),
                 ..Request::new("test_output")
             },
             true,
@@ -644,7 +645,7 @@ fn cctl_position_test_and_sensor_observation_do_not_reenable_other_axes() {
     runtime.tick().unwrap();
     assert!(runtime.test.active);
     assert_eq!(runtime.telemetry.as_ref().unwrap().enabled_slots, 1);
-    assert!((runtime.telemetry.as_ref().unwrap().slots[0].measured - 0.004).abs() < 0.001);
+    assert!((runtime.telemetry.as_ref().unwrap().slots[0].measured + 0.1 * axis.native_per_unit).abs() < 0.001);
     runtime.request(&Request::new("stop"), true).unwrap();
     runtime.tick().unwrap();
     assert!(!runtime.test.active);

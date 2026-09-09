@@ -63,7 +63,6 @@ pub enum PreparationStep {
     Connection,
     Home,
     Position,
-    Finish,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
@@ -124,7 +123,6 @@ pub struct Status {
     pub preparation_blocker: String,
     pub pad_guide: bool,
     pub preparation_step: PreparationStep,
-    pub guide_blue: bool,
     pub guide_release: bool,
     pub sequence: super::sequence::Status,
     pub sequence_saved: bool,

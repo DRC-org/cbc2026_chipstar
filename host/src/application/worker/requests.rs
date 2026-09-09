@@ -24,7 +24,7 @@ impl Runtime {
             && !leaving_test
             && !matches!(
                 req.action.as_str(),
-                "stop" | "cut" | "safe" | "fault" | "connection" | "preparation_guide"
+                "stop" | "cut" | "safe" | "fault" | "connection" | "preparation_guide" | "preparation_restart"
             )
         {
             bail!("ソフト緊停中です。人間が解除するまで操作できません");

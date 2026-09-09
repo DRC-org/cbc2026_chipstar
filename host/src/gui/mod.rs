@@ -60,7 +60,6 @@ pub struct BridgeApp {
     tests: individual::TestPanel,
     sts_ui: sts::StsPanel,
     pid_plot: pid_plot::Panel,
-    homing_confirmed: bool,
     homing_timeout: f32,
     ee_values: std::collections::BTreeMap<String, f32>,
     connection: crate::application::app_state::Connection,
@@ -113,7 +112,6 @@ impl BridgeApp {
             tests: individual::TestPanel::default(),
             sts_ui: sts::StsPanel::default(),
             pid_plot: pid_plot::Panel::default(),
-            homing_confirmed: false,
             homing_timeout: 180.0,
             ee_values: std::collections::BTreeMap::new(),
         }
