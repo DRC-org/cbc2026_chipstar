@@ -220,6 +220,7 @@ pub(super) fn screen_runtime() -> Runtime {
     }));
     let mut runtime = Runtime::new(shared);
     runtime.court = Some(Court::Red);
+    runtime.guide.enabled = false;
     for _ in 0..40 {
         runtime.tick().unwrap();
     }

@@ -43,9 +43,19 @@ impl Runtime {
     }
 
     pub(super) fn preparation_request(&mut self, req: &Request, manual: bool) -> Result<Reply> {
+        // 画面の切替は操作権や緊停と独立。非表示のガイドでパッド操作を消費しない。
+        if req.action == "preparation_guide" {
+            anyhow::ensure!(manual, "ガイドの表示切替は画面から行ってください");
+            self.guide.enabled = req.flag.context("ガイドの表示状態が必要です")?;
+            self.guide.reset_input();
+            self.pad.home_ready = false;
+            self.pad.home_since = None;
+            self.pad.ee_armed = false;
+            return Ok(Reply::accepted());
+        }
         anyhow::ensure!(
             manual && !self.authority.active(),
-            "準備の切替は人間がGUIから行ってください"
+            "準備の切替は人間が画面またはコントローラから行ってください"
         );
         match req.action.as_str() {
             "preparation_court" => {

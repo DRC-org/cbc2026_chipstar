@@ -24,7 +24,7 @@ impl Default for TestPanel {
 impl BridgeApp {
     pub(super) fn select_cctl_test(&mut self, slot: u8) {
         self.end_test_on_tab_change();
-        self.screen = Screen::Diagnose;
+        self.switch_screen(Screen::Diagnose);
         self.diagnosis_view = diagnose::DiagnosisView::Tests;
         self.tests.board = "cctl";
         self.tests.id = slot;
@@ -43,7 +43,7 @@ impl BridgeApp {
 
     pub(super) fn select_ee_test(&mut self, target: Target, value: f32) {
         self.end_test_on_tab_change();
-        self.screen = Screen::Diagnose;
+        self.switch_screen(Screen::Diagnose);
         self.diagnosis_view = diagnose::DiagnosisView::Tests;
         self.tests.board = target.board();
         self.tests.id = match target {

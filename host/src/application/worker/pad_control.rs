@@ -15,11 +15,10 @@ impl Runtime {
         self.pad.previous = input.buttons;
         let buttons = input.buttons;
         self.gamepad_input = Some(input.clone());
-        if !self.screen_control && !self.preparation.locked() {
-            self.manual_input = input.clone();
-        }
         // 停止は操作権に関係なく優先し、押下中は他の操作を受け付けない。
         if buttons[5] != 0 {
+            self.guide.reset_input();
+            self.manual_input = ControllerState::default();
             self.pad.home_since = None;
             self.pad.home_ready = false;
             self.pad.ee_armed = false;
@@ -27,6 +26,15 @@ impl Runtime {
                 self.stop(false)?;
             }
             return Ok(());
+        }
+        if self.read_guide(&input, now)? {
+            self.manual_input = ControllerState::default();
+            self.pad.home_since = None;
+            self.pad.home_ready = false;
+            return Ok(());
+        }
+        if !self.screen_control && !self.preparation.locked() {
+            self.manual_input = input.clone();
         }
         if self.preparation.locked() || self.authority.active() || self.screen_control || self.emergency || self.sequence.is_some() {
             self.pad.home_since = None;
@@ -38,7 +46,7 @@ impl Runtime {
             && self.fresh()
             && self.settings.ready();
         // 停止状態で両ボタンを離してから確認する。接続時の押しっぱなしでは始めない。
-        if stopped && buttons[4] == 0 {
+        if !self.guide.enabled && stopped && buttons[4] == 0 {
             self.pad.home_ready = true;
         }
         let neutral = input.axes.iter().all(|v| v.is_finite() && v.abs() < 0.1)
@@ -56,7 +64,7 @@ impl Runtime {
                 self.pad.home_ready = false;
             }
         }
-        if buttons[6] != 0 && previous[6] == 0 {
+        if !self.guide.enabled && buttons[6] != 0 && previous[6] == 0 {
             self.start()?;
         }
         if !self.drive.running()
@@ -135,6 +143,7 @@ impl Runtime {
         {
             self.fault("DualSenseが切断されました".into());
         }
+        self.guide.reset_input();
         self.pad = Control::default();
         self.gamepad_name.clear();
         self.gamepad_input = None;

@@ -196,6 +196,10 @@ impl BridgeApp {
     fn switch_screen(&mut self, screen: Screen) {
         if self.screen != screen {
             self.end_test_on_tab_change();
+            self.request(Request {
+                flag: Some(screen == Screen::Operate),
+                ..Request::new("preparation_guide")
+            });
             self.screen = screen;
         }
     }

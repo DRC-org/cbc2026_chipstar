@@ -57,6 +57,17 @@ impl Court {
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
+pub enum PreparationStep {
+    #[default]
+    Court,
+    Connection,
+    Home,
+    Position,
+    Finish,
+}
+
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
+#[serde(rename_all = "snake_case")]
 pub enum CommunicationHealth {
     Healthy,
     Warning,
@@ -111,6 +122,10 @@ pub struct Status {
     pub court: Option<Court>,
     pub preparation: PreparationPhase,
     pub preparation_blocker: String,
+    pub pad_guide: bool,
+    pub preparation_step: PreparationStep,
+    pub guide_blue: bool,
+    pub guide_release: bool,
     pub sequence: super::sequence::Status,
     pub sequence_saved: bool,
     pub homing: Option<String>,

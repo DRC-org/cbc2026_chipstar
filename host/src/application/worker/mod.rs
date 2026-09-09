@@ -2,7 +2,7 @@
 use super::authority::Authority;
 use crate::{
     application::app_state::{
-        BridgeConfig, CanBusStatus, CanDeviceStatus, CommunicationHealth, Court, PreparationPhase, Shared,
+        BridgeConfig, CanBusStatus, CanDeviceStatus, CommunicationHealth, Court, PreparationPhase, PreparationStep, Shared,
     },
     application::command::{Reply, Request},
     application::settings::Settings,
@@ -43,6 +43,7 @@ impl DriveState {
 struct Runtime {
     court: Option<Court>,
     preparation: PreparationPhase,
+    guide: pad_guide::Guide,
     shared: Arc<Shared>,
     cfg: BridgeConfig,
     link: Link,
@@ -92,6 +93,7 @@ impl Runtime {
         Self {
             court: None,
             preparation: PreparationPhase::Setting,
+            guide: pad_guide::Guide::default(),
             link: Link::new(&cfg.serial_device, cfg.baud_rate, cfg.simulate),
             machine: MachineController::new(cfg.machine.clone()),
             settings: Settings::new(&cfg.machine),
@@ -1160,6 +1162,10 @@ impl Runtime {
             s.sts.busy = self.sts.busy();
             s.court = self.court;
             s.preparation = self.preparation;
+            s.pad_guide = self.guide.enabled && !self.screen_control;
+            s.preparation_step = self.guide.step;
+            s.guide_blue = self.guide.blue;
+            s.guide_release = self.guide.confirmed;
             s.preparation_blocker = self.preparation_ready()
                 .err().map(|e| e.to_string()).unwrap_or_default();
             s.emergency = self.emergency;
@@ -1331,3 +1337,5 @@ mod sts_control;
 mod test_control;
 #[cfg(test)]
 mod tests;
+
+mod pad_guide;

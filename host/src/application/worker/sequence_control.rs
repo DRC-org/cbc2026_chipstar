@@ -575,6 +575,7 @@ mod tests {
         assert!(!r.ee_targets_reached(&BTreeMap::from([("ee_grip_1".into(), 1500.0)])));
         r.screen_control = false;
         r.gamepad_name = "test pad".into();
+        r.guide.enabled = false; // デバッグ画面で従来の操縦を継続する経路。
         start(&mut r, Stage::Prepare, Side::Left);
         assert!(r.screen_control);
         finish(&mut r, &mut now);
