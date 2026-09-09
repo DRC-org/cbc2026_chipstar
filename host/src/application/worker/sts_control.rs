@@ -1,6 +1,6 @@
 use super::*;
 use crate::application::sts::{self, Operation, Sample, Step, Target};
-use std::collections::VecDeque;
+use std::collections::{BTreeMap, VecDeque};
 
 struct Command {
     packet: [u8; 8],
@@ -26,6 +26,7 @@ pub(super) struct Control {
     parts: u8,
     tag: u8,
     epoch: Option<Instant>,
+    positions: BTreeMap<u8, i32>,
 }
 impl Control {
     pub fn stop_monitoring(&mut self) {
@@ -106,6 +107,20 @@ impl Control {
     pub fn elapsed_ms(&self) -> u64 {
         self.epoch
             .map_or(0, |epoch| epoch.elapsed().as_millis() as u64)
+    }
+
+    fn unwrap_position(&mut self, id: u8, raw: i32) -> i32 {
+        let mut position = raw;
+        if let Some(previous) = self.positions.get(&id).copied() {
+            while position - previous > 2048 {
+                position -= 4096;
+            }
+            while position - previous < -2048 {
+                position += 4096;
+            }
+        }
+        self.positions.insert(id, position);
+        position
     }
 }
 
@@ -348,6 +363,11 @@ impl Runtime {
                 expected
             );
         }
+        let position_read = (reply[1] == 20 && command.packet[4] == 56 && command.packet[5] == 2)
+            .then(|| {
+                self.sts
+                    .unwrap_position(reply[2], sts::decode_signed(value, 15))
+            });
         if reply[1] == 20
             && command.packet[4] == 56
             && let Some(field) = self.sts.capture.take()
@@ -356,7 +376,7 @@ impl Runtime {
                 .machine
                 .axis_position("theta", self.telemetry.as_ref())
                 .context("θの原点または実測値が失われたため取込を中止しました")?;
-            let position = sts::decode_signed(value, 15);
+            let position = position_read.expect("position read was decoded above");
             anyhow::ensure!(
                 self.fresh() && position.abs() <= 28672,
                 "較正には有効な多回転位置が必要です"
@@ -420,6 +440,9 @@ impl Runtime {
             anyhow::ensure!(self.sts.parts == 15, "STS計測フレームが欠落しました");
             let d = self.sts.bytes;
             let word = |i| u16::from(d[i]) | u16::from(d[i + 1]) << 8;
+            let position = self
+                .sts
+                .unwrap_position(reply[2], sts::decode_signed(word(0), 15));
             let sample = Sample {
                 id: reply[2],
                 elapsed_ms: self
@@ -428,7 +451,7 @@ impl Runtime {
                     .get_or_insert_with(Instant::now)
                     .elapsed()
                     .as_millis() as u64,
-                position: sts::decode_signed(word(0), 15),
+                position,
                 speed: sts::decode_signed(word(2), 15),
                 load: sts::decode_signed(word(4), 10),
                 voltage: f32::from(d[6]) / 10.0,
@@ -451,7 +474,12 @@ impl Runtime {
         if reply[1] != 24 {
             self.shared.update_status(|s| {
                 s.sts.message = if reply[1] == 20 {
-                    format!("ID {} レジスタ{} = {}", reply[2], command.packet[4], value)
+                    format!(
+                        "ID {} レジスタ{} = {}",
+                        reply[2],
+                        command.packet[4],
+                        position_read.map_or(i32::from(value), |position| position)
+                    )
                 } else if reply[1] == 25 {
                     format!(
                         "ID {} まで探索{}・{}台検出",
@@ -552,6 +580,17 @@ impl Runtime {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn position_tracking_unwraps_both_directions_across_one_turn() {
+        let mut control = Control::default();
+        assert_eq!(control.unwrap_position(1, 4085), 4085);
+        assert_eq!(control.unwrap_position(1, 0), 4096);
+        assert_eq!(control.unwrap_position(1, 204), 4300);
+        assert_eq!(control.unwrap_position(1, 0), 4096);
+        assert_eq!(control.unwrap_position(1, 4085), 4085);
+    }
+
     fn runtime() -> Runtime {
         let shared = Arc::new(Shared::new(BridgeConfig {
             serial_device: "unused".into(),
