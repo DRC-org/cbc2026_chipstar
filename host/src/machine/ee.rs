@@ -31,6 +31,14 @@ pub struct Axis {
     pub counts_per_deg: f32,
 }
 impl Axis {
+    fn sts_speed(&self) -> u16 {
+        if self.speed == 0.0 {
+            0
+        } else {
+            self.speed.round().clamp(1.0, 1000.0) as u16
+        }
+    }
+
     pub fn pad_value(&self, input: &crate::input::ControllerState) -> f32 {
         if let Some(index) = self.input_axis {
             return input.axes[index];
@@ -71,7 +79,7 @@ impl Axis {
         let target = serial_svmd::Command::Target {
             id,
             position: count,
-            speed: self.speed.round().clamp(1.0, 1000.0) as u16,
+            speed: self.sts_speed(),
             acceleration: self.acceleration,
         }
         .to_cctl_line();
@@ -112,7 +120,7 @@ impl Axis {
                     id,
                     position: value as u16,
                     // 操作速度とサーボ内部速度を同じ値にし、二重の速度設定を作らない。
-                    speed: self.speed.round().clamp(1.0, 1000.0) as u16,
+                    speed: self.sts_speed(),
                     acceleration: self.acceleration,
                 }
                 .to_cctl_line(),
@@ -206,6 +214,8 @@ mod tests {
         assert_eq!(axis.pad_value(&input), 0.0);
         axis.input_axis = Some(2);
         assert_eq!(axis.pad_value(&input), -0.75);
+        axis.speed = 0.0;
+        assert!(axis.commands(2048.0).unwrap()[0].ends_with("08000000"));
     }
 
     #[test]

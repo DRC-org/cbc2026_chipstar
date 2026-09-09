@@ -97,4 +97,5 @@ CAN先の基板の調整値は`[svmd_parameters]`、`[dcmd_parameters]`、
 把持・EE方位補償・受け渡し・シュート操作が有効になるわけではない。
 
 PWMサーボはchannel 0..3、パルス幅500..2500µs。STS3215はID 1..253、位置0..4095、
-速度0..1000、加速度0..254。serial_svmdはcctlのFDCAN2経由で接続する。
+速度0..1000、加速度0..254。STS位置モードの速度0はサーボ最大速度を指定する。
+serial_svmdはcctlのFDCAN2経由で接続する。
