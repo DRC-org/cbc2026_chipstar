@@ -90,11 +90,18 @@ impl Runtime {
                             .context("対象軸の原点を採用してください")?;
                     }
                     for (name, value) in &step.ee {
-                        ee_axes
+                        let axis = ee_axes
                             .iter()
                             .find(|a| &a.name == name)
-                            .with_context(|| format!("{name}が未割当です"))?
-                            .commands(*value)?;
+                            .with_context(|| format!("{name}が未割当です"))?;
+                        if axis.name == "ee_rotation" {
+                            anyhow::ensure!(
+                                (0.0..=180.0).contains(value),
+                                "先端回転はフィールド基準0°または180°です"
+                            );
+                        } else {
+                            axis.commands(*value)?;
+                        }
                     }
                 }
                 anyhow::ensure!(

@@ -103,6 +103,20 @@ impl MachineController {
         self.soft_limits = enabled;
     }
 
+    /// 原点採用済み・実測が有効な軸の機体単位位置[deg/mm]。未採用や欠測はNone。
+    pub fn axis_position(&self, name: &str, telemetry: Option<&Telemetry>) -> Option<f32> {
+        let telemetry = telemetry?;
+        let index = self.profile.axes.iter().position(|axis| axis.name == name)?;
+        let axis = &self.profile.axes[index];
+        if !self.origin_captured[index] || telemetry.stale_slots & (1 << axis.slot) != 0 {
+            return None;
+        }
+        let measured = telemetry.slots[axis.slot as usize].measured;
+        measured
+            .is_finite()
+            .then(|| (measured - self.origins_native[index]) / axis.native_per_unit)
+    }
+
     /// 原点採用済みの機体座標を、cctlへ渡すネイティブ位置へ変換する。
     pub fn native_position(&self, slot: u8, position: f32) -> Option<f32> {
         let index = self

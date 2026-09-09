@@ -10,6 +10,8 @@ pub(super) struct Control {
     started: Option<Instant>,
     tick: Option<Instant>,
     poll: Option<Instant>,
+    /// 先端回転のフィールド基準角[deg]。0°または180°を切り替える。
+    pub(super) rotation_field: f32,
 }
 impl Runtime {
     pub(super) fn ee_request(&mut self, req: &Request) -> Result<Reply> {
@@ -29,10 +31,18 @@ impl Runtime {
         }
         let input: Input = toml::from_str(req.text.as_deref().context("targetsが必要です")?)?;
         anyhow::ensure!(!input.targets.is_empty(), "対象を指定してください");
+        let mut targets = input.targets;
+        // 先端回転はフィールド基準角として専用経路で扱う。
+        if let Some(field) = targets.remove("ee_rotation") {
+            self.rotation_request(field)?;
+        }
+        if targets.is_empty() {
+            return Ok(Reply::accepted());
+        }
         let axes = ee::axes(&self.cfg.machine);
         let mut lines = Vec::new();
         let mut accepted = Vec::new();
-        for (name, value) in &input.targets {
+        for (name, value) in &targets {
             let axis = axes
                 .iter()
                 .find(|a| a.name == *name)
@@ -85,6 +95,54 @@ impl Runtime {
         }
         Ok(Reply::accepted())
     }
+    /// 先端回転をフィールド基準角[deg]へ向ける。θを打ち消して連続追従できるよう、
+    /// 初回はトルク有効化とRUNも送り、以降はtickが追従を続ける。
+    pub(super) fn rotation_request(&mut self, field_deg: f32) -> Result<()> {
+        anyhow::ensure!(
+            self.drive.running()
+                && !self.test.enabled
+                && !self.sts.active
+                && !self.sts.busy()
+                && !self.emergency,
+            "通常運転を再開してからEEを操作してください"
+        );
+        anyhow::ensure!(
+            (0.0..=180.0).contains(&field_deg),
+            "先端回転はフィールド基準0°または180°です"
+        );
+        self.ready()?;
+        let axes = ee::axes(&self.cfg.machine);
+        let axis = axes
+            .iter()
+            .find(|a| a.name == "ee_rotation")
+            .context("先端回転のEE割当が未設定です")?;
+        anyhow::ensure!(
+            self.test
+                .peers
+                .get(axis.target.board())
+                .is_some_and(|t| t.elapsed() < Duration::from_millis(500)),
+            "{}の基板応答を待ってください",
+            axis.label
+        );
+        self.ee.rotation_field = field_deg;
+        let theta = self
+            .machine
+            .axis_position("theta", self.telemetry.as_ref())
+            .unwrap_or(0.0);
+        let count = axis.rotation_count(field_deg, theta);
+        let first = !self.ee.targets.contains_key(&axis.name);
+        self.ee.targets.insert(axis.name.clone(), f32::from(count));
+        self.ee.sent.insert(axis.name.clone(), (f32::from(count), Instant::now()));
+        self.ee.started = Some(Instant::now());
+        for line in axis.rotation_command(count, first) {
+            if let Err(error) = self.send(&line) {
+                self.fault(error.to_string());
+                return Err(error);
+            }
+        }
+        Ok(())
+    }
+
     pub(super) fn observe_ee(&mut self, line: &str) -> Result<()> {
         if self.ee.targets.is_empty() {
             return Ok(());
@@ -211,44 +269,25 @@ impl Runtime {
                 self.ee.velocities.insert(axis.name.clone(), velocity);
                 continue;
             }
-            if self.sequence.is_some() {
+            if self.sequence.is_some() || !self.ee.targets.contains_key(&axis.name) {
                 continue;
             }
-            let Some(previous) = self.ee.targets.get(&axis.name).copied() else {
-                continue;
-            };
-            let value = if !self.authority.active() && !self.screen_control {
-                if !self.pad.ee_armed {
-                    continue;
-                }
-                axis.pad_value(&input)
-            } else {
-                axis.input_axis.map_or(0.0, |index| input.axes[index])
-            };
-            if value.abs() < 0.1 {
-                continue;
-            }
-            let next = (previous
-                + value
-                    * axis.sign
-                    * axis.speed
-                    * dt
-                    * if slow {
-                        self.cfg.machine.slow_speed_percent * 0.01
-                    } else {
-                        1.0
-                    })
-            .clamp(axis.min, axis.max);
+            // 先端回転: θ回転を打ち消してフィールド基準の向きを保つよう連続追従する。
+            let theta = self
+                .machine
+                .axis_position("theta", self.telemetry.as_ref())
+                .unwrap_or(0.0);
+            let count = axis.rotation_count(self.ee.rotation_field, theta);
             if self.ee.sent.get(&axis.name).is_none_or(|(value, sent)| {
-                *value != next.round() && now.duration_since(*sent) >= Duration::from_millis(50)
+                *value != f32::from(count) && now.duration_since(*sent) >= Duration::from_millis(50)
             }) {
                 // 初回以外は目標だけを更新し、ENABLE/RUNを繰り返さない。
-                for line in axis.commands(next.round())?.into_iter().take(1) {
+                for line in axis.rotation_command(count, false) {
                     self.send(&line)?;
                 }
-                self.ee.sent.insert(axis.name.clone(), (next.round(), now));
+                self.ee.sent.insert(axis.name.clone(), (f32::from(count), now));
             }
-            self.ee.targets.insert(axis.name.clone(), next);
+            self.ee.targets.insert(axis.name.clone(), f32::from(count));
         }
         if self
             .ee

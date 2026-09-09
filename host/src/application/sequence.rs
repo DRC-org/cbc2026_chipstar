@@ -117,6 +117,7 @@ pub struct Group {
     pub theta: f32,
     pub approach_z: f32,
     pub grab_z: f32,
+    /// 先端回転のフィールド基準角[deg]。0°または180°。
     pub rotation: f32,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -125,6 +126,7 @@ pub struct Destination {
     pub r: f32,
     pub theta: f32,
     pub z: f32,
+    /// 先端回転のフィールド基準角[deg]。0°または180°。
     pub rotation: f32,
 }
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -162,7 +164,8 @@ impl Config {
                 .find(|a| a.name == name)
                 .map_or(fallback, |a| a.initial)
         };
-        let rotation = servo("ee_rotation", 2048.0);
+        // 回転はフィールド基準角[deg]。既定は0°で、工程では0°/180°を選ぶ。
+        let rotation = 0.0;
         let grips = std::array::from_fn(|i| servo(&format!("ee_grip_{}", i + 1), 1500.0));
         let destination = Destination {
             r: position("r"),
@@ -410,8 +413,8 @@ mod tests {
         config.groups[1].r = 120.0;
         config.groups[1].grab_z = 25.0;
         config.lift_mm = 8.0;
-        config.left.rotation = 1900.0;
-        config.right.rotation = 2100.0;
+        config.left.rotation = 0.0;
+        config.right.rotation = 180.0;
         config.right.r = 210.0;
         config.prepare[0].actions.push(Action::WorkRotation);
         let request = Start {
@@ -426,7 +429,7 @@ mod tests {
         assert!(
             steps
                 .iter()
-                .any(|s| s.ee.get("ee_rotation") == Some(&2100.0))
+                .any(|s| s.ee.get("ee_rotation") == Some(&180.0))
         );
         assert!(steps.iter().any(|s| s.axes.get("r") == Some(&210.0)));
         let encoded = toml::to_string_pretty(&config).unwrap();

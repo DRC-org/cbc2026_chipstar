@@ -107,10 +107,15 @@ pub struct SerialServoProfile {
     #[serde(default = "one")]
     pub input_sign: f32,
     pub speed_position_per_second: f32,
+    /// フィールド基準0°の位置カウント。先端回転はこの端点を0°状態に使う。
     pub minimum_position: u16,
+    /// フィールド基準180°の位置カウント。先端回転はこの端点を180°状態に使う。
     pub maximum_position: u16,
     pub initial_position: u16,
     pub acceleration: u8,
+    /// θ回転を打ち消してフィールド基準を保つ係数[count/deg]。0で補正なし。
+    #[serde(default)]
+    pub theta_follow: f32,
     #[serde(default)]
     pub enabled: bool,
 }
@@ -469,6 +474,7 @@ impl MachineProfile {
                 }
                 if !servo.input_sign.is_finite()
                     || !servo.speed_position_per_second.is_finite()
+                    || !servo.theta_follow.is_finite()
                     || servo.input_sign.abs() != 1.0
                     || servo.speed_position_per_second < 0.0
                     || servo.speed_position_per_second > 1000.0

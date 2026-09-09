@@ -103,24 +103,14 @@ impl Runtime {
                 );
             }
         }
-        for axis in &axes {
-            if matches!(axis.target, crate::diagnostics::individual::Target::Sts(_))
-                && axis.pad_value(&input).abs() >= 0.1
-                && !self.ee.targets.contains_key(&axis.name)
-            {
-                let initial = match axis.target {
-                    crate::diagnostics::individual::Target::Sts(id) => self
-                        .servo_feedback
-                        .get(&id)
-                        .filter(|feedback| {
-                            feedback.seen.elapsed() < Duration::from_millis(500)
-                                && feedback.error == 0
-                        })
-                        .map_or(axis.initial, |feedback| f32::from(feedback.position)),
-                    _ => axis.initial,
-                };
-                targets.insert(axis.name.clone(), initial);
-            }
+        // 先端回転は△でフィールド基準0°↔180°を切り替える。θ補正は専用経路が続ける。
+        if buttons[3] != 0 && previous[3] == 0 {
+            let _ = axes
+                .iter()
+                .find(|axis| axis.name == "ee_rotation")
+                .context("先端回転のEE割当を設定してください")?;
+            let next = if self.ee.rotation_field >= 90.0 { 0.0 } else { 180.0 };
+            targets.insert("ee_rotation".into(), next);
         }
         if !targets.is_empty() {
             #[derive(serde::Serialize)]
@@ -231,26 +221,21 @@ mod tests {
         r.drive = DriveState::Running;
     }
     #[test]
-    fn rotation_starts_from_fresh_servo_position_instead_of_profile_initial() {
+    fn triangle_toggles_tip_rotation_between_field_zero_and_180() {
         let mut r = runtime();
         r.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
         r.drive = DriveState::Running;
         r.test.peers.insert("sts", Instant::now());
-        r.servo_feedback.insert(
-            1,
-            ServoFeedback {
-                seen: Instant::now(),
-                position: 1857,
-                error: 0,
-                detail: String::new(),
-            },
-        );
         let now = Instant::now();
         r.read_pad(ControllerState::default(), now).unwrap();
-        let mut input = ControllerState::default();
-        input.axes[2] = 0.5;
-        r.read_pad(input, now).unwrap();
-        assert_eq!(r.ee.targets["ee_rotation"], 1857.0);
+        let mut triangle = ControllerState::default();
+        triangle.buttons[3] = 1;
+        r.read_pad(triangle.clone(), now).unwrap();
+        assert_eq!(r.ee.rotation_field, 180.0);
+        assert!(r.ee.targets.contains_key("ee_rotation"));
+        r.read_pad(ControllerState::default(), now).unwrap();
+        r.read_pad(triangle, now).unwrap();
+        assert_eq!(r.ee.rotation_field, 0.0);
     }
     #[test]
     fn grips_require_neutral_then_latch_configured_endpoints_with_acceleration() {

@@ -168,10 +168,11 @@ impl BridgeApp {
                                 input_axis: None,
                                 input_sign: 1.0,
                                 speed_position_per_second: 100.0,
-                                minimum_position: 1800,
-                                maximum_position: 2200,
+                                minimum_position: 1024,
+                                maximum_position: 3072,
                                 initial_position: 2048,
                                 acceleration: 10,
+                                theta_follow: 0.0,
                                 enabled: false,
                             });
                         }
@@ -249,25 +250,37 @@ impl BridgeApp {
                         ui.label("接続先：STS3215");
                         ui.label("ID");
                         ui.add(egui::DragValue::new(&mut s.id));
-                        pulse_fields(
-                            ui,
-                            &mut s.minimum_position,
-                            &mut s.maximum_position,
-                            &mut s.initial_position,
-                            0..=4095,
-                            "count",
-                        );
+                    });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("0°位置");
+                        ui.add(egui::DragValue::new(&mut s.minimum_position).suffix(" count"))
+                            .on_hover_text("フィールド基準0°のときのSTS位置カウント（θ=0基準）");
+                        ui.label("180°位置");
+                        ui.add(egui::DragValue::new(&mut s.maximum_position).suffix(" count"))
+                            .on_hover_text("フィールド基準180°のときのSTS位置カウント（θ=0基準）");
+                        ui.label("開始位置");
+                        ui.add(egui::DragValue::new(&mut s.initial_position).suffix(" count"));
                     });
                     ui.horizontal_wrapped(|ui| {
                         ui.label("サーボ内部の加速度");
                         ui.add(egui::DragValue::new(&mut s.acceleration));
+                        ui.label("最高速度");
+                        ui.add(
+                            egui::DragValue::new(&mut s.speed_position_per_second)
+                                .suffix(" count/s"),
+                        );
+                        ui.label("θ追従");
+                        ui.add(
+                            egui::DragValue::new(&mut s.theta_follow)
+                                .speed(0.1)
+                                .suffix(" count/deg"),
+                        )
+                        .on_hover_text("θ回転を打ち消しフィールド基準を保つ係数。符号は実機で確認します。");
                     });
-                    input_fields(
-                        ui,
-                        &mut s.input_axis,
-                        &mut s.input_sign,
-                        &mut s.speed_position_per_second,
-                        "count/s",
+                    ui.label(
+                        RichText::new("△ボタンで0°/180°を切り替え、θの回転はθ追従係数で打ち消します。")
+                            .size(12.0)
+                            .color(MUTED),
                     );
                     ui.checkbox(&mut s.enabled, "通常操作でこのサーボへ出力する");
                 }
@@ -286,7 +299,7 @@ impl BridgeApp {
             }
         });
         ui.label(
-            RichText::new("EE全体回転はSTS3215の位置カウントで設定します。EE角度への換算とθ連動補正は未設定です。")
+            RichText::new("EE全体回転はSTS3215で、フィールド基準0°/180°を△で切り替えます。θの回転はθ追従係数で打ち消します。")
                 .size(12.0)
                 .color(MUTED),
         );
@@ -318,37 +331,4 @@ fn pulse_fields(
         )
         .on_hover_text(description);
     }
-}
-fn input_fields(
-    ui: &mut egui::Ui,
-    axis: &mut Option<usize>,
-    sign: &mut f32,
-    speed: &mut f32,
-    unit: &str,
-) {
-    ui.horizontal_wrapped(|ui| {
-        egui::ComboBox::from_id_salt(ui.id().with("input"))
-            .selected_text(axis.map_or("標準パッド".into(), |i| format!("入力軸{i}")))
-            .show_ui(ui, |ui| {
-                ui.selectable_value(axis, None, "標準パッド");
-                for (i, label) in [
-                    "左X（θと共用）",
-                    "左Y（rと共用）",
-                    "右X",
-                    "右Y（zと共用）",
-                    "L2",
-                    "R2",
-                ]
-                .iter()
-                .enumerate()
-                {
-                    ui.selectable_value(axis, Some(i), *label);
-                }
-            });
-        ui.selectable_value(sign, 1.0, "正転");
-        ui.selectable_value(sign, -1.0, "反転");
-        ui.label("最高速度");
-        ui.add(egui::DragValue::new(speed).suffix(format!(" {unit}")));
-    });
-    ui.label(RichText::new("標準パッド：EE回転は右スティック左右。入力中だけ指令位置を変えます。").size(12.0).color(MUTED));
 }

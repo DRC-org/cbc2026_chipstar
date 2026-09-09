@@ -103,7 +103,7 @@ impl Panel {
                     });
                     height(ui, status, "ワーク直上", &mut group.approach_z);
                     height(ui, status, "把持高さ", &mut group.grab_z);
-                    servo(ui, status, "取得向き", "ee_rotation", &mut group.rotation, " count");
+                    field_rotation(ui, "取得向き", &mut group.rotation);
                 });
                 egui::CollapsingHeader::new("移動高さ・受渡し位置").default_open(true).show(ui, |ui| {
                     height(ui, status, "移動高さ", &mut self.edit.travel_z);
@@ -118,7 +118,7 @@ impl Panel {
                                 }
                             });
                             height(ui, status, "受渡し高さ", &mut dest.z);
-                            servo(ui, status, "受渡し向き", "ee_rotation", &mut dest.rotation, " count");
+                            field_rotation(ui, "受渡し向き", &mut dest.rotation);
                         });
                     }
                 });
@@ -207,6 +207,13 @@ fn height(ui: &mut egui::Ui, status: &Status, label: &str, value: &mut f32) {
         {
             capture(status, "z", value);
         }
+    });
+}
+fn field_rotation(ui: &mut egui::Ui, label: &str, value: &mut f32) {
+    ui.horizontal_wrapped(|ui| {
+        ui.label(label);
+        ui.selectable_value(value, 0.0, "0°");
+        ui.selectable_value(value, 180.0, "180°");
     });
 }
 fn servo(ui: &mut egui::Ui, status: &Status, label: &str, role: &str, value: &mut f32, unit: &str) {

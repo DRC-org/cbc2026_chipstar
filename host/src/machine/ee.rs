@@ -25,6 +25,8 @@ pub struct Axis {
     pub sign: f32,
     pub speed: f32,
     pub acceleration: u8,
+    /// θを打ち消してフィールド基準を保つ係数[count/deg]。0で補正なし。
+    pub theta_follow: f32,
 }
 impl Axis {
     pub fn pad_value(&self, input: &crate::input::ControllerState) -> f32 {
@@ -48,6 +50,36 @@ impl Axis {
             "µs"
         } else {
             "count（サーボ軸）"
+        }
+    }
+
+    /// フィールド基準角[deg]（0°=下限端点・180°=上限端点）と現在θ[deg]から、
+    /// θ回転を打ち消した先端回転のSTS位置カウントを求める。
+    pub fn rotation_count(&self, field_deg: f32, theta_deg: f32) -> u16 {
+        let base = self.min + (self.max - self.min) * (field_deg / 180.0);
+        (base - theta_deg * self.theta_follow).round().clamp(0.0, 4095.0) as u16
+    }
+
+    /// 先端回転のSTS指令行。initialのときだけトルク有効化とRUNも添える。
+    pub fn rotation_command(&self, count: u16, initial: bool) -> Vec<String> {
+        let Target::Sts(id) = self.target else {
+            return Vec::new();
+        };
+        let target = serial_svmd::Command::Target {
+            id,
+            position: count,
+            speed: self.speed.round().clamp(1.0, 1000.0) as u16,
+            acceleration: self.acceleration,
+        }
+        .to_cctl_line();
+        if initial {
+            vec![
+                target,
+                serial_svmd::Command::Enable { id, enabled: true }.to_cctl_line(),
+                serial_svmd::Command::Run.to_cctl_line(),
+            ]
+        } else {
+            vec![target]
         }
     }
     pub fn commands(&self, value: f32) -> Result<Vec<String>> {
@@ -105,6 +137,7 @@ pub fn axes(profile: &MachineProfile) -> Vec<Axis> {
                     sign: s.input_sign,
                     speed: s.speed_us_per_second,
                     acceleration: 0,
+                    theta_follow: 0.0,
                 })
             } else {
                 profile
@@ -125,6 +158,7 @@ pub fn axes(profile: &MachineProfile) -> Vec<Axis> {
                         sign: s.input_sign,
                         speed: s.speed_position_per_second,
                         acceleration: s.acceleration,
+                        theta_follow: s.theta_follow,
                     })
             }
         })
@@ -148,6 +182,7 @@ mod tests {
             sign: 1.0,
             speed: 100.0,
             acceleration: 0,
+            theta_follow: 0.0,
         };
         let mut input = crate::input::ControllerState::default();
         input.axes[2] = -0.75;
@@ -165,5 +200,31 @@ mod tests {
         assert_eq!(axis.pad_value(&input), 0.0);
         axis.input_axis = Some(2);
         assert_eq!(axis.pad_value(&input), -0.75);
+    }
+
+    #[test]
+    fn rotation_count_maps_field_angle_and_cancels_theta() {
+        let axis = Axis {
+            name: "ee_rotation".into(),
+            label: "test",
+            target: Target::Sts(1),
+            min: 1024.0,
+            max: 3072.0,
+            initial: 2048.0,
+            enabled: true,
+            input_axis: None,
+            sign: 1.0,
+            speed: 1000.0,
+            acceleration: 10,
+            theta_follow: -10.0,
+        };
+        // θ=0では端点そのもの。
+        assert_eq!(axis.rotation_count(0.0, 0.0), 1024);
+        assert_eq!(axis.rotation_count(180.0, 0.0), 3072);
+        // θが+10degならcountは -theta_follow*θ = +100 ずれてフィールド基準を保つ。
+        assert_eq!(axis.rotation_count(0.0, 10.0), 1124);
+        // 0〜4095でクランプする。
+        assert_eq!(axis.rotation_count(180.0, 200.0), 4095);
+        assert_eq!(axis.rotation_count(0.0, -200.0), 0);
     }
 }
