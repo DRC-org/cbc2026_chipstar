@@ -57,6 +57,7 @@ struct Runtime {
     sts: sts_control::Control,
     ee: ee_control::Control,
     homing: Option<homing::Homing>,
+    sequence: Option<sequence_control::Execution>,
     pad: pad_control::Control,
     authority: Authority,
     manual_input: ControllerState,
@@ -104,6 +105,7 @@ impl Runtime {
             sts: sts_control::Control::default(),
             ee: ee_control::Control::default(),
             homing: None,
+            sequence: None,
             pad: pad_control::Control::default(),
             authority: Authority::default(),
             manual_input: ControllerState::default(),
@@ -131,6 +133,7 @@ impl Runtime {
         self.rx.is_some_and(|t| t.elapsed() <= FRESH)
     }
     fn clear_drive(&mut self) {
+        self.cancel_sequence("中断・停止");
         self.machine.reset_jog();
         self.drive = DriveState::Stopped;
         self.authority.clear_input();
@@ -217,6 +220,14 @@ impl Runtime {
         self.error = reason;
     }
     fn fault_ee(&mut self, reason: String) {
+        if self.sequence.is_some() {
+            self.cancel_sequence(&format!("EE異常で中断: {reason}"));
+            if let Some(telemetry) = self.telemetry.clone() {
+                for line in self.machine.hold_lines(&telemetry, telemetry.enabled_slots) {
+                    let _ = self.send(&line);
+                }
+            }
+        }
         self.ee = ee_control::Control::default();
         self.pad.ee_armed = false;
         let mut stop_error = None;
@@ -653,7 +664,7 @@ impl Runtime {
         if self.drive.running() {
             if let Err(error) = self.ready() {
                 self.fault(error.to_string());
-            } else {
+            } else if self.sequence.is_none() {
                 let input = self.authority.input().unwrap_or(&self.manual_input);
                 let slow = self.adjustment
                     || (!self.authority.active() && self.screen_control)
@@ -672,6 +683,7 @@ impl Runtime {
                 .log("通信復旧: 基板応答を確認。出力停止を維持".into());
             self.reason = "通信復旧。原点を確認して再開してください".into();
         }
+        self.tick_sequence(now)?;
         self.tick_test(now)?;
         if let Err(error) = self.tick_homing(now) {
             self.fault(error.to_string());
@@ -1108,6 +1120,8 @@ impl Runtime {
                 "接続断 / 状態不明"
             } else if self.homing.is_some() {
                 "r・zホーミング中"
+            } else if self.sequence.is_some() {
+                "シーケンス実行中"
             } else if self.test.active {
                 "個別テスト出力中"
             } else if self.drive.running() {
@@ -1250,6 +1264,7 @@ mod ee_control;
 mod homing;
 mod pad_control;
 mod requests;
+mod sequence_control;
 mod sts_control;
 mod test_control;
 #[cfg(test)]

@@ -28,7 +28,7 @@ impl Runtime {
             }
             return Ok(());
         }
-        if self.authority.active() || self.screen_control || self.emergency {
+        if self.authority.active() || self.screen_control || self.emergency || self.sequence.is_some() {
             self.pad.home_since = None;
             self.pad.home_ready = false;
             self.pad.ee_armed = false;

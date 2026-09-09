@@ -72,6 +72,8 @@ pub struct CanDeviceStatus {
 
 #[derive(Clone, Default, Serialize)]
 pub struct Status {
+    pub sequence: super::sequence::Status,
+    pub sequence_saved: bool,
     pub homing: Option<String>,
     pub homing_ready: bool,
     pub homing_confirmation: Option<f32>,
@@ -122,6 +124,7 @@ pub struct Pending {
 pub struct Shared {
     pub response_history: Mutex<super::response_history::History>,
     config: Mutex<BridgeConfig>,
+    sequence_config: Mutex<super::sequence::Config>,
     status: Mutex<Status>,
     pending: Mutex<VecDeque<Pending>>,
     alive: AtomicBool,
@@ -129,9 +132,25 @@ pub struct Shared {
 }
 impl Shared {
     pub fn new(config: BridgeConfig) -> Self {
+        let path = super::sequence::config_path(&config.profile_path);
+        let mut sequence_message = String::new();
+        let sequence_config = if path.exists() {
+            super::sequence::load(&path).unwrap_or_else(|error| {
+                sequence_message = format!("シーケンス設定の読込み失敗: {error}");
+                super::sequence::Config::from_machine(&config.machine)
+            })
+        } else {
+            super::sequence::Config::from_machine(&config.machine)
+        };
         Self {
+            sequence_config: Mutex::new(sequence_config),
             response_history: Mutex::new(super::response_history::History::default()),
             status: Mutex::new(Status {
+                sequence_saved: path.exists() && sequence_message.is_empty(),
+                sequence: super::sequence::Status {
+                    message: sequence_message,
+                    ..Default::default()
+                },
                 simulated: config.simulate,
                 saved: true,
                 reason: "接続待ち".into(),
@@ -142,6 +161,12 @@ impl Shared {
             alive: AtomicBool::new(true),
             emergency_pending: AtomicBool::new(false),
         }
+    }
+    pub fn sequence_config(&self) -> super::sequence::Config {
+        self.sequence_config.lock().unwrap().clone()
+    }
+    pub fn set_sequence_config(&self, config: super::sequence::Config) {
+        *self.sequence_config.lock().unwrap() = config;
     }
     pub fn config(&self) -> BridgeConfig {
         self.config.lock().unwrap().clone()

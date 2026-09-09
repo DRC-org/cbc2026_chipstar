@@ -15,6 +15,10 @@ pub fn load(path: &Path) -> Result<MachineProfile> {
 
 pub fn save(path: &Path, profile: &MachineProfile) -> Result<()> {
     let text = toml::to_string_pretty(profile)?;
+    save_text(path, &text)
+}
+
+pub fn save_text(path: &Path, text: &str) -> Result<()> {
     let temporary = path.with_extension(format!("toml.{}.new", std::process::id()));
     let mut file = OpenOptions::new()
         .write(true)

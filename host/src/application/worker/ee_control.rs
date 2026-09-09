@@ -138,6 +138,9 @@ impl Runtime {
             );
         }
         for axis in &axes {
+            if self.sequence.is_some() {
+                continue;
+            }
             let Some(previous) = self.ee.targets.get(&axis.name).copied() else {
                 continue;
             };

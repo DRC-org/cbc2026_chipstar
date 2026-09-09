@@ -27,6 +27,7 @@ enum Screen {
 }
 
 pub struct BridgeApp {
+    sequences: sequence::Panel,
     shared: Arc<Shared>,
     screen: Screen,
     tune_view: tune::TuneView,
@@ -74,6 +75,7 @@ impl BridgeApp {
             .unwrap_or_default();
         let source = toml::to_string_pretty(&edit).unwrap_or_default();
         Self {
+            sequences: sequence::Panel::new(shared.sequence_config()),
             connection: crate::application::app_state::Connection {
                 serial_device: config.serial_device,
                 baud_rate: config.baud_rate,
@@ -546,6 +548,7 @@ pub fn install_japanese_font(ctx: &egui::Context) {
 mod diagnose;
 mod ee;
 mod operate;
+mod sequence;
 mod pid;
 mod pid_plot;
 mod shortcuts;

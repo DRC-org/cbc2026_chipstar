@@ -261,7 +261,7 @@ fn document_category(root: &Path, path: &Path) -> &'static str {
         "基板・通信"
     } else if matches!(
         name,
-        "ee_operation.md" | "homing.md" | "host_operation.md" | "rtheta_z_machine.md"
+        "ee_operation.md" | "homing.md" | "host_operation.md" | "rtheta_z_machine.md" | "pick_sequences.md"
     ) {
         "機体・操作"
     } else {

@@ -128,16 +128,20 @@ impl BridgeApp {
             self.select_cctl_test(slot);
         }
         ui.add_space(8.0);
-        if ui.available_width() < 1000.0 {
-            self.manual_controls(ui, &status);
-            ui.add_space(8.0);
-            self.operate_ee(ui, &status);
-        } else {
-            ui.columns(2, |columns| {
-                self.manual_controls(&mut columns[0], &status);
-                self.operate_ee(&mut columns[1], &status);
-            });
-        }
+        self.operate_sequence(ui, &status);
+        ui.add_space(8.0);
+        ui.add_enabled_ui(!status.sequence.active, |ui| {
+            if ui.available_width() < 1000.0 {
+                self.manual_controls(ui, &status);
+                ui.add_space(8.0);
+                self.operate_ee(ui, &status);
+            } else {
+                ui.columns(2, |columns| {
+                    self.manual_controls(&mut columns[0], &status);
+                    self.operate_ee(&mut columns[1], &status);
+                });
+            }
+        });
     }
 
     pub(super) fn homing_controls(&mut self, ui: &mut egui::Ui, status: &Status) {

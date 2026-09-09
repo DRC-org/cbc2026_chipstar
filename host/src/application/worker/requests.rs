@@ -69,6 +69,13 @@ impl Runtime {
         {
             bail!("ホーミングを停止してから操作してください");
         }
+        if self.sequence.is_some() && !matches!(req.action.as_str(),
+            "stop" | "cut" | "safe" | "heartbeat" | "release" | "fault" | "sequence_save") {
+            bail!("シーケンス実行中です。手動操作は中断後に行ってください");
+        }
+        if req.action.starts_with("sequence_") {
+            return self.sequence_request(req, manual);
+        }
         if req.action == "sts" {
             return self.sts_request(req);
         }
