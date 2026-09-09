@@ -105,7 +105,7 @@ impl BridgeApp {
         section(
             ui,
             "競技の準備",
-            "操作ボタンはマウスでも押せます。右側はコントローラの割当です。",
+            "×：主操作　□：配置完了　○：最初に戻る　PS：停止。マウスでも同じ操作ができます。",
         );
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -116,8 +116,8 @@ impl BridgeApp {
                 self.preparation_action(
                     ui,
                     "ソフト緊停を解除する",
-                    "□",
-                    "1秒長押しして離す",
+                    "×",
+                    "押して離す",
                     true,
                     "estop_reset",
                 );
@@ -128,8 +128,8 @@ impl BridgeApp {
                 self.preparation_action(
                     ui,
                     "競技を開始する",
-                    "Options",
-                    "1秒長押しして離す",
+                    "×",
+                    "押して離す",
                     status.preparation_blocker.is_empty(),
                     "preparation_start",
                 );
@@ -137,8 +137,8 @@ impl BridgeApp {
                 self.preparation_action(
                     ui,
                     "準備操作を再開する",
-                    "Options",
-                    "1秒長押しして離す",
+                    "×",
+                    "押して離す",
                     true,
                     "preparation_return",
                 );
@@ -148,8 +148,8 @@ impl BridgeApp {
                 self.preparation_action(
                     ui,
                     "操縦を再開する",
-                    "Options",
-                    "1秒長押しして離す",
+                    "×",
+                    "押して離す",
                     Self::can_run(status),
                     "run",
                 );
@@ -215,8 +215,8 @@ impl BridgeApp {
                         self.preparation_action(
                             ui,
                             "自動ホーミングを開始する",
-                            "Create",
-                            "1秒長押しして離す",
+                            "×",
+                            "押して離す",
                             status.homing_ready,
                             "home",
                         );
@@ -225,32 +225,22 @@ impl BridgeApp {
                         self.preparation_action(
                             ui,
                             "操縦を開始する",
-                            "Options",
-                            "1秒長押しして離す",
+                            "×",
+                            "押して離す",
                             Self::can_run(status),
                             "run",
                         );
                         self.preparation_action(
                             ui,
-                            "開始待ちに切り替える",
-                            "×",
-                            "1秒長押しして離す",
+                            "配置を完了して開始待ちへ",
+                            "□",
+                            "押して離す",
                             status.preparation_blocker.is_empty(),
                             "preparation_wait",
                         );
                         if !status.preparation_blocker.is_empty() {
                             ui.colored_label(WARNING, &status.preparation_blocker);
                         }
-                        ui.collapsing("原点を設定し直す", |ui| {
-                            self.preparation_action(
-                                ui,
-                                "自動ホーミングを開始する",
-                                "Create",
-                                "1秒長押しして離す",
-                                status.homing_ready,
-                                "home",
-                            );
-                        });
                     }
                 }
             }
@@ -268,7 +258,7 @@ impl BridgeApp {
                 ui,
                 "停止して最初に戻る",
                 "○",
-                "1秒長押しして離す",
+                "押して離す",
                 !status.ai_active,
                 "preparation_restart",
             );

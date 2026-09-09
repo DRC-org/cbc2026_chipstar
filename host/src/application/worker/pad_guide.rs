@@ -5,7 +5,7 @@ pub(super) struct Guide {
     pub enabled: bool,
     pub confirmed: bool,
     armed: bool,
-    pending: Option<(usize, Instant)>,
+    pending: Option<usize>,
     context: Option<(PreparationPhase, PreparationStep, bool, bool, bool)>,
 }
 impl Default for Guide {
@@ -39,7 +39,7 @@ impl Runtime {
     }
 
     /// trueなら入力を消費済み。falseのときだけ既存の機体操縦へ渡す。
-    pub(super) fn read_guide(&mut self, input: &ControllerState, now: Instant) -> Result<bool> {
+    pub(super) fn read_guide(&mut self, input: &ControllerState, _now: Instant) -> Result<bool> {
         if !self.guide.enabled {
             self.guide.reset_input();
             return Ok(false);
@@ -70,11 +70,11 @@ impl Runtime {
         // ○だけは操縦・ホーミング中も「停止して最初へ戻る」として受け付ける。
         if (moving || self.homing.is_some() || self.sequence.is_some())
             && input.buttons[1] == 0
-            && !self.guide.pending.is_some_and(|(button, _)| button == 1)
+            && !self.guide.pending.is_some_and(|button| button == 1)
         {
             return Ok(self.homing.is_some() || self.sequence.is_some());
         }
-        if let Some((button, since)) = self.guide.pending {
+        if let Some(button) = self.guide.pending {
             let only_button = neutral_axes
                 && input
                     .buttons
@@ -86,23 +86,12 @@ impl Runtime {
                 self.guide.reset_input();
                 return Ok(true);
             }
-            let long = matches!(button, 0 | 1 | 2 | 4 | 6);
             if input.buttons[button] != 0 {
-                let confirmed = !long || now.duration_since(since) >= Duration::from_secs(1);
-                if long && confirmed && !self.guide.confirmed {
-                    self.operation_feedback(3);
-                }
-                self.guide.confirmed = confirmed;
                 return Ok(true);
             }
-            let confirmed = !long || now.duration_since(since) >= Duration::from_secs(1);
             self.guide.reset_input();
-            if confirmed {
-                self.guide_action(button)?;
-                self.error.clear();
-            } else {
-                self.operation_feedback(2);
-            }
+            self.guide_action(button)?;
+            self.error.clear();
             return Ok(true);
         }
         if neutral_axes {
@@ -113,8 +102,9 @@ impl Runtime {
                 .filter(|(_, b)| **b != 0)
                 .map(|(i, _)| i)
                 .collect();
-            if pressed.len() == 1 && matches!(pressed[0], 0 | 1 | 2 | 4 | 6 | 13 | 14) {
-                self.guide.pending = Some((pressed[0], now));
+            if pressed.len() == 1 && matches!(pressed[0], 0 | 1 | 2 | 13 | 14) {
+                self.guide.pending = Some(pressed[0]);
+                self.guide.confirmed = true;
             } else if !pressed.is_empty() {
                 self.guide.reset_input();
             }
@@ -130,19 +120,19 @@ impl Runtime {
             return Ok(());
         }
         if self.emergency {
-            if button == 2 {
+            if button == 0 {
                 self.request(&Request::new("estop_reset"), true)?;
             }
             return Ok(());
         }
         match (self.preparation, button) {
-            (PreparationPhase::Waiting, 6) => {
+            (PreparationPhase::Waiting, 0) => {
                 self.request(&Request::new("preparation_start"), true)?;
             }
-            (PreparationPhase::Recovery, 6) => {
+            (PreparationPhase::Recovery, 0) => {
                 self.request(&Request::new("preparation_return"), true)?;
             }
-            (PreparationPhase::Active, 6) => {
+            (PreparationPhase::Active, 0) => {
                 self.request(&Request::new("run"), true)?;
             }
             (PreparationPhase::Setting, 13 | 14) if self.court.is_none() => {
@@ -154,7 +144,7 @@ impl Runtime {
                     true,
                 )?;
             }
-            (PreparationPhase::Setting, 4) => {
+            (PreparationPhase::Setting, 0) if self.preparation_step() == PreparationStep::Home => {
                 self.request(
                     &Request {
                         flag: Some(true),
@@ -164,10 +154,10 @@ impl Runtime {
                     true,
                 )?;
             }
-            (PreparationPhase::Setting, 6) if self.court.is_some() => {
+            (PreparationPhase::Setting, 0) if self.preparation_step() == PreparationStep::Position => {
                 self.request(&Request::new("run"), true)?;
             }
-            (PreparationPhase::Setting, 0) => {
+            (PreparationPhase::Setting, 2) => {
                 self.request(&Request::new("preparation_wait"), true)?;
             }
             _ => {}
@@ -238,28 +228,22 @@ mod tests {
         assert_eq!(r.court.unwrap().homing_theta(), 90.0);
         assert_eq!(Court::Red.homing_theta(), -90.0);
         assert_eq!(r.preparation_step(), PreparationStep::Home);
-        assert!(press(&mut r, 0, 1000).is_err());
+        assert!(press(&mut r, 2, 1).is_err());
         assert_eq!(r.preparation_step(), PreparationStep::Home);
         // ホーミング完了時と同じ原点状態を与え、後続のガイド遷移を検証する。
         origins(&mut r);
         assert_eq!(r.preparation_step(), PreparationStep::Position);
-        press(&mut r, 6, 999).unwrap();
-        assert!(r.drive.awaiting().is_none());
-        press(&mut r, 6, 1000).unwrap();
+        press(&mut r, 0, 1).unwrap();
         assert!(r.drive.awaiting().is_some());
         r.tick().unwrap();
         assert!(r.drive.running());
-        press(&mut r, 0, 1000).unwrap();
+        press(&mut r, 0, 1).unwrap();
         assert_eq!(r.preparation_step(), PreparationStep::Position);
         press(&mut r, 5, 1).unwrap();
         r.tick().unwrap();
-        press(&mut r, 0, 999).unwrap();
-        assert_eq!(r.preparation, PreparationPhase::Setting);
-        press(&mut r, 0, 1000).unwrap();
+        press(&mut r, 2, 1).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Waiting);
-        press(&mut r, 6, 999).unwrap();
-        assert_eq!(r.preparation, PreparationPhase::Waiting);
-        press(&mut r, 6, 1000).unwrap();
+        press(&mut r, 0, 1).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Active);
         assert!(r.drive.awaiting().is_some());
     }
@@ -275,13 +259,13 @@ mod tests {
         r.read_pad(button(14), now).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
         assert_eq!(r.preparation_step(), PreparationStep::Home);
-        // コート選択を離した直後から押されているCreateは実行しない。
-        r.read_pad(button(4), now).unwrap();
-        r.read_pad(button(4), now + Duration::from_secs(2)).unwrap();
+        // コート選択を離した直後から押されている×は実行しない。
+        r.read_pad(button(0), now).unwrap();
+        r.read_pad(button(0), now + Duration::from_secs(2)).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
         assert!(r.homing.is_none());
-        r.read_pad(button(4), now).unwrap();
-        let mut mixed = button(4);
+        r.read_pad(button(0), now).unwrap();
+        let mut mixed = button(0);
         mixed.axes[0] = 0.5;
         r.read_pad(mixed, now).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
@@ -289,23 +273,22 @@ mod tests {
         assert!(r.manual_input.axes.iter().all(|v| *v == 0.0));
     }
     #[test]
-    fn homing_requires_long_release_and_ps_cancels_pending_action() {
+    fn homing_requires_release_and_ps_cancels_pending_action() {
         let mut r = runtime();
+        r.machine.invalidate_origins();
         r.court = Some(Court::Red);
-        press(&mut r, 4, 999).unwrap();
-        assert!(r.homing.is_none());
         let now = Instant::now();
         r.read_pad(ControllerState::default(), now).unwrap();
-        r.read_pad(button(4), now).unwrap();
-        r.read_pad(button(4), now + Duration::from_secs(1)).unwrap();
+        r.read_pad(button(0), now).unwrap();
+        r.read_pad(button(0), now + Duration::from_secs(1)).unwrap();
         assert!(r.homing.is_none());
         assert!(r.guide.confirmed);
-        let mut stop = button(4);
+        let mut stop = button(0);
         stop.buttons[5] = 1;
         r.read_pad(stop, now + Duration::from_secs(1)).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
         assert!(r.homing.is_none());
-        press(&mut r, 4, 1000).unwrap();
+        press(&mut r, 0, 1).unwrap();
         assert!(r.homing.is_some());
         press(&mut r, 5, 1).unwrap();
         assert!(r.homing.is_none());
@@ -318,18 +301,18 @@ mod tests {
         r.preparation = PreparationPhase::Waiting;
         let now = Instant::now();
         r.read_pad(ControllerState::default(), now).unwrap();
-        r.read_pad(button(6), now).unwrap();
+        r.read_pad(button(0), now).unwrap();
         r.disconnect_pad();
-        r.read_pad(button(6), now + Duration::from_secs(2)).unwrap();
+        r.read_pad(button(0), now + Duration::from_secs(2)).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Waiting);
-        press(&mut r, 1, 1000).unwrap();
+        press(&mut r, 1, 1).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Setting);
         assert_eq!(r.preparation_step(), PreparationStep::Court);
         r.engage_emergency().unwrap();
-        press(&mut r, 6, 1000).unwrap();
+        press(&mut r, 6, 1).unwrap();
         assert!(r.emergency);
-        press(&mut r, 2, 1000).unwrap();
+        press(&mut r, 0, 1).unwrap();
         assert!(!r.emergency);
         assert!(!r.drive.running() && r.drive.awaiting().is_none());
     }
@@ -352,14 +335,14 @@ mod tests {
         r.stop(false).unwrap();
         r.tick().unwrap();
         r.preparation = PreparationPhase::Waiting;
-        press(&mut r, 6, 1000).unwrap();
+        press(&mut r, 6, 1).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Waiting);
         assert!(r.drive.awaiting().is_none());
         r.request(&request(true), true).unwrap();
-        // 画面へ戻った時点で押されているOptionsは決定に使わない。
+        // 画面へ戻った時点で押されている×は決定に使わない。
         let now = Instant::now();
-        r.read_pad(button(6), now).unwrap();
-        r.read_pad(button(6), now + Duration::from_secs(2)).unwrap();
+        r.read_pad(button(0), now).unwrap();
+        r.read_pad(button(0), now + Duration::from_secs(2)).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Waiting);
     }
@@ -379,9 +362,9 @@ mod tests {
             .unwrap();
             assert_eq!(r.preparation_step(), PreparationStep::Home);
             if homing {
-                press(&mut r, 4, 1000).unwrap();
+                press(&mut r, 0, 1).unwrap();
                 assert!(r.homing.is_some());
-                press(&mut r, 1, 1000).unwrap();
+                press(&mut r, 1, 1).unwrap();
             } else {
                 origins(&mut r);
                 r.request(&Request::new("run"), true).unwrap();
@@ -427,7 +410,7 @@ mod tests {
         assert!(r.court.is_none());
     }
     #[test]
-    fn operation_sound_matches_mouse_pad_rejection_and_hold_threshold_once() {
+    fn operation_sound_matches_mouse_and_tap_without_repeating_while_held() {
         let mut r = runtime();
         assert!(r.device.as_ref().unwrap().tone);
         let cues = |r: &Runtime| {
@@ -450,14 +433,14 @@ mod tests {
         assert_eq!(cues(&r), vec!["TX TONE 1"]);
         let now = Instant::now();
         r.read_pad(ControllerState::default(), now).unwrap();
-        r.read_pad(button(4), now).unwrap();
-        r.read_pad(button(4), now + Duration::from_secs(1)).unwrap();
-        r.read_pad(button(4), now + Duration::from_secs(2)).unwrap();
-        assert_eq!(cues(&r), vec!["TX TONE 1", "TX TONE 3"]);
+        r.read_pad(button(0), now).unwrap();
+        r.read_pad(button(0), now + Duration::from_secs(1)).unwrap();
+        r.read_pad(button(0), now + Duration::from_secs(2)).unwrap();
+        assert_eq!(cues(&r), vec!["TX TONE 1"]);
         r.read_pad(ControllerState::default(), now + Duration::from_secs(2))
             .unwrap();
         assert!(r.homing.is_some());
-        assert_eq!(cues(&r), vec!["TX TONE 1", "TX TONE 3", "TX TONE 1"]);
+        assert_eq!(cues(&r), vec!["TX TONE 1", "TX TONE 1"]);
         assert!(r.request(&Request::new("preparation_wait"), true).is_err());
         assert_eq!(cues(&r).last().unwrap(), "TX TONE 2");
         let count = cues(&r).len();
