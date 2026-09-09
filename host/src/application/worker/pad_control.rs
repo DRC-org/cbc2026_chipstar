@@ -48,17 +48,6 @@ impl Runtime {
             if now.duration_since(since) >= Duration::from_secs(1) {
                 self.pad.home_ready = false;
                 self.pad.home_since = None;
-                let theta = self
-                    .cfg
-                    .machine
-                    .axes
-                    .iter()
-                    .position(|axis| axis.name == "theta")
-                    .context("θ軸の設定が必要です")?;
-                anyhow::ensure!(
-                    self.machine.capture_origin(theta, self.telemetry.as_ref()),
-                    "θの現在位置を原点に採用できません"
-                );
                 return self.begin_homing(true, true, 180.0).map(|_| ());
             }
         } else {

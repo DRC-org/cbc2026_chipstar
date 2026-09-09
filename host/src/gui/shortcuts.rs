@@ -165,6 +165,7 @@ pub(super) fn resolve(
             Key::Num2 => Some(Action::Screen(Screen::Tune)),
             Key::Num3 => Some(Action::Screen(Screen::Diagnose)),
             Key::Num4 => Some(Action::Screen(Screen::Documents)),
+            Key::Num5 => Some(Action::Screen(Screen::Debug)),
             _ => None,
         }
     })

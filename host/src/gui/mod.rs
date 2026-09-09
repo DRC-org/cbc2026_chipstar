@@ -24,10 +24,10 @@ enum Screen {
     Tune,
     Diagnose,
     Documents,
+    Debug,
 }
 
 pub struct BridgeApp {
-    preparation_confirmed: bool,
     sequences: sequence::Panel,
     shared: Arc<Shared>,
     screen: Screen,
@@ -50,8 +50,8 @@ pub struct BridgeApp {
     active_jog: Option<String>,
     vim: shortcuts::Vim,
     navigation: Option<Action>,
-    page_offsets: [f32; 4],
-    page_heights: [f32; 4],
+    page_offsets: [f32; 5],
+    page_heights: [f32; 5],
     command_open: bool,
     emergency_edit_guard: bool,
     previous_emergency: bool,
@@ -76,7 +76,6 @@ impl BridgeApp {
             .unwrap_or_default();
         let source = toml::to_string_pretty(&edit).unwrap_or_default();
         Self {
-            preparation_confirmed: false,
             sequences: sequence::Panel::new(shared.sequence_config()),
             connection: crate::application::app_state::Connection {
                 serial_device: config.serial_device,
@@ -104,8 +103,8 @@ impl BridgeApp {
             active_jog: None,
             vim: shortcuts::Vim::default(),
             navigation: None,
-            page_offsets: [0.0; 4],
-            page_heights: [0.0; 4],
+            page_offsets: [0.0; 5],
+            page_heights: [0.0; 5],
             command_open: false,
             emergency_edit_guard: false,
             previous_emergency: false,
@@ -166,7 +165,7 @@ impl BridgeApp {
             && self.draft_matches_applied()
     }
     fn can_run(status: &Status) -> bool {
-        if status.court.is_none() || status.preparation.locked() {
+        if status.preparation.locked() {
             return false;
         }
         !status.emergency
@@ -236,12 +235,15 @@ impl BridgeApp {
                     Screen::Tune,
                     Screen::Diagnose,
                     Screen::Documents,
+                    Screen::Debug,
                 ];
                 let index = screens
                     .iter()
                     .position(|screen| *screen == self.screen)
                     .unwrap_or(0);
-                self.switch_screen(screens[(index as i32 + direction).rem_euclid(4) as usize]);
+                self.switch_screen(
+                    screens[(index as i32 + direction).rem_euclid(screens.len() as i32) as usize],
+                );
             }
             Action::Scroll(_) | Action::Page(_) | Action::Edge(_) => self.navigation = Some(action),
             Action::Help => self.help_open = !self.help_open,
@@ -428,6 +430,7 @@ impl eframe::App for BridgeApp {
                     }
                     Screen::Diagnose => self.diagnose(ui),
                     Screen::Documents => self.documents.show(ui),
+                    Screen::Debug => self.debug_dashboard(ui),
                 });
                 self.page_offsets[page] = output.state.offset.y;
                 self.page_heights[page] = output.content_size.y;
@@ -818,4 +821,26 @@ mod workflow_tests {
         assert!(!reset.sts.active && !reset.sts.busy);
         assert!(!reset.outputs_active && !reset.running);
     }
+    #[test]
+    fn debug_dashboard_preserves_run_and_cannot_bypass_waiting() {
+        let mut harness = Harness::new();
+        harness.capture_origins();
+        harness.app.switch_screen(Screen::Debug);
+        harness.app.dispatch(Action::Run);
+        harness.wait(|s| s.running);
+        harness.app.switch_screen(Screen::Operate);
+        assert!(harness.shared.status_snapshot().running);
+        harness.app.dispatch(Action::Stop);
+        harness.wait(|s| !s.running);
+        harness.app.operation("preparation_wait");
+        harness.wait(|s| s.preparation == crate::application::app_state::PreparationPhase::Waiting);
+        harness.app.switch_screen(Screen::Debug);
+        harness.app.dispatch(Action::Run);
+        assert!(!harness.shared.status_snapshot().running);
+        assert!(harness.shared.status_snapshot().preparation.locked());
+        harness.app.screen = Screen::Operate;
+        harness.app.dispatch(Action::Tab(-1));
+        assert_eq!(harness.app.screen, Screen::Debug);
+    }
+
 }

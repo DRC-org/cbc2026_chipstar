@@ -76,6 +76,7 @@ impl BridgeApp {
                     (Screen::Tune, "2  調整"),
                     (Screen::Diagnose, "3  診断"),
                     (Screen::Documents, "4  文書"),
+                    (Screen::Debug, "5  デバッグ"),
                 ] {
                     let selected = self.screen == screen;
                     if top_level_tab(ui, label, selected).clicked() {

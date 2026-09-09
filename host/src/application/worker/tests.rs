@@ -219,6 +219,7 @@ pub(super) fn screen_runtime() -> Runtime {
         simulate: true,
     }));
     let mut runtime = Runtime::new(shared);
+    runtime.court = Some(Court::Red);
     for _ in 0..40 {
         runtime.tick().unwrap();
     }

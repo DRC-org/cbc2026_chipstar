@@ -49,10 +49,6 @@ impl BridgeApp {
                         self.operation("preparation_start");
                     }
                     ui.separator();
-                    ui.label(
-                        RichText::new("準備をやり直す場合は、先に審判の許可を得てください。")
-                            .color(MUTED),
-                    );
                     if ui.button("準備に戻る").clicked() {
                         self.operation("preparation_return");
                     }
@@ -126,7 +122,6 @@ impl BridgeApp {
                             text: Some(value.into()),
                             ..Request::new("preparation_court")
                         });
-                        self.preparation_confirmed = false;
                         self.homing_confirmed = false;
                     }
                 }
@@ -135,11 +130,6 @@ impl BridgeApp {
         if status.court.is_none() {
             return;
         }
-        ui.add_space(8.0);
-        ui.collapsing("設置時の注意", |ui| {
-            ui.label("ロボットエリアに入るときは、物理非常停止を押してください。");
-            ui.label("セッティングは審判の合図に従って行ってください。準備が間に合わない場合は、競技開始後にリトライを申告します。");
-        });
         ui.add_space(8.0);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -194,7 +184,11 @@ impl BridgeApp {
         ui.add_space(8.0);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            task_heading(ui, "3. 原点を設定する", "機体の位置を測る基準を設定します。先端をシューティングボックスの反対側へ向けてください。");
+            task_heading(
+                ui,
+                "3. 原点を設定する",
+                "機体を真正面に向けてから、自動ホーミングを開始してください。",
+            );
             self.homing_controls(ui, status);
         });
         ui.add_space(8.0);
@@ -228,40 +222,23 @@ impl BridgeApp {
             ui.set_width(ui.available_width());
             task_heading(
                 ui,
-                "5. 準備を完了する",
-                "機体を停止した状態で、次の項目を目視で確認してください。",
+                "5. 開始待ちにする",
+                "開始姿勢に配置して停止したら、開始待ちに進んでください。",
             );
-            ui.label("• 機体が固定され、規定のセッティング範囲に収まっている");
-            ui.label("• ケーブルが床に触れず、規定の範囲に収まっている");
-            ui.label("• 機体がシューティングエリアとボックスのどちらにも触れていない");
-            ui.label("• 操縦者とピットクルーが、それぞれの待機場所に移動している");
-            ui.add_space(8.0);
             if !status.preparation_blocker.is_empty() {
-                self.preparation_confirmed = false;
-                ui.colored_label(
-                    WARNING,
-                    format!("完了できない理由：{}", status.preparation_blocker),
-                );
+                ui.colored_label(WARNING, &status.preparation_blocker);
             }
-            ui.add_enabled_ui(status.preparation_blocker.is_empty(), |ui| {
-                ui.checkbox(&mut self.preparation_confirmed, "すべて確認しました");
-                ui.add_space(8.0);
-                if ui
-                    .add_enabled(
-                        self.preparation_confirmed,
-                        egui::Button::new("開始待ちに進む"),
-                    )
-                    .clicked()
-                {
-                    self.request(Request {
-                        flag: Some(true),
-                        ..Request::new("preparation_wait")
-                    });
-                    self.preparation_confirmed = false;
-                }
-            });
+            if ui
+                .add_enabled(
+                    status.preparation_blocker.is_empty(),
+                    egui::Button::new("開始待ちに進む"),
+                )
+                .clicked()
+            {
+                self.operation("preparation_wait");
+            }
             ui.label(
-                RichText::new("開始待ちに進んだら、審判に準備完了を知らせてください。")
+                RichText::new("開始待ちの間は操縦入力を無効にし、現在の保持状態を継続します。")
                     .color(MUTED),
             );
         });

@@ -74,7 +74,6 @@ impl Runtime {
                     "準備画面へ戻って再確認してください"
                 );
                 self.preparation_ready()?;
-                anyhow::ensure!(req.flag == Some(true), "開始姿勢と退避を確認してください");
                 self.manual_input = ControllerState::default();
                 self.screen_input_times = [None; 6];
                 self.preparation = PreparationPhase::Waiting;
@@ -100,7 +99,7 @@ impl Runtime {
                 self.stop(false)?;
                 self.preparation = PreparationPhase::Setting;
                 Ok(Reply::data(
-                    "準備操作に戻りました。待機中の作業は審判の許可に従ってください".into(),
+                    "準備画面に戻りました。必要な操作から準備を再開してください".into(),
                 ))
             }
             _ => bail!("不明な準備操作です"),
@@ -138,10 +137,7 @@ mod tests {
     fn wait(runtime: &mut Runtime) {
         runtime
             .request(
-                &Request {
-                    flag: Some(true),
-                    ..Request::new("preparation_wait")
-                },
+                &Request::new("preparation_wait"),
                 true,
             )
             .unwrap();
@@ -202,9 +198,8 @@ mod tests {
     }
 
     #[test]
-    fn confirmation_origins_and_human_authority_are_required() {
+    fn origins_and_human_authority_are_required() {
         let mut r = prepared();
-        assert!(r.request(&Request::new("preparation_wait"), true).is_err());
         assert!(r.request(&Request::new("preparation_wait"), false).is_err());
         r.machine.invalidate_origins();
         assert!(

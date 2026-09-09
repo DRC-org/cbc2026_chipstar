@@ -423,13 +423,13 @@ fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> b
                 ui.label("ⓘ").on_hover_text(description);
                 ui.end_row();
             }
-            if axis.limit.is_some() {
+            if axis.limit.is_some() || axis.name == "theta" {
                 let description =
-                    "r・z自動ホーミングで使う速度です。軸の最高速度に対する1〜100%で指定します。";
-                if matches!(axis.name.as_str(), "r" | "z") {
+                    "自動ホーミングで使う速度です。θの旋回とr・zの探索速度を、軸の最高速度に対する1〜100%で指定します。";
+                if axis.name == "z" {
                     let mut distance = axis.homing_retreat_mm();
-                    let help = "原点採用後にリミットから離れる距離です。rは後退、zは上昇します。0 mmで戻し移動を省略します。";
-                    ui.label("ホーミング戻し量").on_hover_text(help);
+                    let help = "z原点を設定した後、θを旋回する前に上昇する距離です。旋回経路に干渉しない高さを設定してください。";
+                    ui.label("ホーミング上昇量").on_hover_text(help);
                     if ui.add(egui::DragValue::new(&mut distance)
                         .speed(1.0).range(0.0..=f32::MAX).suffix(" mm"))
                         .on_hover_text(help).changed() {

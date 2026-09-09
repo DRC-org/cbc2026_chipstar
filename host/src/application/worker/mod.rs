@@ -1126,7 +1126,7 @@ impl Runtime {
             s.test_mode = self.test.enabled;
             s.ee_targets = self.ee.targets.clone();
             s.homing = self.homing.as_ref().map(|h| h.label.clone());
-            s.homing_ready = self.homing_idle()
+            s.homing_ready = self.court.is_some() && !self.preparation.locked() && self.homing_idle()
                 && !self.authority.active()
                 && self.axes_ready(false).is_ok();
             s.homing_confirmation = self.pad.home_since.map(|t| t.elapsed().as_secs_f32());
