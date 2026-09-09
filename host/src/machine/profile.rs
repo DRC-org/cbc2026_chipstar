@@ -86,11 +86,17 @@ pub struct PwmServoProfile {
     #[serde(default = "one")]
     pub input_sign: f32,
     pub speed_us_per_second: f32,
+    #[serde(default = "default_pwm_acceleration")]
+    pub acceleration_us_per_second2: f32,
     pub minimum_us: u16,
     pub maximum_us: u16,
     pub initial_us: u16,
     #[serde(default)]
     pub enabled: bool,
+}
+
+fn default_pwm_acceleration() -> f32 {
+    2500.0
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
@@ -104,7 +110,6 @@ pub struct SerialServoProfile {
     pub minimum_position: u16,
     pub maximum_position: u16,
     pub initial_position: u16,
-    pub move_speed: u16,
     pub acceleration: u8,
     #[serde(default)]
     pub enabled: bool,
@@ -432,8 +437,10 @@ impl MachineProfile {
             }
             if !servo.input_sign.is_finite()
                 || !servo.speed_us_per_second.is_finite()
+                || !servo.acceleration_us_per_second2.is_finite()
                 || servo.input_sign.abs() != 1.0
                 || servo.speed_us_per_second < 0.0
+                || servo.acceleration_us_per_second2 <= 0.0
                 || servo.minimum_us < PWM_MIN_US
                 || servo.maximum_us > PWM_MAX_US
                 || servo.minimum_us >= servo.maximum_us
@@ -464,11 +471,11 @@ impl MachineProfile {
                     || !servo.speed_position_per_second.is_finite()
                     || servo.input_sign.abs() != 1.0
                     || servo.speed_position_per_second < 0.0
+                    || servo.speed_position_per_second > 1000.0
                     || servo.maximum_position > 4095
                     || servo.minimum_position >= servo.maximum_position
                     || !(servo.minimum_position..=servo.maximum_position)
                         .contains(&servo.initial_position)
-                    || servo.move_speed > 1000
                     || servo.acceleration > 254
                 {
                     bail!("STS3215設定の範囲が不正です: {}", servo.name);

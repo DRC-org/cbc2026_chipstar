@@ -1,6 +1,5 @@
 dc_motors = []
 protocol_version = 1
-pwm_servos = []
 
 [[axes]]
 name = "r"
@@ -53,17 +52,60 @@ input = 1
 direction = -1.0
 normally_closed = false
 
+[[pwm_servos]]
+name = "ee_fold"
+channel = 0
+input_sign = 1.0
+speed_us_per_second = 100.0
+acceleration_us_per_second2 = 2500.0
+minimum_us = 555
+maximum_us = 1444
+initial_us = 555
+enabled = false
+
+[[pwm_servos]]
+name = "ee_grip_1"
+channel = 1
+input_sign = 1.0
+speed_us_per_second = 100.0
+acceleration_us_per_second2 = 2500.0
+minimum_us = 611
+maximum_us = 1500
+initial_us = 611
+enabled = false
+
+[[pwm_servos]]
+name = "ee_grip_2"
+channel = 2
+input_sign = 1.0
+speed_us_per_second = 100.0
+acceleration_us_per_second2 = 2500.0
+minimum_us = 611
+maximum_us = 1500
+initial_us = 611
+enabled = false
+
+[[pwm_servos]]
+name = "ee_grip_3"
+channel = 3
+input_sign = 1.0
+speed_us_per_second = 100.0
+acceleration_us_per_second2 = 2500.0
+minimum_us = 611
+maximum_us = 1500
+initial_us = 611
+enabled = false
+
 [[serial_svmd.servos]]
 name = "ee_rotation"
 id = 1
 input_sign = 1.0
-speed_position_per_second = 100.0
-minimum_position = 1800
-maximum_position = 2200
+speed_position_per_second = 1000.0
+minimum_position = 0
+maximum_position = 4095
 initial_position = 2048
-move_speed = 100
 acceleration = 10
-enabled = false
+enabled = true
 
 [parameters]
 c620_esc_id = 1.0

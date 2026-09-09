@@ -74,19 +74,52 @@ impl Runtime {
             return Ok(());
         }
         let mut targets = std::collections::BTreeMap::new();
-        let grip_pressed = buttons[13] != buttons[14];
+        let fold_pressed = buttons[11] != buttons[12]
+            && (buttons[11] != previous[11] || buttons[12] != previous[12]);
+        let grip_pressed = buttons[13] != buttons[14]
+            && (buttons[13] != previous[13] || buttons[14] != previous[14]);
+        if fold_pressed {
+            let axis = axes
+                .iter()
+                .find(|axis| axis.name == "ee_fold")
+                .context("畳みのEE割当を設定してください")?;
+            let direction = axis.pad_value(&input) * axis.sign;
+            targets.insert(
+                axis.name.clone(),
+                if direction > 0.0 { axis.max } else { axis.min },
+            );
+        }
         if grip_pressed {
             // 3本一括の割当不足を、一部だけ駆動する前に検出する。
             for name in ["ee_grip_1", "ee_grip_2", "ee_grip_3"] {
-                if !axes.iter().any(|a| a.name == name) {
-                    self.pad.ee_armed = false;
-                    bail!("把持3本のEE割当を設定してください");
-                }
+                let axis = axes
+                    .iter()
+                    .find(|axis| axis.name == name)
+                    .context("把持3本のEE割当を設定してください")?;
+                let direction = axis.pad_value(&input) * axis.sign;
+                targets.insert(
+                    axis.name.clone(),
+                    if direction > 0.0 { axis.max } else { axis.min },
+                );
             }
         }
         for axis in &axes {
-            if axis.pad_value(&input).abs() >= 0.1 && !self.ee.targets.contains_key(&axis.name) {
-                targets.insert(axis.name.clone(), axis.initial);
+            if matches!(axis.target, crate::diagnostics::individual::Target::Sts(_))
+                && axis.pad_value(&input).abs() >= 0.1
+                && !self.ee.targets.contains_key(&axis.name)
+            {
+                let initial = match axis.target {
+                    crate::diagnostics::individual::Target::Sts(id) => self
+                        .servo_feedback
+                        .get(&id)
+                        .filter(|feedback| {
+                            feedback.seen.elapsed() < Duration::from_millis(500)
+                                && feedback.error == 0
+                        })
+                        .map_or(axis.initial, |feedback| f32::from(feedback.position)),
+                    _ => axis.initial,
+                };
+                targets.insert(axis.name.clone(), initial);
             }
         }
         if !targets.is_empty() {
@@ -187,6 +220,7 @@ mod tests {
                     input_axis: None,
                     input_sign: if i == 2 { -1.0 } else { 1.0 },
                     speed_us_per_second: 100.0,
+                    acceleration_us_per_second2: 2500.0,
                     minimum_us: 1400,
                     maximum_us: 1600,
                     initial_us: 1500,
@@ -197,7 +231,29 @@ mod tests {
         r.drive = DriveState::Running;
     }
     #[test]
-    fn grips_require_neutral_and_all_three_permissions_and_apply_sign_and_slow() {
+    fn rotation_starts_from_fresh_servo_position_instead_of_profile_initial() {
+        let mut r = runtime();
+        r.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
+        r.drive = DriveState::Running;
+        r.test.peers.insert("sts", Instant::now());
+        r.servo_feedback.insert(
+            1,
+            ServoFeedback {
+                seen: Instant::now(),
+                position: 1857,
+                error: 0,
+                detail: String::new(),
+            },
+        );
+        let now = Instant::now();
+        r.read_pad(ControllerState::default(), now).unwrap();
+        let mut input = ControllerState::default();
+        input.axes[2] = 0.5;
+        r.read_pad(input, now).unwrap();
+        assert_eq!(r.ee.targets["ee_rotation"], 1857.0);
+    }
+    #[test]
+    fn grips_require_neutral_then_latch_configured_endpoints_with_acceleration() {
         let mut r = runtime();
         add_grips(&mut r);
         let now = Instant::now();
@@ -219,16 +275,52 @@ mod tests {
         r.tick_ee(now + Duration::from_millis(100)).unwrap();
         assert_eq!(r.ee.targets["ee_grip_1"], initial + 10.0);
         assert_eq!(r.ee.targets["ee_grip_2"], initial_reverse - 10.0);
+        assert_eq!(r.ee.goals["ee_grip_1"], 1600.0);
+        assert_eq!(r.ee.goals["ee_grip_2"], 1400.0);
         input.buttons[9] = 1;
         r.read_pad(input, now).unwrap();
         r.tick_ee(now + Duration::from_millis(200)).unwrap();
-        assert_eq!(r.ee.targets["ee_grip_1"], initial + 12.0);
+        assert_eq!(r.ee.targets["ee_grip_1"], initial + 15.0);
         r.read_pad(ControllerState::default(), now).unwrap();
         r.tick_ee(now + Duration::from_millis(300)).unwrap();
-        assert_eq!(r.ee.targets["ee_grip_1"], initial + 12.0);
+        assert_eq!(r.ee.targets["ee_grip_1"], initial + 25.0);
         r.stop(false).unwrap();
         assert!(r.ee.targets.is_empty());
         assert!(!r.pad.ee_armed);
+    }
+    #[test]
+    fn fold_button_selects_one_endpoint_per_press() {
+        let mut r = runtime();
+        r.cfg
+            .machine
+            .pwm_servos
+            .push(crate::machine::PwmServoProfile {
+                name: "ee_fold".into(),
+                channel: 0,
+                input_axis: None,
+                input_sign: 1.0,
+                speed_us_per_second: 100.0,
+                acceleration_us_per_second2: 2500.0,
+                minimum_us: 1400,
+                maximum_us: 1600,
+                initial_us: 1500,
+                enabled: true,
+            });
+        r.test.peers.insert("pwm", Instant::now());
+        r.drive = DriveState::Running;
+        let now = Instant::now();
+        r.read_pad(ControllerState::default(), now).unwrap();
+        let mut up = ControllerState::default();
+        up.buttons[11] = 1;
+        r.read_pad(up.clone(), now).unwrap();
+        assert_eq!(r.ee.goals["ee_fold"], 1600.0);
+        r.read_pad(up, now).unwrap();
+        assert_eq!(r.ee.goals["ee_fold"], 1600.0);
+        r.read_pad(ControllerState::default(), now).unwrap();
+        let mut down = ControllerState::default();
+        down.buttons[12] = 1;
+        r.read_pad(down, now).unwrap();
+        assert_eq!(r.ee.goals["ee_fold"], 1400.0);
     }
     #[test]
     fn screen_and_emergency_exclude_pad_actions() {

@@ -24,7 +24,6 @@ pub struct Axis {
     pub input_axis: Option<usize>,
     pub sign: f32,
     pub speed: f32,
-    pub move_speed: u16,
     pub acceleration: u8,
 }
 impl Axis {
@@ -77,7 +76,8 @@ impl Axis {
                 serial_svmd::Command::Target {
                     id,
                     position: value as u16,
-                    speed: self.move_speed,
+                    // 操作速度とサーボ内部速度を同じ値にし、二重の速度設定を作らない。
+                    speed: self.speed.round().clamp(1.0, 1000.0) as u16,
                     acceleration: self.acceleration,
                 }
                 .to_cctl_line(),
@@ -104,7 +104,6 @@ pub fn axes(profile: &MachineProfile) -> Vec<Axis> {
                     input_axis: s.input_axis,
                     sign: s.input_sign,
                     speed: s.speed_us_per_second,
-                    move_speed: 0,
                     acceleration: 0,
                 })
             } else {
@@ -125,7 +124,6 @@ pub fn axes(profile: &MachineProfile) -> Vec<Axis> {
                         input_axis: s.input_axis,
                         sign: s.input_sign,
                         speed: s.speed_position_per_second,
-                        move_speed: s.move_speed,
                         acceleration: s.acceleration,
                     })
             }
@@ -149,7 +147,6 @@ mod tests {
             input_axis: None,
             sign: 1.0,
             speed: 100.0,
-            move_speed: 100,
             acceleration: 0,
         };
         let mut input = crate::input::ControllerState::default();
@@ -157,6 +154,7 @@ mod tests {
         input.buttons[11] = 1;
         input.buttons[14] = 1;
         assert_eq!(axis.pad_value(&input), -0.75);
+        assert!(axis.commands(2048.0).unwrap()[0].ends_with("08000064"));
         axis.name = "ee_fold".into();
         assert_eq!(axis.pad_value(&input), 1.0);
         input.buttons[12] = 1;

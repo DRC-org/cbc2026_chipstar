@@ -171,7 +171,6 @@ impl BridgeApp {
                                 minimum_position: 1800,
                                 maximum_position: 2200,
                                 initial_position: 2048,
-                                move_speed: 100,
                                 acceleration: 10,
                                 enabled: false,
                             });
@@ -192,6 +191,7 @@ impl BridgeApp {
                                 input_axis: None,
                                 input_sign: 1.0,
                                 speed_us_per_second: 100.0,
+                                acceleration_us_per_second2: 2500.0,
                                 minimum_us: 1400,
                                 maximum_us: 1600,
                                 initial_us: 1500,
@@ -216,12 +216,26 @@ impl BridgeApp {
                             "µs",
                         );
                     });
-                    input_fields(
-                        ui,
-                        &mut s.input_axis,
-                        &mut s.input_sign,
-                        &mut s.speed_us_per_second,
-                        "µs/s",
+                    ui.horizontal_wrapped(|ui| {
+                        ui.selectable_value(&mut s.input_sign, 1.0, "標準方向");
+                        ui.selectable_value(&mut s.input_sign, -1.0, "端点を反転");
+                        ui.label("最高速度");
+                        ui.add(
+                            egui::DragValue::new(&mut s.speed_us_per_second)
+                                .range(1.0..=5000.0)
+                                .suffix(" µs/s"),
+                        );
+                        ui.label("加減速度");
+                        ui.add(
+                            egui::DragValue::new(&mut s.acceleration_us_per_second2)
+                                .range(1.0..=20000.0)
+                                .suffix(" µs/s²"),
+                        );
+                    });
+                    ui.label(
+                        RichText::new("十字キーを押すと移動下限または上限へ移動し、離しても目標位置まで動きます。")
+                            .size(12.0)
+                            .color(MUTED),
                     );
                     ui.checkbox(&mut s.enabled, "通常操作でこのサーボへ出力する");
                 }
@@ -245,8 +259,6 @@ impl BridgeApp {
                         );
                     });
                     ui.horizontal_wrapped(|ui| {
-                        ui.label("サーボ内部の速度上限");
-                        ui.add(egui::DragValue::new(&mut s.move_speed).range(1..=1000));
                         ui.label("サーボ内部の加速度");
                         ui.add(egui::DragValue::new(&mut s.acceleration).range(0..=254));
                     });
@@ -256,6 +268,7 @@ impl BridgeApp {
                         &mut s.input_sign,
                         &mut s.speed_position_per_second,
                         "count/s",
+                        1000.0,
                     );
                     ui.checkbox(&mut s.enabled, "通常操作でこのサーボへ出力する");
                 }
@@ -313,6 +326,7 @@ fn input_fields(
     sign: &mut f32,
     speed: &mut f32,
     unit: &str,
+    maximum_speed: f32,
 ) {
     ui.horizontal_wrapped(|ui| {
         egui::ComboBox::from_id_salt(ui.id().with("input"))
@@ -335,12 +349,12 @@ fn input_fields(
             });
         ui.selectable_value(sign, 1.0, "正転");
         ui.selectable_value(sign, -1.0, "反転");
-        ui.label("DualSense速度");
+        ui.label("最高速度");
         ui.add(
             egui::DragValue::new(speed)
-                .range(1.0..=5000.0)
+                .range(1.0..=maximum_speed)
                 .suffix(format!(" {unit}")),
         );
     });
-    ui.label(RichText::new("標準パッド：EE回転は右スティック左右、畳みは十字上下、把持は十字左右。入力中だけ指令位置を変えます。").size(12.0).color(MUTED));
+    ui.label(RichText::new("標準パッド：EE回転は右スティック左右。入力中だけ指令位置を変えます。").size(12.0).color(MUTED));
 }

@@ -168,6 +168,7 @@ fn can_status_distinguishes_serial_svmd_board_from_servo_feedback() {
         1,
         ServoFeedback {
             seen: Instant::now(),
+            position: 2048,
             error: 0,
             detail: "位置=2048、出力=解除、エラー=0x00".into(),
         },

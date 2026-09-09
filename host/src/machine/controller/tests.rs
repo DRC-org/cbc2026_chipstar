@@ -540,6 +540,7 @@ fn accepts_but_does_not_drive_pwm_servo_from_host_profile() {
         input_axis: Some(3),
         input_sign: -1.0,
         speed_us_per_second: 1000.0,
+        acceleration_us_per_second2: 2500.0,
         minimum_us: 900,
         maximum_us: 2100,
         initial_us: 1500,
@@ -556,11 +557,28 @@ fn accepts_but_does_not_drive_pwm_servo_from_host_profile() {
 }
 
 #[test]
-fn accepts_but_does_not_drive_serial_servo_from_host_profile() {
+fn pwm_acceleration_defaults_for_old_profiles_and_must_be_positive() {
+    let mut base = MachineProfile::embedded().unwrap();
+    base.pwm_servos.clear();
+    let mut base = toml::Value::try_from(&base).unwrap();
+    base.as_table_mut().unwrap().remove("pwm_servos");
+    let source = format!(
+        "{}\n[[pwm_servos]]\nname = \"gripper\"\nchannel = 0\ninput_sign = 1.0\nspeed_us_per_second = 1000.0\nminimum_us = 900\nmaximum_us = 2100\ninitial_us = 1500\nenabled = true\n",
+        toml::to_string(&base).unwrap()
+    );
+    let mut profile = MachineProfile::parse(&source).unwrap();
+    assert_eq!(profile.pwm_servos[0].acceleration_us_per_second2, 2500.0);
+    profile.pwm_servos[0].acceleration_us_per_second2 = 0.0;
+    assert!(profile.validate().is_err());
+}
+
+#[test]
+fn accepts_legacy_serial_servo_speed_but_saves_only_the_single_speed() {
     let source = format!(
         "{EMBEDDED_PROFILE}\n[serial_svmd]\n\n[[serial_svmd.servos]]\nname = \"arm\"\nid = 12\ninput_axis = 4\ninput_sign = 1.0\nspeed_position_per_second = 500.0\nminimum_position = 1000\nmaximum_position = 3000\ninitial_position = 2000\nmove_speed = 400\nacceleration = 30\nenabled = true\n"
     );
     let profile = MachineProfile::parse(&source).unwrap();
+    assert!(!toml::to_string(&profile).unwrap().contains("move_speed"));
     assert!(profile.requires_serial_svmd());
     assert!(profile.requires_can_bus_2());
     let mut machine = MachineController::new(profile);

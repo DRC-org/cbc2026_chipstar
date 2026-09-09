@@ -80,6 +80,7 @@ struct Runtime {
 #[derive(Clone)]
 struct ServoFeedback {
     seen: Instant,
+    position: u16,
     error: u8,
     detail: String,
 }
@@ -438,10 +439,12 @@ impl Runtime {
             }
             self.shared.log(format!("RX {line}"));
             if let Some((id, detail)) = crate::protocol::serial_svmd::parse_diagnostic(&line) {
+                let position = self.servo_feedback.get(&id).map_or(0, |state| state.position);
                 self.servo_feedback.insert(
                     id,
                     ServoFeedback {
                         seen: Instant::now(),
+                        position,
                         error: 0xFF,
                         detail: detail.clone(),
                     },
@@ -478,6 +481,7 @@ impl Runtime {
                     servo.id,
                     ServoFeedback {
                         seen: Instant::now(),
+                        position: servo.position,
                         error: servo.error,
                         detail: format!(
                             "位置={}、出力={}、エラー=0x{:02X}",
