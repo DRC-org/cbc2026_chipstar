@@ -303,7 +303,7 @@ fn rejected_drive_recovery_stays_stopped_and_preserves_origins() {
 }
 
 #[test]
-fn stop_hold_and_output_cut_have_distinct_safe_states() {
+fn stop_hold_z_hold_and_all_torque_off_have_distinct_states() {
     let host = Host::new();
     let token = host.claim();
     host.origins(&token);
@@ -348,9 +348,14 @@ fn stop_hold_and_output_cut_have_distinct_safe_states() {
     assert!(host.request("cut", &token).ok);
     let cut = host.wait(|state| {
         state["running"].as_bool() == Some(false)
-            && state["outputs_active"].as_bool() == Some(false)
+            && state["operating_state"].as_str() == Some("出力停止・z保持")
     });
+    assert_eq!(cut["outputs_active"].as_bool(), Some(true));
     assert!(all_origins(&cut, true));
+    assert!(host.request("safe", &token).ok);
+    let off = host.wait(|state| state["outputs_active"].as_bool() == Some(false));
+    assert!(!off["running"].as_bool().unwrap());
+    assert!(all_origins(&off, true));
     thread::sleep(Duration::from_millis(200));
     assert_eq!(host.status()["running"].as_bool(), Some(false));
     host.run(&token);
