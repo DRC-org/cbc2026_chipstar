@@ -5,12 +5,14 @@ impl BridgeApp {
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal(|ui| {
-                ui.label(RichText::new("EEを操作").strong());
+                ui.label(RichText::new("先端機構の操作").strong());
                 if ui.small_button("設定を開く").clicked() {
                     self.tune_view = tune::TuneView::Ee;
                     self.switch_screen(Screen::Tune);
                 }
             });
+            ui.label(RichText::new("操縦を有効にしてから、各機構の移動先を指定してください。").size(12.0).color(MUTED));
+            ui.add_space(6.0);
             let axes = ee::axes(&self.shared.config().machine);
             let can = status.running
                 && !status.test_mode

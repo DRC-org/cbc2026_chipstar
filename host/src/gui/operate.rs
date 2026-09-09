@@ -6,14 +6,6 @@ impl BridgeApp {
         if !self.preparation_panel(ui, &status) {
             return;
         }
-        if status.preparation == crate::application::app_state::PreparationPhase::Setting {
-            ui.columns(2, |columns| {
-                self.manual_controls(&mut columns[0], &status);
-                self.operate_ee(&mut columns[1], &status);
-            });
-            self.operate_sequence(ui, &status);
-            return;
-        }
         ui.add_space(8.0);
         let config = self.shared.config();
         ui.horizontal(|ui| {
@@ -157,53 +149,87 @@ impl BridgeApp {
     }
 
     pub(super) fn homing_controls(&mut self, ui: &mut egui::Ui, status: &Status) {
-        ui.separator();
-        let theta = self.shared.config().machine.axes.iter()
-            .find(|axis| axis.name == "theta").cloned();
+        let theta = self
+            .shared
+            .config()
+            .machine
+            .axes
+            .iter()
+            .find(|axis| axis.name == "theta")
+            .cloned();
         if let Some(theta) = theta {
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("θ原点（手動）").strong());
-                let captured = status.origins.iter()
+                ui.label(RichText::new("旋回（θ）の原点").strong());
+                let captured = status
+                    .origins
+                    .iter()
                     .any(|axis| axis.name == "theta" && axis.captured);
-                chip(ui, if captured { "採用済み" } else { "未採用" },
-                    if captured { ACCENT } else { WARNING });
-                if ui.add_enabled(status.homing_ready,
-                    egui::Button::new("θの現在位置を原点に採用"))
-                    .on_hover_text(format!(
-                        "現在のθ位置に {} {} を割り当てます。モータは移動しません。停止・保持中も採用できます。",
-                        theta.origin_position, theta.unit))
-                    .clicked() {
-                    self.request(Request {
-                        axis: Some("theta".into()),
-                        ..Request::new("origin")
-                    });
-                }
-                ui.label(format!("採用座標：{} {}", theta.origin_position, theta.unit));
+                chip(
+                    ui,
+                    if captured {
+                        "設定済み"
+                    } else {
+                        "未設定"
+                    },
+                    if captured { ACCENT } else { WARNING },
+                );
             });
-            ui.label(RichText::new(
-                "EEをシューティングボックスの反対側に向けて採用してください。r・zホーミングの前後どちらでも操作できます。")
-                .size(12.0).color(MUTED));
-        }
-        ui.horizontal_wrapped(|ui| {
-            ui.label(RichText::new("r・z原点").strong());
-            if let Some(label) = &status.homing {
-                chip(ui, label, ACCENT);
-                if ui.button("中断").clicked() {
-                    self.dispatch(Action::Stop);
-                }
-                return;
+            ui.label(
+                RichText::new(format!(
+                    "現在の向きを {} {} として記録します。この操作では機体は動きません。",
+                    theta.origin_position, theta.unit
+                ))
+                .size(12.0)
+                .color(MUTED),
+            );
+            if ui
+                .add_enabled(
+                    status.homing_ready,
+                    egui::Button::new("現在の向きをθの原点にする"),
+                )
+                .clicked()
+            {
+                self.request(Request {
+                    axis: Some("theta".into()),
+                    ..Request::new("origin")
+                });
             }
+        }
+        ui.add_space(12.0);
+        ui.horizontal_wrapped(|ui| {
+            ui.label(RichText::new("伸縮（r）・昇降（z）の原点").strong());
+            let captured = ["r", "z"].iter().all(|name| {
+                status
+                    .origins
+                    .iter()
+                    .any(|axis| axis.name == *name && axis.captured)
+            });
+            chip(
+                ui,
+                if captured {
+                    "設定済み"
+                } else {
+                    "未設定"
+                },
+                if captured { ACCENT } else { WARNING },
+            );
+        });
+        ui.label(RichText::new("zを下端まで下げてから上昇し、rを前端まで伸ばしてから戻します。移動経路に干渉がないことを確認してください。").size(12.0).color(MUTED));
+        if let Some(label) = &status.homing {
+            ui.colored_label(ACCENT, label);
+            if ui.button("原点設定を中断する").clicked() {
+                self.dispatch(Action::Stop);
+            }
+        } else {
             ui.checkbox(
                 &mut self.homing_confirmed,
-                "姿勢・経路を確認済み",
-            )
-            .on_hover_text(
-                "EEがシューティングボックスの反対側を向き、z下降・設定量の上昇・r前進・設定量の後退の全経路に干渉がないことを確認してください",
+                "先端の向きと移動経路を確認しました",
             );
-            let can_start = self.homing_confirmed && status.homing_ready;
             if ui
-                .add_enabled(can_start, egui::Button::new("自動設定を開始"))
-                .on_hover_text("zを下端へ移動した後、rを前端へ移動して原点座標を設定します")
+                .add_enabled(
+                    self.homing_confirmed && status.homing_ready,
+                    egui::Button::new("r・zの原点設定を開始する"),
+                )
                 .clicked()
             {
                 self.homing_confirmed = false;
@@ -213,11 +239,8 @@ impl BridgeApp {
                     ..Request::new("home")
                 });
             }
-        });
-        ui.label(
-            RichText::new("現在のθを0°に採用 → z下端 → zを設定量上昇 → r前端 → rを設定量後退。DualSenseでは停止中にCreateを1秒長押し。")
-                .size(12.0)
-                .color(MUTED),
-        );
+        }
+        ui.add_space(6.0);
+        ui.label(RichText::new("パッドで行う場合：停止中にCreateを1秒長押しすると、θの原点記録に続いてr・zの原点設定を開始します。").size(12.0).color(MUTED));
     }
 }

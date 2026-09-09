@@ -50,7 +50,9 @@ impl BridgeApp {
                 if ui
                     .add_enabled(
                         Self::can_run(status),
-                        egui::Button::new("運転再開")
+                        egui::Button::new(if status.preparation == crate::application::app_state::PreparationPhase::Setting {
+                            "操縦を有効にする"
+                        } else { "操縦を再開する" })
                             .min_size(egui::vec2(92.0, 34.0))
                             .fill(Color32::from_rgb(27, 80, 74)),
                     )

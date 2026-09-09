@@ -5,8 +5,9 @@ impl BridgeApp {
         let slow_speed_percent = self.shared.config().machine.slow_speed_percent;
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
+            ui.label(RichText::new("アームの操作").strong());
+            ui.label(RichText::new("停止中に操縦方法を切り替えられます。").size(12.0).color(MUTED));
             ui.horizontal_wrapped(|ui| {
-                ui.label(RichText::new("操縦入力を選択").strong());
                 ui.add_enabled_ui(
                     !status.emergency && !status.test_mode && !status.ai_active && !status.running,
                     |ui| {
@@ -71,7 +72,9 @@ impl BridgeApp {
                     .color(MUTED),
                 );
             }
-            gamepad::monitor(ui, status, &self.shared.config().machine);
+            ui.collapsing("コントローラの入力状態", |ui| {
+                gamepad::monitor(ui, status, &self.shared.config().machine);
+            });
 
         });
     }
