@@ -69,12 +69,6 @@ Sts3215::Result Sts3215::sendInstruction(uint8_t id, uint8_t instruction,
                                          uint8_t parameter_count) {
   if (huart_ == nullptr || id == 0xFF) return Result::ArgumentError;
   last_servo_error_ = 0;
-  // STSの単線UARTは待機時HIGH。ここがLOWなら、IDやbaudを試す前に
-  // サーボ側電源・SWCTL・信号配線のいずれかが成立していない。
-  if (HAL_GPIO_ReadPin(USART_SSV_RX_GPIO_Port, USART_SSV_RX_Pin) == GPIO_PIN_RESET) {
-    last_hal_status_ = HAL_OK;
-    return Result::BusLow;
-  }
   if (rx_restart_pending_ || (dma_rx_ && huart_->ErrorCode != HAL_UART_ERROR_NONE)) {
     // DMA停止や応答途中のタイムアウト後は、再送前に受信を張り直す。
     // 再開失敗時も次の命令で再試行し、ポーリング受信へ暗黙に移行しない。
