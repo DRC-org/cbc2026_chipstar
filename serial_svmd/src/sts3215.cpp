@@ -154,11 +154,12 @@ Sts3215::Result Sts3215::ping(uint8_t id) {
 }
 
 Sts3215::Result Sts3215::read(uint8_t id, uint8_t address, uint8_t* data, uint8_t length) {
-  auto result = readOnce(id, address, data, length);
-  if (result == Result::Timeout || result == Result::HalError ||
-      result == Result::ProtocolError || result == Result::ChecksumError) {
-    HAL_Delay(1);
+  Result result = Result::ArgumentError;
+  for (uint8_t attempt = 0; attempt < 3; ++attempt) {
+    if (attempt) HAL_Delay(5);
     result = readOnce(id, address, data, length);
+    if (result != Result::Timeout && result != Result::HalError &&
+        result != Result::ProtocolError && result != Result::ChecksumError) return result;
   }
   return result;
 }
@@ -216,7 +217,7 @@ Sts3215::Result Sts3215::write(uint8_t id, uint8_t address, const uint8_t* data,
 Sts3215::Result Sts3215::setTorque(uint8_t id, bool enable) {
   const uint8_t value = enable ? 1 : 0;
   return id == BROADCAST_ID ? write(id, proto::reg::TORQUE_ENABLE, &value, 1)
-                            : writeVerified(id, proto::reg::TORQUE_ENABLE, &value, 1);
+                            : writeAbsoluteVerified(id, proto::reg::TORQUE_ENABLE, &value, 1);
 }
 
 Sts3215::Result Sts3215::setTarget(const Target& target) {
@@ -226,7 +227,22 @@ Sts3215::Result Sts3215::setTarget(const Target& target) {
 
   uint8_t data[proto::TARGET_DATA_LENGTH];
   proto::encodeTarget(target, data);
-  return writeVerified(target.id, proto::reg::ACCELERATION, data, sizeof(data));
+  return writeAbsoluteVerified(target.id, proto::reg::ACCELERATION, data, sizeof(data));
+}
+
+Sts3215::Result Sts3215::writeAbsoluteVerified(uint8_t id, uint8_t address,
+                                             const uint8_t* data, uint8_t length) {
+  // 絶対位置とトルクON/OFFは同じ値を再送しても作用が累積しない。
+  // 相対ステップ、EEPROM、ID変更にはこの経路を使用しない。
+  Result result = Result::ArgumentError;
+  for (uint8_t attempt = 0; attempt < 3; ++attempt) {
+    if (attempt) HAL_Delay(1);
+    result = writeVerified(id, address, data, length);
+    if (result != Result::Timeout && result != Result::HalError &&
+        result != Result::ProtocolError && result != Result::ChecksumError &&
+        result != Result::ReadbackMismatch) return result;
+  }
+  return result;
 }
 
 Sts3215::Result Sts3215::syncWriteTargets(const Target* targets, std::size_t count) {
@@ -273,13 +289,30 @@ Sts3215::Result Sts3215::readPosition(uint8_t id, uint16_t& position) {
 }
 
 Sts3215::Result Sts3215::writeVerified(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length) {
-  if (id >= BROADCAST_ID || length > proto::MAX_RX_PARAMETERS) return Result::ArgumentError;
+  if (id >= BROADCAST_ID || !data || !length || length > proto::MAX_RX_PARAMETERS) return Result::ArgumentError;
   auto result = write(id, address, data, length);
   if (result != Result::Ok) return result;
+  return verifyReadback(id, address, data, length);
+}
+
+Sts3215::Result Sts3215::verifyReadback(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length) {
+  if (id >= BROADCAST_ID || !data || !length || length > proto::MAX_RX_PARAMETERS) return Result::ArgumentError;
   uint8_t actual[proto::MAX_RX_PARAMETERS];
-  result = read(id, address, actual, length);
-  if (result != Result::Ok) return result;
-  return std::memcmp(data, actual, length) == 0 ? Result::Ok : Result::ReadbackMismatch;
+  // 無応答WRITE直後の反映遅延にはREADだけを再試行する。
+  // 相対移動を二重実行しないよう、書込み自体は再送しない。
+  for (uint8_t attempt = 0; attempt < 3; ++attempt) {
+    if (attempt) HAL_Delay(1);
+    const auto result = read(id, address, actual, length);
+    if (result != Result::Ok) return result;
+    if (std::memcmp(data, actual, length) == 0) return Result::Ok;
+    for (uint8_t i = 0; i < length; ++i) {
+      if (data[i] != actual[i]) {
+        mismatch_ = {static_cast<uint8_t>(address + i), data[i], actual[i]};
+        break;
+      }
+    }
+  }
+  return Result::ReadbackMismatch;
 }
 
 Sts3215::Result Sts3215::writeUnacknowledged(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length) {

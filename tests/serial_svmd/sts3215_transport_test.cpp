@@ -13,10 +13,13 @@ uint32_t ticks=0;
 std::array<uint8_t,256> regs;
 std::vector<std::vector<uint8_t>> sent;
 bool silent=false, noise=false, ignore_write=false;
+unsigned delayed_reads=0, dropped_writes=0, dropped_reads=0;
+std::vector<uint8_t> pending_write;
+uint8_t pending_address=0;
 uint8_t fault=0;
 bool receiver_stalled=false, fail_start=false, receive_error=false;
 unsigned receiver_starts=0;
-void reset() { regs.fill(0);regs[56]=0x34;regs[57]=0x08;sent.clear();ticks=0;silent=noise=ignore_write=false;fault=0;uart.ErrorCode=0;receiver_stalled=fail_start=receive_error=false;receiver_starts=0; }
+void reset() { regs.fill(0);regs[56]=0x34;regs[57]=0x08;sent.clear();ticks=0;silent=noise=ignore_write=false;fault=0;uart.ErrorCode=0;receiver_stalled=fail_start=receive_error=false;receiver_starts=0;delayed_reads=0;dropped_writes=0;dropped_reads=0;pending_write.clear(); }
 void append(const std::vector<uint8_t>& bytes) { for(auto b:bytes) {rx[head]=b;head=(head+1)%size;} dma.count=size-head; }
 void status(uint8_t id, const std::vector<uint8_t>& data, uint8_t error=0) {
  std::vector<uint8_t> p{255,255,id,static_cast<uint8_t>(data.size()+2),error};
@@ -39,13 +42,22 @@ HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef*,uint8_t* p,uint16_t n,ui
  if(receiver_stalled)return HAL_OK;
  if(silent) return HAL_OK;
  if(p[4]==0x83) {
-  if(!ignore_write) std::memcpy(regs.data()+p[5],p+8,p[6]);
+  if(dropped_writes) {--dropped_writes;return HAL_OK;}
+  if(!ignore_write) {
+   if(delayed_reads) {pending_address=p[5];pending_write.assign(p+8,p+8+p[6]);}
+   else std::memcpy(regs.data()+p[5],p+8,p[6]);
+  }
  } else if(p[4]==3) {
   if(!ignore_write) std::memcpy(regs.data()+p[5],p+6,n-7);
   if(p[2]!=254)status(p[2],{},fault);
  } else if(p[4]==2) {
+  if(dropped_reads) {--dropped_reads;return HAL_OK;}
   if(noise) {append({0,7,255});status(9,{});status(p[2],{});noise=false;}
   status(p[2],std::vector<uint8_t>(regs.begin()+p[5],regs.begin()+p[5]+p[6]),fault);
+  if(delayed_reads && --delayed_reads==0 && !pending_write.empty()) {
+   std::memcpy(regs.data()+pending_address,pending_write.data(),pending_write.size());
+   pending_write.clear();
+  }
  } else if(p[4]==1)status(p[2],{},fault);
  return HAL_OK;
 }
@@ -65,7 +77,7 @@ TEST_CASE("受信停止のタイムアウト後はDMAを張り直し再開失敗
  CHECK(sent.size()==transmissions);
  fail_start=false;silent=false;
  REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
- CHECK(position==2100);CHECK(receiver_starts==6);
+ CHECK(position==2100);CHECK(receiver_starts==8);
 }
 TEST_CASE("受信UART異常はHAL成功と誤表示せず次の読取りで復旧する") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
@@ -74,7 +86,15 @@ TEST_CASE("受信UART異常はHAL成功と誤表示せず次の読取りで復�
  CHECK(bus.lastHalStatus()==HAL_ERROR);
  receive_error=false;
  REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
- CHECK(receiver_starts==3);CHECK(position==2100);
+ CHECK(receiver_starts==4);CHECK(position==2100);
+}
+TEST_CASE("一時的な読取り応答の欠落は受信再初期化と3回目のREADで回復する") {
+ reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ dropped_reads=2;uint16_t position=0;
+ REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
+ CHECK(position==2100);CHECK(sent.size()==3);CHECK(receiver_starts==3);
+ for(const auto& packet:sent) CHECK(packet[4]==2);
+ CHECK(ticks>=5000);
 }
 TEST_CASE("応答なしや読戻し不一致を送信成功として扱わない") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
@@ -82,6 +102,55 @@ TEST_CASE("応答なしや読戻し不一致を送信成功として扱わない
  silent=false;ignore_write=true;CHECK(bus.setTorque(1,true)==Sts3215::Result::ReadbackMismatch);
  ignore_write=false;CHECK(bus.setTorque(1,true)==Sts3215::Result::Ok);
  CHECK(regs[40]==1);CHECK(sent[sent.size()-2][4]==0x83);
+}
+TEST_CASE("目標の反映遅延は読戻しだけを再試行し書込みを重複させない") {
+ reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ delayed_reads=2;
+ REQUIRE(bus.setTarget({1,10,2048,0,100})==Sts3215::Result::Ok);
+ unsigned writes=0,reads=0;
+ for(const auto& p:sent) {writes+=p[4]==0x83;reads+=p[4]==2;}
+ CHECK(writes==1);CHECK(reads==3);CHECK(ticks>=200);
+}
+TEST_CASE("継続する不一致は上限で失敗し最初の不一致バイトを残す") {
+ reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ ignore_write=true;
+ REQUIRE(bus.setTarget({1,0,2048,0,100})==Sts3215::Result::ReadbackMismatch);
+ const auto mismatch=bus.lastReadbackMismatch();
+ CHECK(mismatch.address==43);CHECK(mismatch.expected==8);CHECK(mismatch.actual==0);
+ unsigned writes=0,reads=0;
+ for(const auto& p:sent) {writes+=p[4]==0x83;reads+=p[4]==2;}
+ CHECK(writes==3);CHECK(reads==9);
+}
+TEST_CASE("失われた絶対位置指令は同じ目標を再送して照合する") {
+ reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ dropped_writes=2;
+ REQUIRE(bus.setTarget({1,10,2048,0,100})==Sts3215::Result::Ok);
+ unsigned writes=0;
+ for(const auto& p:sent) if(p[4]==0x83) {
+  ++writes;CHECK(p[8]==10);CHECK(p[9]==0);CHECK(p[10]==8);
+ }
+ CHECK(writes==3);CHECK(regs[42]==0);CHECK(regs[43]==8);
+}
+TEST_CASE("一般書込みは読戻し不一致でも再送しない") {
+ reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ ignore_write=true;const uint8_t value=1;
+ CHECK(bus.writeVerified(1,55,&value,1)==Sts3215::Result::ReadbackMismatch);
+ unsigned writes=0;for(const auto& p:sent) writes+=p[4]==0x83;
+ CHECK(writes==1);
+}
+TEST_CASE("出力解除の取りこぼしも読戻しを確認して再送する") {
+ reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ regs[40]=1;dropped_writes=2;
+ REQUIRE(bus.setTorque(1,false)==Sts3215::Result::Ok);
+ CHECK(regs[40]==0);
+ unsigned writes=0;for(const auto& p:sent) writes+=p[4]==0x83;
+ CHECK(writes==3);
+}
+TEST_CASE("読戻し時のサーボ保護異常は再試行しない") {
+ reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ fault=4;
+ CHECK(bus.setTarget({1,10,2048,0,100})==Sts3215::Result::ServoError);
+ CHECK(sent.size()==2);CHECK(bus.lastServoError()==4);
 }
 TEST_CASE("現在位置の目標を書いてからトルクを有効化する") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
@@ -138,6 +207,18 @@ TEST_CASE("相対ステップのEXECUTE再送で二度動かさず停止で待�
  REQUIRE(service.stop());CHECK(regs[40]==0);CHECK_FALSE(service.active());
  const uint8_t empty[8]={1,23,1,8,0,0,0,0};
  service.handle(empty,true);CHECK(replies.back()[4]!=0);
+}
+TEST_CASE("相対ステップは読戻し不一致でも目標を書き直さず停止する") {
+ reset();replies.clear();regs[33]=3;regs[40]=1;dropped_writes=1;
+ Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ ServoService service(bus,emitService,changeBaud);
+ const uint8_t stage[8]={1,22,1,20,0,10,0,100};
+ const uint8_t execute[8]={1,23,1,7,0,0,0,0};
+ service.handle(stage,true);service.handle(execute,true);
+ CHECK(replies.back()[4]==static_cast<uint8_t>(Sts3215::Result::ReadbackMismatch));
+ CHECK_FALSE(service.active());CHECK(regs[40]==0);
+ unsigned targets=0;for(const auto& p:sent) targets+=p[4]==0x83&&p[5]==41;
+ CHECK(targets==1);
 }
 TEST_CASE("保存設定は停止中だけ変更しモード3の角度制限とロックを読戻す") {
  reset();replies.clear();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);

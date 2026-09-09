@@ -71,6 +71,13 @@ class Sts3215 {
 
   Result readPosition(uint8_t id, uint16_t& position);
   Result writeVerified(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length);
+  Result verifyReadback(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length);
+  struct ReadbackMismatch {
+    uint8_t address = 0;
+    uint8_t expected = 0;
+    uint8_t actual = 0;
+  };
+  ReadbackMismatch lastReadbackMismatch() const { return mismatch_; }
   Result writeUnacknowledged(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length);
   Result syncWriteRawTargets(const Target* targets, std::size_t count);
 
@@ -81,6 +88,7 @@ class Sts3215 {
   HAL_StatusTypeDef lastHalStatus() const { return last_hal_status_; }
 
  private:
+  Result writeAbsoluteVerified(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length);
   Result readOnce(uint8_t id, uint8_t address, uint8_t* data, uint8_t length);
   Result sendInstruction(uint8_t id, uint8_t instruction, const uint8_t* parameters,
                          uint8_t parameter_count);
@@ -99,4 +107,5 @@ class Sts3215 {
   bool wait_for_write_status_;
   HAL_StatusTypeDef last_hal_status_ = HAL_OK;
   uint8_t last_servo_error_ = 0;
+  ReadbackMismatch mismatch_;
 };

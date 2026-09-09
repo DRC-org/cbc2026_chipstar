@@ -129,11 +129,10 @@ R ServoService::execute() {
   active_ = true;
   // 相対ステップも送信は1回だけ。確認はREADのみで、再送しない。
   for (uint8_t i = 0; i < count_; ++i) {
-    uint8_t expected[7], actual[7];
+    uint8_t expected[7];
     domain::sts3215::encodeTarget(staged_[i], expected);
-    r = bus_.read(staged_[i].id, 41, actual, 7);
+    r = bus_.verifyReadback(staged_[i].id, 41, expected, 7);
     if (r != R::Ok) return r;
-    if (std::memcmp(expected, actual, 7)) return R::ReadbackMismatch;
   }
   return R::Ok;
 }

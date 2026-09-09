@@ -136,10 +136,15 @@ pub fn parse_diagnostic(line: &str) -> Option<(u8, String)> {
         8 => "書込み値と読戻し値の不一致",
         _ => "未定義の通信結果",
     };
-    Some((
-        byte(1)?,
-        format!("{result} / HAL={} / error=0x{:02X}", byte(3)?, byte(4)?),
-    ))
+    let mut detail = format!("{result} / HAL={} / error=0x{:02X}", byte(3)?, byte(4)?);
+    // 旧FWは末尾3バイトが0。新FWは最初に不一致となったバイトを返す。
+    if byte(2)? == 8 && byte(6)? != byte(7)? {
+        detail.push_str(&format!(
+            " / address={} expected=0x{:02X} actual=0x{:02X}",
+            byte(5)?, byte(6)?, byte(7)?
+        ));
+    }
+    Some((byte(1)?, detail))
 }
 
 #[cfg(test)]
@@ -152,6 +157,15 @@ mod tests {
         assert_eq!(id, 1);
         assert!(detail.contains("Mode=0"));
         assert!(parse_diagnostic("CAN_RX bus=2 id=805 data=0201070000000000").is_none());
+    }
+
+    #[test]
+    fn explains_readback_mismatch_with_old_firmware_compatibility() {
+        let (_, detail) = parse_diagnostic("CAN_RX bus=2 id=805 data=01010800002A3412").unwrap();
+        assert!(detail.contains("address=42 expected=0x34 actual=0x12"));
+        let (_, old) = parse_diagnostic("CAN_RX bus=2 id=805 data=0101080000000000").unwrap();
+        assert!(old.contains("書込み値と読戻し値の不一致"));
+        assert!(!old.contains("address="));
     }
 
     #[test]

@@ -211,11 +211,17 @@ bool checkServoIo(Sts3215::Result result, uint8_t id) {
   if (result == Sts3215::Result::Ok) return true;
   const auto hal = bus.lastHalStatus();
   const auto flags = bus.lastServoError();
+  const auto mismatch = bus.lastReadbackMismatch();
   disableAll();
   mode = Mode::Stop;
   command_failed = true;
   if (source == Link::Can) {
     uint8_t detail[8] = {1, id, static_cast<uint8_t>(result), static_cast<uint8_t>(hal), flags, 0, 0, 0};
+    if (result == Sts3215::Result::ReadbackMismatch) {
+      detail[5] = mismatch.address;
+      detail[6] = mismatch.expected;
+      detail[7] = mismatch.actual;
+    }
     sendCan(domain::servo_can::canId(0x325, address), detail);
     sendStatus(domain::servo_can::Status::Rejected);
   } else {
