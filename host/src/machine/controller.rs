@@ -158,9 +158,27 @@ impl MachineController {
     ///
     /// 目標値も同じ値へ置き直すので、採用の前後で軸は動かない。
     pub fn capture_origin(&mut self, index: usize, telemetry: Option<&Telemetry>) -> bool {
+        let Some(position) = self.profile.axes.get(index).map(|axis| axis.origin_position) else {
+            return false;
+        };
+        self.capture_coordinate(index, telemetry, position)
+    }
+
+    /// いまの実測位置へ既知の機体座標を割り当てる。
+    ///
+    /// host再起動後に、停止直前に記録した座標を動かさず復元するために使う。
+    pub fn capture_coordinate(
+        &mut self,
+        index: usize,
+        telemetry: Option<&Telemetry>,
+        position: f32,
+    ) -> bool {
         let Some(axis) = self.profile.axes.get(index) else {
             return false;
         };
+        if !position.is_finite() || !(axis.minimum..=axis.maximum).contains(&position) {
+            return false;
+        }
         let Some(telemetry) = telemetry else {
             return false;
         };
@@ -170,8 +188,8 @@ impl MachineController {
         if !slot.measured.is_finite() || telemetry.stale_slots & (1 << axis.slot) != 0 {
             return false;
         }
-        self.origins_native[index] = slot.measured - axis.origin_position * axis.native_per_unit;
-        self.targets[index] = axis.origin_position;
+        self.origins_native[index] = slot.measured - position * axis.native_per_unit;
+        self.targets[index] = position;
         self.origin_captured[index] = true;
         self.origin_lost[index] = false;
         self.moving[index] = false;

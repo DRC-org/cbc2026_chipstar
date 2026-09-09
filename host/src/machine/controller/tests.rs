@@ -323,6 +323,18 @@ fn position_jump_with_continuous_feedback_preserves_the_origin() {
 }
 
 #[test]
+fn known_coordinate_can_be_restored_without_moving_after_host_restart() {
+    let profile = MachineProfile::embedded().unwrap();
+    let mut machine = MachineController::new(profile.clone());
+    let steady = telemetry_with(0, [5.0, 0.0, 0.0]);
+    assert!(machine.capture_coordinate(0, Some(&steady), 123.0));
+    let state = &machine.origin_states(Some(&steady))[0];
+    assert!(state.captured && !state.lost);
+    assert!((state.position - 123.0).abs() < 0.001);
+    assert!(!machine.capture_coordinate(0, Some(&steady), profile.axes[0].maximum + 1.0));
+}
+
+#[test]
 fn feedback_loss_reported_by_the_board_invalidates_the_origin() {
     let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
     let steady = telemetry_with(0, [5.0, 0.0, 0.0]);

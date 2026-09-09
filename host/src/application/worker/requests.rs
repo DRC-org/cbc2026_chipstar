@@ -173,10 +173,17 @@ impl Runtime {
                     .iter()
                     .position(|a| Some(&a.name) == req.axis.as_ref())
                     .context("軸名が不正です")?;
-                if !self.machine.capture_origin(index, self.telemetry.as_ref()) {
+                let position = req.value.unwrap_or(self.cfg.machine.axes[index].origin_position);
+                if !self
+                    .machine
+                    .capture_coordinate(index, self.telemetry.as_ref(), position)
+                {
                     bail!("原点を採用できません");
                 }
-                return Ok(Reply::data("hostの原点に採用しました".into()));
+                return Ok(Reply::data(format!(
+                    "現在位置を{} {}としてhost座標へ採用しました",
+                    position, self.cfg.machine.axes[index].unit
+                )));
             }
             "adjustment" => {
                 if self.drive.running() || self.drive.awaiting().is_some() {
