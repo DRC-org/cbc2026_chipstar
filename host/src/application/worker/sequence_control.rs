@@ -112,11 +112,9 @@ impl Runtime {
                 self.screen_input_times = [None; 6];
                 self.authority.clear_input();
                 self.pad.ee_armed = false;
-                if !self.drive.running() {
-                    if let Err(error) = self.start() {
-                        self.screen_control = previous_screen_control;
-                        return Err(error);
-                    }
+                if !self.drive.running() && let Err(error) = self.start() {
+                    self.screen_control = previous_screen_control;
+                    return Err(error);
                 }
                 if let Some(telemetry) = self.telemetry.clone() {
                     for line in self.machine.hold_lines(&telemetry, telemetry.enabled_slots) {
@@ -558,13 +556,13 @@ mod tests {
         r.tick().unwrap();
         r.request(
             &Request {
-                text: Some("[targets]\nee_grip_1=1600".into()),
+                text: Some("[targets]\nee_grip_1=1500".into()),
                 ..Request::new("ee")
             },
             true,
         )
         .unwrap();
-        assert_eq!(r.ee.targets["ee_grip_1"], 1600.0);
+        assert_eq!(r.ee.targets["ee_grip_1"], 1500.0);
         r.screen_control = false;
         r.gamepad_name = "test pad".into();
         start(&mut r, Stage::Prepare, Side::Left);
