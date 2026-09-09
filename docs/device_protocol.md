@@ -337,7 +337,8 @@ modeは0=SAFE、1=RUN、2=STOP。READの応答は `0x322`（802）で
 
 サーボ通信失敗時は`0x325`（805）で`[1, id, result, hal, flags, 0, 0, 0]`も通知する。
 resultは1=引数、2=HAL、3=timeout、4=形式、5=checksum、6=サーボ異常、
-7=位置モード以外、8=書込み読戻し不一致。失敗した指令に続けてOKは返さない。
+7=位置モード以外、8=書込み読戻し不一致、9=STS信号の待機時LOW。
+result 9はサーボ側BATT電源、SWCTL、信号配線を確認する。失敗した指令に続けてOKは返さない。
 ASCIIでは`ERR code=SERVO_IO id=... result=... hal=... flags=...`。
 
 位置READのtimeout・UART・応答形式・checksum異常は一度だけ再試行する。連続して失敗した場合はEE出力を解除するが、hostはr・θ・zの運転を継続する。

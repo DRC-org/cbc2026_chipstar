@@ -111,10 +111,12 @@ impl Control {
 
 impl Runtime {
     pub(super) fn fail_sts(&mut self, error: String) {
+        let motion_active = self.sts.active || self.sts.sequence;
         self.sts.stop_monitoring();
         self.shared.update_status(|s| s.sts.message = error.clone());
-        if self.sts.teach_id.is_some() {
+        if self.sts.teach_id.is_some() || !motion_active {
             // 較正は読み出しだけ。読取り失敗でアームの保持を解除しない。
+            // 停止中の管理READ/SCANも機体全体のfaultにはしない。
             self.sts.cancel();
         } else {
             self.fault(error);
@@ -623,6 +625,19 @@ mod tests {
         assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(4));
         assert!(r.sts.capture.is_none());
         assert!(r.shared.status_snapshot().sts.teach_zero.is_none());
+    }
+
+    #[test]
+    fn idle_management_timeout_does_not_fault_the_whole_machine() {
+        let mut r = crate::application::worker::tests::screen_runtime();
+        r.stop_with_z_hold().unwrap();
+        pump(&mut r, 2);
+        let held = r.telemetry.as_ref().unwrap().held_slots;
+        r.fail_sts("STS管理READ失敗".into());
+        pump(&mut r, 2);
+        assert_eq!(r.telemetry.as_ref().unwrap().held_slots, held);
+        assert!(r.error.is_empty());
+        assert_eq!(r.shared.status_snapshot().sts.message, "STS管理READ失敗");
     }
 
     #[test]

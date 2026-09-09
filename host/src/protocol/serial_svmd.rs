@@ -148,6 +148,7 @@ pub fn parse_diagnostic(line: &str) -> Option<(u8, String)> {
         6 => "サーボ保護状態",
         7 => "位置モードではありません（Mode=0が必要）",
         8 => "書込み値と読戻し値の不一致",
+        9 => "STS信号がLOW（BATT電源・SWCTL・信号配線を確認）",
         _ => "未定義の通信結果",
     };
     let mut detail = format!("{result} / HAL={} / error=0x{:02X}", byte(3)?, byte(4)?);
@@ -173,6 +174,9 @@ mod tests {
         assert_eq!(id, 1);
         assert!(detail.contains("Mode=0"));
         assert!(parse_diagnostic("CAN_RX bus=2 id=805 data=0201070000000000").is_none());
+        let (_, bus_low) =
+            parse_diagnostic("CAN_RX bus=2 id=805 data=0101090000000000").unwrap();
+        assert!(bus_low.contains("STS信号がLOW"));
     }
 
     #[test]

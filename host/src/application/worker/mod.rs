@@ -463,6 +463,7 @@ impl Runtime {
                     },
                 );
                 self.shared.update_status(|s| {
+                    s.peripherals.remove(&format!("STS3215 ID {id}"));
                     s.peripherals
                         .insert(format!("STS3215 ID {id} 通信診断"), detail);
                 });

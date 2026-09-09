@@ -25,6 +25,7 @@ class Sts3215 {
     ServoError,
     UnsupportedMode,
     ReadbackMismatch,
+    BusLow,
   };
 
   using Target = domain::sts3215::Target;

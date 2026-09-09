@@ -4,6 +4,7 @@
 #include <array>
 #include <vector>
 #include <cstring>
+GPIO_TypeDef fake_gpio;
 namespace {
 DMA_HandleTypeDef dma;
 UART_HandleTypeDef uart{&dma};
@@ -18,8 +19,9 @@ std::vector<uint8_t> pending_write;
 uint8_t pending_address=0;
 uint8_t fault=0;
 bool receiver_stalled=false, fail_start=false, receive_error=false;
+bool rx_idle_high=true;
 unsigned receiver_starts=0;
-void reset() { regs.fill(0);regs[56]=0x34;regs[57]=0x08;sent.clear();ticks=0;silent=noise=ignore_write=false;fault=0;uart.ErrorCode=0;receiver_stalled=fail_start=receive_error=false;receiver_starts=0;delayed_reads=0;dropped_writes=0;dropped_reads=0;pending_write.clear(); }
+void reset() { regs.fill(0);regs[56]=0x34;regs[57]=0x08;sent.clear();ticks=0;silent=noise=ignore_write=false;fault=0;uart.ErrorCode=0;receiver_stalled=fail_start=receive_error=false;rx_idle_high=true;receiver_starts=0;delayed_reads=0;dropped_writes=0;dropped_reads=0;pending_write.clear(); }
 void append(const std::vector<uint8_t>& bytes) { for(auto b:bytes) {rx[head]=b;head=(head+1)%size;} dma.count=size-head; }
 void status(uint8_t id, const std::vector<uint8_t>& data, uint8_t error=0) {
  std::vector<uint8_t> p{255,255,id,static_cast<uint8_t>(data.size()+2),error};
@@ -35,6 +37,7 @@ HAL_StatusTypeDef HAL_UART_Receive_DMA(UART_HandleTypeDef*,uint8_t* data,uint16_
  receiver_stalled=false;rx=data;size=n;head=0;dma.count=n;return HAL_OK;
 }
 HAL_StatusTypeDef HAL_UART_AbortReceive(UART_HandleTypeDef*) {uart.ErrorCode=0;return HAL_OK;}
+GPIO_PinState HAL_GPIO_ReadPin(GPIO_TypeDef*, uint16_t) {return rx_idle_high?GPIO_PIN_SET:GPIO_PIN_RESET;}
 HAL_StatusTypeDef HAL_UART_Receive(UART_HandleTypeDef*,uint8_t*,uint16_t,uint32_t) {return HAL_TIMEOUT;}
 HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef*,uint8_t* p,uint16_t n,uint32_t) {
  sent.emplace_back(p,p+n);
@@ -64,6 +67,12 @@ HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef*,uint8_t* p,uint16_t n,ui
 TEST_CASE("循環DMAで位置応答を読み古いACKと他IDを読み飛ばす") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
  for(unsigned i=0;i<50;++i) {noise=true;uint16_t position=0;REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);CHECK(position==2100);}
+}
+TEST_CASE("待機時LOWのSTS信号線は電源・配線異常として送信前に識別する") {
+ reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ rx_idle_high=false;uint16_t position=0;
+ CHECK(bus.readPosition(1,position)==Sts3215::Result::BusLow);
+ CHECK(sent.empty());CHECK(bus.lastHalStatus()==HAL_OK);
 }
 TEST_CASE("受信停止のタイムアウト後はDMAを張り直し再開失敗も再試行する") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
