@@ -2,7 +2,7 @@
 use super::authority::Authority;
 use crate::{
     application::app_state::{
-        BridgeConfig, CanBusStatus, CanDeviceStatus, CommunicationHealth, PreparationPhase, Shared,
+        BridgeConfig, CanBusStatus, CanDeviceStatus, CommunicationHealth, Court, PreparationPhase, Shared,
     },
     application::command::{Reply, Request},
     application::settings::Settings,
@@ -41,6 +41,7 @@ impl DriveState {
 }
 
 struct Runtime {
+    court: Option<Court>,
     preparation: PreparationPhase,
     shared: Arc<Shared>,
     cfg: BridgeConfig,
@@ -89,6 +90,7 @@ impl Runtime {
     fn new(shared: Arc<Shared>) -> Self {
         let cfg = shared.config();
         Self {
+            court: None,
             preparation: PreparationPhase::Setting,
             link: Link::new(&cfg.serial_device, cfg.baud_rate, cfg.simulate),
             machine: MachineController::new(cfg.machine.clone()),
@@ -1156,6 +1158,7 @@ impl Runtime {
             s.sts.elapsed_ms = self.sts.elapsed_ms();
             s.sts.active = self.sts.active;
             s.sts.busy = self.sts.busy();
+            s.court = self.court;
             s.preparation = self.preparation;
             s.preparation_blocker = self.preparation_ready()
                 .err().map(|e| e.to_string()).unwrap_or_default();

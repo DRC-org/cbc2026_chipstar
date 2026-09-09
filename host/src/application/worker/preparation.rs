@@ -2,6 +2,7 @@ use super::*;
 
 impl Runtime {
     pub(super) fn preparation_ready(&self) -> Result<()> {
+        anyhow::ensure!(self.court.is_some(), "赤コートか青コートを選んでください");
         anyhow::ensure!(
             !self.emergency,
             "ソフト緊停を解除し、機体を再確認してください"
@@ -47,6 +48,26 @@ impl Runtime {
             "準備の切替は人間がGUIから行ってください"
         );
         match req.action.as_str() {
+            "preparation_court" => {
+                anyhow::ensure!(
+                    self.preparation == PreparationPhase::Setting
+                        && self.homing_idle()
+                        && self.sequence.is_none()
+                        && !self.sts.control_busy()
+                        && self.sts.teach_id.is_none(),
+                    "準備画面で全操作を停止してからコートを変更してください"
+                );
+                let court = match req.text.as_deref() {
+                    Some("red") => Court::Red,
+                    Some("blue") => Court::Blue,
+                    _ => bail!("赤コートか青コートを選んでください"),
+                };
+                if self.court != Some(court) {
+                    self.machine.invalidate_origins();
+                    self.court = Some(court);
+                }
+                Ok(Reply::data(format!("{}を選択しました", court.label())))
+            }
             "preparation_wait" => {
                 anyhow::ensure!(
                     self.preparation == PreparationPhase::Setting,
@@ -101,6 +122,7 @@ mod tests {
             simulate: true,
         }));
         let mut runtime = Runtime::new(shared);
+        runtime.court = Some(Court::Red);
         for _ in 0..80 {
             runtime.tick().unwrap();
         }
@@ -196,5 +218,47 @@ mod tests {
             .is_err()
         );
         assert_eq!(r.preparation, PreparationPhase::Setting);
+    }
+    #[test]
+    fn court_selection_is_explicit_and_changes_invalidate_origins() {
+        let mut r = prepared();
+        r.court = None;
+        assert!(r.preparation_ready().is_err());
+        let select = |name: &str| Request {
+            text: Some(name.into()),
+            ..Request::new("preparation_court")
+        };
+        assert!(r.request(&select("green"), true).is_err());
+        assert!(r.request(&select("red"), false).is_err());
+        r.request(&select("red"), true).unwrap();
+        assert_eq!(r.court, Some(Court::Red));
+        assert!(
+            r.machine
+                .origin_states(r.telemetry.as_ref())
+                .iter()
+                .all(|a| !a.captured)
+        );
+        for i in 0..3 {
+            assert!(r.machine.capture_origin(i, r.telemetry.as_ref()));
+        }
+        r.request(&select("red"), true).unwrap();
+        assert!(
+            r.machine
+                .origin_states(r.telemetry.as_ref())
+                .iter()
+                .all(|a| a.captured)
+        );
+        wait(&mut r);
+        assert!(r.request(&select("blue"), true).is_err());
+        r.request(&Request::new("preparation_return"), true)
+            .unwrap();
+        r.request(&select("blue"), true).unwrap();
+        assert_eq!(r.court, Some(Court::Blue));
+        assert!(
+            r.machine
+                .origin_states(r.telemetry.as_ref())
+                .iter()
+                .all(|a| !a.captured)
+        );
     }
 }

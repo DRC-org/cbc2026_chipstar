@@ -100,6 +100,42 @@ impl BridgeApp {
             "競技の準備",
             "上から順に準備し、最後に開始待ちへ進んでください。",
         );
+        panel().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            task_heading(
+                ui,
+                "1. コートを選ぶ",
+                "使用するコートを選んでください。変更すると原点の再設定が必要です。",
+            );
+            ui.horizontal(|ui| {
+                for (court, value) in [
+                    (crate::application::app_state::Court::Red, "red"),
+                    (crate::application::app_state::Court::Blue, "blue"),
+                ] {
+                    if ui
+                        .add_enabled(
+                            !status.running
+                                && status.homing.is_none()
+                                && !status.sequence.active
+                                && !status.preparation.locked(),
+                            egui::Button::new(court.label()).selected(status.court == Some(court)),
+                        )
+                        .clicked()
+                    {
+                        self.request(Request {
+                            text: Some(value.into()),
+                            ..Request::new("preparation_court")
+                        });
+                        self.preparation_confirmed = false;
+                        self.homing_confirmed = false;
+                    }
+                }
+            });
+        });
+        if status.court.is_none() {
+            return;
+        }
+        ui.add_space(8.0);
         ui.collapsing("設置時の注意", |ui| {
             ui.label("ロボットエリアに入るときは、物理非常停止を押してください。");
             ui.label("セッティングは審判の合図に従って行ってください。準備が間に合わない場合は、競技開始後にリトライを申告します。");
@@ -109,7 +145,7 @@ impl BridgeApp {
             ui.set_width(ui.available_width());
             task_heading(
                 ui,
-                "1. 接続を確認する",
+                "2. 接続を確認する",
                 "機体との通信、設定の反映、操縦方法を確認します。",
             );
             egui::Grid::new("preparation-connections")
@@ -158,13 +194,13 @@ impl BridgeApp {
         ui.add_space(8.0);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            task_heading(ui, "2. 原点を設定する", "機体の位置を測る基準を設定します。先端をシューティングボックスの反対側へ向けてください。");
+            task_heading(ui, "3. 原点を設定する", "機体の位置を測る基準を設定します。先端をシューティングボックスの反対側へ向けてください。");
             self.homing_controls(ui, status);
         });
         ui.add_space(8.0);
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            task_heading(ui, "3. 開始姿勢に合わせる", "操縦を有効にして機体を配置し、配置が終わったら停止してください。");
+            task_heading(ui, "4. 開始姿勢に合わせる", "操縦を有効にして機体を配置し、配置が終わったら停止してください。");
             ui.horizontal_wrapped(|ui| {
                 chip(ui, if status.running { "操縦が有効です" } else { "操縦は停止しています" }, if status.running { ACCENT } else { MUTED });
                 if ui.add_enabled(Self::can_run(status), egui::Button::new("操縦を有効にする")).clicked() {
@@ -192,7 +228,7 @@ impl BridgeApp {
             ui.set_width(ui.available_width());
             task_heading(
                 ui,
-                "4. 準備を完了する",
+                "5. 準備を完了する",
                 "機体を停止した状態で、次の項目を目視で確認してください。",
             );
             ui.label("• 機体が固定され、規定のセッティング範囲に収まっている");

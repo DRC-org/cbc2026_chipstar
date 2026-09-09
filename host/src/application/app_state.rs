@@ -34,6 +34,21 @@ pub struct BridgeConfig {
     pub simulate: bool,
 }
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Court {
+    Red,
+    Blue,
+}
+impl Court {
+    pub fn label(self) -> &'static str {
+        match self {
+            Self::Red => "赤コート",
+            Self::Blue => "青コート",
+        }
+    }
+}
+
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CommunicationHealth {
@@ -87,6 +102,7 @@ impl PreparationPhase {
 
 #[derive(Clone, Default, Serialize)]
 pub struct Status {
+    pub court: Option<Court>,
     pub preparation: PreparationPhase,
     pub preparation_blocker: String,
     pub sequence: super::sequence::Status,

@@ -16,6 +16,9 @@ impl BridgeApp {
                     WARNING
                 },
             );
+            if let Some(court) = status.court {
+                chip(ui, court.label(), MUTED);
+            }
             if status.simulated {
                 chip(ui, "模擬接続", WARNING);
             }

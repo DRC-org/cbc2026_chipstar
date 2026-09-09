@@ -166,7 +166,7 @@ impl BridgeApp {
             && self.draft_matches_applied()
     }
     fn can_run(status: &Status) -> bool {
-        if status.preparation.locked() {
+        if status.court.is_none() || status.preparation.locked() {
             return false;
         }
         !status.emergency
@@ -610,7 +610,8 @@ mod workflow_tests {
                 assert!(start.elapsed() < Duration::from_secs(5));
                 thread::sleep(Duration::from_millis(10));
             }
-            let app = BridgeApp::new(shared.clone());
+            let mut app = BridgeApp::new(shared.clone());
+            app.request(Request { text: Some("red".into()), ..Request::new("preparation_court") });
             Self {
                 app,
                 shared,
