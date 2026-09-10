@@ -66,7 +66,7 @@ impl BridgeApp {
                     RichText::new(if status.gamepad.is_empty() {
                         "DualSenseが接続されていません。入力の切替は停止中に行えます。"
                     } else {
-                        "左：r・θ　右：z　△：先端回転0°/180°　十字：畳み・把持　L1：低速　Options：再開　PS：停止"
+                        "左：r・θ　L2/R2：z　↑/↓：畳み　←：取得時開　→：把持閉　○：受け渡し開　△：先端反転　L1：低速　Options：再開　PS：停止"
                     })
                     .size(12.0)
                     .color(MUTED),

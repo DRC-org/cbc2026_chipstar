@@ -10,7 +10,7 @@ struct Lease {
     token: String,
     contact: Instant,
     input: ControllerState,
-    input_times: [Option<Instant>; 6],
+    input_times: [Option<Instant>; crate::input::MACHINE_INPUT_COUNT],
 }
 
 #[derive(Default)]
@@ -28,7 +28,7 @@ impl Authority {
             token,
             contact: now,
             input: ControllerState::default(),
-            input_times: [None; 6],
+            input_times: [None; crate::input::MACHINE_INPUT_COUNT],
         });
     }
 
@@ -66,7 +66,7 @@ impl Authority {
     pub fn clear_input(&mut self) {
         if let Some(lease) = &mut self.lease {
             lease.input = ControllerState::default();
-            lease.input_times = [None; 6];
+            lease.input_times = [None; crate::input::MACHINE_INPUT_COUNT];
         }
     }
 
@@ -76,7 +76,7 @@ impl Authority {
 
     pub fn set_input(&mut self, index: usize, value: f32, now: Instant) {
         if let Some(lease) = &mut self.lease {
-            lease.input.axes[index] = value;
+            lease.input.set_machine_axis(index, value);
             lease.input_times[index] = Some(now);
         }
     }
@@ -85,7 +85,7 @@ impl Authority {
         if let Some(lease) = &mut self.lease {
             for (index, stamp) in lease.input_times.iter_mut().enumerate() {
                 if stamp.is_some_and(|time| now.duration_since(time) > INPUT_TTL) {
-                    lease.input.axes[index] = 0.0;
+                    lease.input.set_machine_axis(index, 0.0);
                     *stamp = None;
                 }
             }

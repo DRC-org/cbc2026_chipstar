@@ -20,6 +20,7 @@ enum Phase {
 }
 pub(super) struct Homing {
     theta_target: f32,
+    rotation_field: Option<f32>,
     stage: usize,
     phase: Phase,
     since: Instant,
@@ -138,6 +139,7 @@ impl Runtime {
                 .capture_origin(theta_index, self.telemetry.as_ref()),
             "正面のθ位置を原点に設定できません"
         );
+        let rotation_field = self.measured_rotation_field(Instant::now())?;
         for name in ["r", "z"] {
             let index = self
                 .cfg
@@ -161,6 +163,7 @@ impl Runtime {
         let now = Instant::now();
         self.homing = Some(Homing {
             theta_target,
+            rotation_field,
             timeout_seconds,
             stage: 0,
             phase: Phase::Prepare,
@@ -264,6 +267,7 @@ impl Runtime {
             );
             if matches!(phase, Phase::AwaitHold) {
                 if t.mode == RunMode::Run && t.enabled_slots == holding {
+                    self.prepared_rotation_field = home.rotation_field;
                     self.homing = None;
                     self.reason = "ホーミング完了。rを後退し、θ・zを保持しています".into();
                 } else {
@@ -652,6 +656,18 @@ mod tests {
     fn check_homing_retreat(court: Court, z_distance: Option<f32>, r_distance: Option<f32>) {
         let mut r = crate::application::worker::tests::screen_runtime();
         r.court = Some(court);
+        r.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
+        let feedback_at = Instant::now();
+        r.test.peers.insert("sts", feedback_at);
+        r.servo_feedback.insert(
+            1,
+            ServoFeedback {
+                seen: feedback_at,
+                position: 1500,
+                error: 0,
+                detail: String::new(),
+            },
+        );
         let z = r
             .cfg
             .machine
@@ -802,6 +818,12 @@ mod tests {
         r.telemetry.as_mut().unwrap().enabled_slots = 6;
         r.tick_homing(now + Duration::from_millis(900)).unwrap();
         assert!(r.homing.is_none());
+        let axis = crate::machine::ee::axes(&r.cfg.machine)
+            .into_iter()
+            .find(|axis| axis.name == "ee_rotation")
+            .unwrap();
+        let expected_field = (1500.0 - axis.zero0_count) / axis.counts_per_deg;
+        assert!((r.prepared_rotation_field.unwrap() - expected_field).abs() < f32::EPSILON);
         assert!(!r.drive.running());
         let logs = r.shared.status_snapshot().logs;
         assert!(logs.iter().any(|l| l.contains("JOG 2 -20.00000")));

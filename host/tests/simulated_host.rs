@@ -319,7 +319,7 @@ fn stop_hold_z_hold_and_all_torque_off_have_distinct_states() {
         .ok
     );
     host.wait(|state| {
-        state["axes"][3]
+        state["axes"][1]
             .as_float()
             .is_some_and(|value| (value + 0.7).abs() < 0.001)
     });

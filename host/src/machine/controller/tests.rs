@@ -13,7 +13,7 @@ fn embedded_profile_is_valid() {
     let profile = MachineProfile::embedded().unwrap();
     assert_eq!(profile.axes.len(), 3);
     assert_eq!(profile.axes[0].name, "r");
-    for (name, input_axis) in [("theta", 0), ("z", 1), ("r", 3)] {
+    for (name, input_axis) in [("theta", 0), ("r", 1), ("z", 6)] {
         assert_eq!(
             profile
                 .axes
@@ -195,6 +195,38 @@ fn converts_manual_velocity_to_native_units() {
     assert!((theta_velocity - expected_theta).abs() < 0.001);
     let z_velocity: f32 = lines[2].split_whitespace().last().unwrap().parse().unwrap();
     assert_eq!(z_velocity, 0.0);
+}
+
+#[test]
+fn trigger_pair_moves_z_down_with_l2_and_up_with_r2() {
+    let profile = MachineProfile::embedded().unwrap();
+    let z = profile
+        .axes
+        .iter()
+        .find(|axis| axis.name == "z")
+        .unwrap()
+        .clone();
+    let mut machine = MachineController::new(profile);
+    machine.set_soft_limits(false);
+    let telemetry = telemetry_with(0, [0.0; 3]);
+
+    let velocity = |machine: &mut MachineController, l2: f32, r2: f32| {
+        let mut input = neutral_input();
+        input.axes[4] = l2;
+        input.axes[5] = r2;
+        machine.jog_lines(&input, &telemetry, false)[2]
+            .split_whitespace()
+            .last()
+            .unwrap()
+            .parse::<f32>()
+            .unwrap()
+    };
+    let l2 = velocity(&mut machine, 0.75, 0.0) / z.native_per_unit;
+    let r2 = velocity(&mut machine, 0.0, 0.75) / z.native_per_unit;
+    let both = velocity(&mut machine, 0.75, 0.75) / z.native_per_unit;
+    assert!(l2 < 0.0, "L2は下降指令");
+    assert!(r2 > 0.0, "R2は上昇指令");
+    assert_eq!(both, 0.0, "同時押しは差し引いて停止");
 }
 
 #[test]
@@ -394,11 +426,13 @@ fn normal_jogging_does_not_invalidate_the_origin() {
 
 #[test]
 fn neutral_command_holds_after_manual_repositioning() {
-    let mut machine = MachineController::new(MachineProfile::embedded().unwrap());
+    let profile = MachineProfile::embedded().unwrap();
+    let r_input = profile.axes[0].input_axis.unwrap();
+    let mut machine = MachineController::new(profile);
     let start = telemetry_with(0, [0.2, 0.0, 0.0]);
     assert!(machine.capture_origin(0, Some(&start)));
     let mut input = neutral_input();
-    input.axes[3] = -1.0;
+    assert!(input.set_machine_axis(r_input, -1.0));
     machine.jog_lines(&input, &start, false);
     let moved = telemetry_with(0, [0.4, 0.0, 0.0]);
     machine.observe(&moved);
@@ -553,12 +587,18 @@ fn accepts_but_does_not_drive_pwm_servo_from_host_profile() {
         input_sign: -1.0,
         speed_us_per_second: 1000.0,
         acceleration_us_per_second2: 2500.0,
-        minimum_us: 900,
-        maximum_us: 2100,
+        minimum_us: 100,
+        maximum_us: 3000,
         initial_us: 1500,
         enabled: true,
     }];
     profile.validate().unwrap();
+    let parameters = profile.effective_svmd_parameters();
+    assert_eq!(parameters["min_pulse_us"], 100.0);
+    assert_eq!(parameters["max_pulse_us"], 3000.0);
+    profile.pwm_servos[0].minimum_us = 99;
+    assert!(profile.validate().is_err());
+    profile.pwm_servos[0].minimum_us = 100;
     assert!(profile.requires_can_bus_2());
     let mut machine = MachineController::new(profile);
     let t = telemetry_with(0, [0.0; 3]);
@@ -569,7 +609,7 @@ fn accepts_but_does_not_drive_pwm_servo_from_host_profile() {
 }
 
 #[test]
-fn pwm_acceleration_defaults_for_old_profiles_and_must_be_positive() {
+fn pwm_acceleration_defaults_for_old_profiles_and_accepts_disabled_value() {
     let mut base = MachineProfile::embedded().unwrap();
     base.pwm_servos.clear();
     let mut base = toml::Value::try_from(&base).unwrap();
@@ -581,6 +621,8 @@ fn pwm_acceleration_defaults_for_old_profiles_and_must_be_positive() {
     let mut profile = MachineProfile::parse(&source).unwrap();
     assert_eq!(profile.pwm_servos[0].acceleration_us_per_second2, 2500.0);
     profile.pwm_servos[0].acceleration_us_per_second2 = 0.0;
+    profile.validate().unwrap();
+    profile.pwm_servos[0].acceleration_us_per_second2 = -1.0;
     assert!(profile.validate().is_err());
 }
 

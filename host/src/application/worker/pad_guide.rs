@@ -154,7 +154,9 @@ impl Runtime {
                     true,
                 )?;
             }
-            (PreparationPhase::Setting, 0) if self.preparation_step() == PreparationStep::Position => {
+            (PreparationPhase::Setting, 0)
+                if self.preparation_step() == PreparationStep::Position =>
+            {
                 self.request(&Request::new("run"), true)?;
             }
             (PreparationPhase::Setting, 2) => {

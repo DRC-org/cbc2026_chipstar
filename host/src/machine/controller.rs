@@ -106,7 +106,11 @@ impl MachineController {
     /// 原点採用済み・実測が有効な軸の機体単位位置[deg/mm]。未採用や欠測はNone。
     pub fn axis_position(&self, name: &str, telemetry: Option<&Telemetry>) -> Option<f32> {
         let telemetry = telemetry?;
-        let index = self.profile.axes.iter().position(|axis| axis.name == name)?;
+        let index = self
+            .profile
+            .axes
+            .iter()
+            .position(|axis| axis.name == name)?;
         let axis = &self.profile.axes[index];
         if !self.origin_captured[index] || telemetry.stale_slots & (1 << axis.slot) != 0 {
             return None;
@@ -172,7 +176,12 @@ impl MachineController {
     ///
     /// 目標値も同じ値へ置き直すので、採用の前後で軸は動かない。
     pub fn capture_origin(&mut self, index: usize, telemetry: Option<&Telemetry>) -> bool {
-        let Some(position) = self.profile.axes.get(index).map(|axis| axis.origin_position) else {
+        let Some(position) = self
+            .profile
+            .axes
+            .get(index)
+            .map(|axis| axis.origin_position)
+        else {
             return false;
         };
         self.capture_coordinate(index, telemetry, position)
@@ -440,7 +449,10 @@ impl MachineController {
         let mut lines = Vec::with_capacity(self.profile.axes.len());
         for i in 0..self.profile.axes.len() {
             let axis = &self.profile.axes[i];
-            let raw = axis.input_axis.map(|n| input.axes[n]).unwrap_or(0.0);
+            let raw = axis
+                .input_axis
+                .and_then(|index| input.machine_axis(index))
+                .unwrap_or(0.0);
             let raw = if raw.is_finite() && raw.abs() >= STICK_DEADZONE {
                 raw.clamp(-1.0, 1.0)
             } else {

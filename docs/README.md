@@ -30,6 +30,7 @@
 ## 機体・制御
 
 - [pick_sequences.md](pick_sequences.md) — 取得準備・取得・搬送の実行、位置教示、工程編集
+- [bonus_hand.md](bonus_hand.md) — ボーナスハンドの受け渡し位置登録、手動操作、半自動シュート
 
 - [rtheta_z_machine.md](rtheta_z_machine.md) — rθz 3軸機構の構成、各軸の駆動系、座標定義、原点方針、要実測パラメータ
 - [cctl_can_bus.md](cctl_can_bus.md) — cctl(STM32G474) の FDCAN クロック/ビットレート、ピン割当、バス用途分離、CAN ID 衝突回避設計

@@ -267,7 +267,12 @@ impl BridgeApp {
             );
         });
         if !status.operation_sound_available {
-            ui.label(RichText::new("操作音は使用できません：CCTLが未接続、または操作音対応FWへの更新が必要です。").color(MUTED));
+            ui.label(
+                RichText::new(
+                    "操作音は使用できません：CCTLが未接続、または操作音対応FWへの更新が必要です。",
+                )
+                .color(MUTED),
+            );
         }
         if status.gamepad.is_empty() {
             ui.label(RichText::new("コントローラ未接続：マウスで操作できます。").color(MUTED));
@@ -291,10 +296,13 @@ impl BridgeApp {
                         .spacing([24.0, 8.0])
                         .show(ui, |ui| {
                             for (key, action) in [
-                                ("スティック", "アームを操縦"),
+                                ("左スティック", "r・θを操縦"),
+                                ("L2 / R2", "z下降 / z上昇"),
                                 ("↑ / ↓", "畳み機構を動かす"),
-                                ("← / →", "把持機構を動かす"),
+                                ("← / →", "取得時開 / 把持閉"),
+                                ("○", "受け渡し時の開度へ動かす"),
                                 ("△", "先端を反転する"),
+                                ("R1 + 各ボタン", "ボーナスハンド操作（画面内の割当を参照）"),
                                 ("PS", "停止・保持する"),
                             ] {
                                 chip(ui, key, ACCENT);

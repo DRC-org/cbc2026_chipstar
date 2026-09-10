@@ -49,6 +49,33 @@ impl Command {
 /// svmdの実行時パラメータ。
 pub const PARAMETER_NAMES: [&str; 3] = ["min_pulse_us", "max_pulse_us", "watchdog_ms"];
 
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct State {
+    pub result: u8,
+    pub channel: u8,
+    pub enabled_mask: u8,
+    pub pulse_us: u16,
+}
+
+/// PWM基板の応答。SET/ENABLE/HEARTBEATのどれでも、そのchannelに保持中の
+/// パルス幅が返る。ENABLE falseを読取りとして使えば出力せずに現在目標を取得できる。
+pub fn parse_state(line: &str) -> Option<State> {
+    let data = line.strip_prefix("CAN_RX bus=2 id=769 data=")?;
+    if data.len() != 16 || !data.is_ascii() {
+        return None;
+    }
+    let byte = |index: usize| u8::from_str_radix(&data[index * 2..index * 2 + 2], 16).ok();
+    if byte(0)? != PROTOCOL_VERSION || byte(3)? >= 4 {
+        return None;
+    }
+    Some(State {
+        result: byte(1)?,
+        channel: byte(3)?,
+        enabled_mask: byte(4)?,
+        pulse_us: u16::from_be_bytes([byte(5)?, byte(6)?]),
+    })
+}
+
 pub fn parameter_line(id: u8, value: f32) -> String {
     let bytes = value.to_be_bytes();
     format!(
@@ -80,5 +107,19 @@ mod tests {
             .to_cctl_line(),
             "CAN 2 768 0102020100000000"
         );
+    }
+
+    #[test]
+    fn parses_retained_pwm_target_from_board_status() {
+        assert_eq!(
+            parse_state("CAN_RX bus=2 id=769 data=010002020405DC00"),
+            Some(State {
+                result: 0,
+                channel: 2,
+                enabled_mask: 4,
+                pulse_us: 1500,
+            })
+        );
+        assert!(parse_state("CAN_RX bus=2 id=769 data=010002040405DC00").is_none());
     }
 }

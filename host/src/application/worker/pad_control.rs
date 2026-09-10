@@ -23,29 +23,117 @@ impl Runtime {
             self.pad.home_ready = false;
             self.pad.ee_armed = false;
             if previous[5] == 0 {
-                if self.guide.enabled { self.request(&Request::new("stop"), true)?; }
-                else { self.stop(false)?; }
+                if self.guide.enabled {
+                    self.request(&Request::new("stop"), true)?;
+                } else {
+                    self.stop(false)?;
+                }
             }
             return Ok(());
         }
         if self.read_guide(&input, now)? {
-            if !self.screen_control { self.manual_input = ControllerState::default(); }
+            if !self.screen_control {
+                self.manual_input = ControllerState::default();
+            }
             self.pad.home_since = None;
             self.pad.home_ready = false;
+            return Ok(());
+        }
+        // R1を押している間は、通常のアーム・EE入力と重ならないボーナス操作層にする。
+        if !self.screen_control
+            && !self.preparation.locked()
+            && buttons[10] != 0
+            && self
+                .cfg
+                .machine
+                .bonus
+                .as_ref()
+                .is_some_and(|profile| profile.enabled)
+        {
+            self.manual_input = ControllerState::default();
+            if buttons[6] != 0 && previous[6] == 0 {
+                self.bonus_request(&Request {
+                    flag: Some(!self.bonus.semi_auto),
+                    ..Request::new("bonus_mode")
+                })?;
+            }
+            if buttons[4] != 0 && previous[4] == 0 {
+                self.bonus_request(&Request::new("bonus_capture"))?;
+            }
+            if buttons[0] != 0 && previous[0] == 0 {
+                self.bonus_request(&Request {
+                    value: Some(3.0),
+                    ..Request::new("bonus_receive")
+                })?;
+            }
+            if buttons[3] != 0 && previous[3] == 0 {
+                self.bonus_request(&Request {
+                    value: Some(self.bonus.selected_box as f32),
+                    ..Request::new("bonus_shoot")
+                })?;
+            }
+            let boxes = self
+                .cfg
+                .machine
+                .bonus
+                .as_ref()
+                .map_or(0, |profile| profile.boxes.len());
+            if boxes > 0 && buttons[7] != 0 && previous[7] == 0 {
+                self.bonus.selected_box = (self.bonus.selected_box + boxes - 1) % boxes;
+            }
+            if boxes > 0 && buttons[8] != 0 && previous[8] == 0 {
+                self.bonus.selected_box = (self.bonus.selected_box + 1) % boxes;
+            }
+            if !self.bonus.semi_auto {
+                let direction = i8::from(buttons[14] != 0) - i8::from(buttons[13] != 0);
+                if direction != 0 || previous[13] != 0 || previous[14] != 0 {
+                    self.bonus_request(&Request {
+                        value: Some(f32::from(direction)),
+                        ..Request::new("bonus_jog")
+                    })?;
+                }
+                if buttons[11] != 0 && previous[11] == 0 {
+                    self.bonus_request(&Request {
+                        flag: Some(true),
+                        ..Request::new("bonus_align")
+                    })?;
+                }
+                if buttons[12] != 0 && previous[12] == 0 {
+                    self.bonus_request(&Request {
+                        flag: Some(false),
+                        ..Request::new("bonus_align")
+                    })?;
+                }
+                if buttons[1] != 0 && previous[1] == 0 {
+                    self.bonus_request(&Request {
+                        flag: Some(true),
+                        ..Request::new("bonus_lid")
+                    })?;
+                }
+                if buttons[2] != 0 && previous[2] == 0 {
+                    self.bonus_request(&Request {
+                        flag: Some(false),
+                        ..Request::new("bonus_lid")
+                    })?;
+                }
+            }
             return Ok(());
         }
         if !self.screen_control && !self.preparation.locked() {
             self.manual_input = input.clone();
         }
-        if self.preparation.locked() || self.authority.active() || self.screen_control || self.emergency || self.sequence.is_some() {
+        if self.preparation.locked()
+            || self.authority.active()
+            || self.screen_control
+            || self.emergency
+            || self.sequence.is_some()
+        {
             self.pad.home_since = None;
             self.pad.home_ready = false;
             self.pad.ee_armed = false;
             return Ok(());
         }
-        let stopped = self.homing_idle()
-            && self.fresh()
-            && self.settings.ready();
+        let stopped = self.homing_idle() && self.fresh() && self.settings.ready();
         // 停止状態で両ボタンを離してから確認する。接続時の押しっぱなしでは始めない。
         if !self.guide.enabled && stopped && buttons[4] == 0 {
             self.pad.home_ready = true;
@@ -85,8 +173,15 @@ impl Runtime {
         let mut targets = std::collections::BTreeMap::new();
         let fold_pressed = buttons[11] != buttons[12]
             && (buttons[11] != previous[11] || buttons[12] != previous[12]);
-        let grip_pressed = buttons[13] != buttons[14]
-            && (buttons[13] != previous[13] || buttons[14] != previous[14]);
+        let grip_level = if buttons[13] != 0 && buttons[14] == 0 && previous[13] == 0 {
+            Some(self.shared.sequence_config().grip_open)
+        } else if buttons[14] != 0 && buttons[13] == 0 && previous[14] == 0 {
+            Some(self.shared.sequence_config().grip_closed)
+        } else if buttons[1] != 0 && previous[1] == 0 {
+            Some(self.shared.sequence_config().grip_handoff_open)
+        } else {
+            None
+        };
         if fold_pressed {
             let axis = axes
                 .iter()
@@ -98,27 +193,32 @@ impl Runtime {
                 if direction > 0.0 { axis.max } else { axis.min },
             );
         }
-        if grip_pressed {
+        if let Some(values) = grip_level {
             // 3本一括の割当不足を、一部だけ駆動する前に検出する。
-            for name in ["ee_grip_1", "ee_grip_2", "ee_grip_3"] {
-                let axis = axes
+            for (index, name) in ["ee_grip_1", "ee_grip_2", "ee_grip_3"]
+                .into_iter()
+                .enumerate()
+            {
+                let _axis = axes
                     .iter()
                     .find(|axis| axis.name == name)
                     .context("把持3本のEE割当を設定してください")?;
-                let direction = axis.pad_value(&input) * axis.sign;
-                targets.insert(
-                    axis.name.clone(),
-                    if direction > 0.0 { axis.max } else { axis.min },
-                );
+                targets.insert(name.into(), values[index]);
             }
         }
-        // 先端回転は△でフィールド基準0°↔180°を切り替える。θ補正は専用経路が続ける。
+        // 先端回転は△で、正面合わせ時に保存したフィールド基準から180°反転する。
+        // 2回押すと補正差を含めて元の手合わせ角へ戻る。θ補正は専用経路が続ける。
         if buttons[3] != 0 && previous[3] == 0 {
             let _ = axes
                 .iter()
                 .find(|axis| axis.name == "ee_rotation")
                 .context("先端回転のEE割当を設定してください")?;
-            let next = if self.ee.rotation_field >= 90.0 { 0.0 } else { 180.0 };
+            let current = 180.0 - (180.0 - self.ee.rotation_field).rem_euclid(360.0);
+            let next = if current > 90.0 {
+                current - 180.0
+            } else {
+                current + 180.0
+            };
             targets.insert("ee_rotation".into(), next);
         }
         if !targets.is_empty() {
@@ -161,6 +261,15 @@ mod tests {
         let mut r = super::super::tests::screen_runtime();
         r.screen_control = false;
         r.gamepad_name = "DualSense test".into();
+        r
+    }
+    fn bonus_runtime() -> Runtime {
+        let mut r = runtime();
+        let embedded = MachineProfile::embedded().unwrap();
+        r.cfg.machine.dc_motors = embedded.dc_motors;
+        r.cfg.machine.serial_svmd = embedded.serial_svmd;
+        r.cfg.machine.bonus = embedded.bonus;
+        r.cfg.machine.bonus.as_mut().unwrap().enabled = true;
         r
     }
     fn home_button() -> ControllerState {
@@ -209,6 +318,35 @@ mod tests {
         assert!(r.homing.is_none());
     }
     #[test]
+    fn r1_bonus_layer_drives_only_while_direction_is_held() {
+        let mut r = bonus_runtime();
+        let now = Instant::now();
+        let mut right = ControllerState::default();
+        right.buttons[10] = 1;
+        right.buttons[14] = 1;
+        r.read_pad(right, now).unwrap();
+        assert!(
+            r.shared
+                .status_snapshot()
+                .logs
+                .iter()
+                .any(|line| line == "TX CAN 2 784 0104000000640000")
+        );
+
+        let mut released = ControllerState::default();
+        released.buttons[10] = 1;
+        r.read_pad(released, now + Duration::from_millis(50))
+            .unwrap();
+        assert!(
+            r.shared
+                .status_snapshot()
+                .logs
+                .iter()
+                .any(|line| line == "TX CAN 2 784 0104000000000000")
+        );
+        assert!(r.manual_input.axes.iter().all(|value| *value == 0.0));
+    }
+    #[test]
     fn nonneutral_input_cancels_confirmation_and_disconnect_cancels_home() {
         let mut r = runtime();
         let now = Instant::now();
@@ -251,7 +389,7 @@ mod tests {
                     input_sign: if i == 2 { -1.0 } else { 1.0 },
                     speed_us_per_second: 100.0,
                     acceleration_us_per_second2: 2500.0,
-                    minimum_us: 1400,
+                    minimum_us: 500,
                     maximum_us: 1600,
                     initial_us: 1500,
                     enabled: true,
@@ -261,24 +399,35 @@ mod tests {
         r.drive = DriveState::Running;
     }
     #[test]
-    fn triangle_toggles_tip_rotation_between_field_zero_and_180() {
+    fn triangle_reverses_tip_rotation_and_returns_to_captured_field() {
         let mut r = runtime();
         r.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
         r.drive = DriveState::Running;
         r.test.peers.insert("sts", Instant::now());
         let now = Instant::now();
+        r.ee.rotation_field = -45.0;
         r.read_pad(ControllerState::default(), now).unwrap();
         let mut triangle = ControllerState::default();
         triangle.buttons[3] = 1;
         r.read_pad(triangle.clone(), now).unwrap();
-        assert_eq!(r.ee.rotation_field, 180.0);
+        assert_eq!(r.ee.rotation_field, 135.0);
         assert!(r.ee.targets.contains_key("ee_rotation"));
         r.read_pad(ControllerState::default(), now).unwrap();
         r.read_pad(triangle, now).unwrap();
-        assert_eq!(r.ee.rotation_field, 0.0);
+        assert_eq!(r.ee.rotation_field, -45.0);
+
+        r.read_pad(ControllerState::default(), now).unwrap();
+        r.ee.rotation_field = 0.25;
+        let mut triangle = ControllerState::default();
+        triangle.buttons[3] = 1;
+        r.read_pad(triangle.clone(), now).unwrap();
+        assert_eq!(r.ee.rotation_field, 180.25);
+        r.read_pad(ControllerState::default(), now).unwrap();
+        r.read_pad(triangle, now).unwrap();
+        assert_eq!(r.ee.rotation_field, 0.25);
     }
     #[test]
-    fn grips_require_neutral_then_latch_configured_endpoints_with_acceleration() {
+    fn grips_require_neutral_then_select_pick_close_and_handoff_levels() {
         let mut r = runtime();
         add_grips(&mut r);
         let now = Instant::now();
@@ -293,22 +442,20 @@ mod tests {
         r.cfg.machine.pwm_servos[2].enabled = true;
         r.read_pad(ControllerState::default(), now).unwrap();
         r.read_pad(input.clone(), now).unwrap();
-        assert_eq!(r.ee.targets.len(), 3);
-        r.tick_ee(now).unwrap();
-        let initial = r.ee.targets["ee_grip_1"];
-        let initial_reverse = r.ee.targets["ee_grip_2"];
-        r.tick_ee(now + Duration::from_millis(100)).unwrap();
-        assert_eq!(r.ee.targets["ee_grip_1"], initial + 10.0);
-        assert_eq!(r.ee.targets["ee_grip_2"], initial_reverse - 10.0);
-        assert_eq!(r.ee.goals["ee_grip_1"], 1600.0);
-        assert_eq!(r.ee.goals["ee_grip_2"], 1400.0);
-        input.buttons[9] = 1;
-        r.read_pad(input, now).unwrap();
-        r.tick_ee(now + Duration::from_millis(200)).unwrap();
-        assert_eq!(r.ee.targets["ee_grip_1"], initial + 15.0);
+        assert_eq!(r.ee.goals.len(), 3);
+        assert!(r.ee.goals.values().all(|value| *value == 700.0));
+
         r.read_pad(ControllerState::default(), now).unwrap();
-        r.tick_ee(now + Duration::from_millis(300)).unwrap();
-        assert_eq!(r.ee.targets["ee_grip_1"], initial + 25.0);
+        let mut pickup_open = ControllerState::default();
+        pickup_open.buttons[13] = 1;
+        r.read_pad(pickup_open, now).unwrap();
+        assert!(r.ee.goals.values().all(|value| *value == 1500.0));
+
+        r.read_pad(ControllerState::default(), now).unwrap();
+        let mut handoff_open = ControllerState::default();
+        handoff_open.buttons[1] = 1;
+        r.read_pad(handoff_open, now).unwrap();
+        assert!(r.ee.goals.values().all(|value| *value == 500.0));
         r.stop(false).unwrap();
         assert!(r.ee.targets.is_empty());
         assert!(!r.pad.ee_armed);

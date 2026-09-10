@@ -2,7 +2,8 @@
 use super::authority::Authority;
 use crate::{
     application::app_state::{
-        BridgeConfig, CanBusStatus, CanDeviceStatus, CommunicationHealth, Court, PreparationPhase, PreparationStep, Shared,
+        BridgeConfig, CanBusStatus, CanDeviceStatus, CommunicationHealth, Court, PreparationPhase,
+        PreparationStep, Shared,
     },
     application::command::{Reply, Request},
     application::settings::Settings,
@@ -59,6 +60,7 @@ struct Runtime {
     test: test_control::TestControl,
     sts: sts_control::Control,
     ee: ee_control::Control,
+    bonus: bonus_control::Control,
     homing: Option<homing::Homing>,
     sequence: Option<sequence_control::Execution>,
     pad: pad_control::Control,
@@ -66,7 +68,7 @@ struct Runtime {
     manual_input: ControllerState,
     gamepad_input: Option<ControllerState>,
     screen_control: bool,
-    screen_input_times: [Option<Instant>; 6],
+    screen_input_times: [Option<Instant>; crate::input::MACHINE_INPUT_COUNT],
     gamepad_name: String,
     adjustment: bool,
     last_hello: Instant,
@@ -75,9 +77,17 @@ struct Runtime {
     communication_error: Option<String>,
     can_diagnostics: std::collections::BTreeMap<u8, (crate::protocol::can::Diagnostics, Instant)>,
     c620_scan: Option<(u8, Instant)>,
+    pwm_feedback: std::collections::BTreeMap<u8, PwmFeedback>,
     servo_feedback: std::collections::BTreeMap<u8, ServoFeedback>,
+    prepared_rotation_field: Option<f32>,
     last_servo_health_poll: Option<Instant>,
     servo_health_poll_index: usize,
+}
+
+#[derive(Clone)]
+struct PwmFeedback {
+    seen: Instant,
+    state: crate::protocol::svmd::State,
 }
 
 #[derive(Clone)]
@@ -98,7 +108,7 @@ impl Runtime {
             machine: MachineController::new(cfg.machine.clone()),
             settings: Settings::new(&cfg.machine),
             screen_control: cfg.simulate,
-            screen_input_times: [None; 6],
+            screen_input_times: [None; crate::input::MACHINE_INPUT_COUNT],
             cfg,
             shared,
             device: None,
@@ -111,6 +121,7 @@ impl Runtime {
             test: test_control::TestControl::default(),
             sts: sts_control::Control::default(),
             ee: ee_control::Control::default(),
+            bonus: bonus_control::Control::default(),
             homing: None,
             sequence: None,
             pad: pad_control::Control::default(),
@@ -125,7 +136,9 @@ impl Runtime {
             communication_error: None,
             can_diagnostics: std::collections::BTreeMap::new(),
             c620_scan: None,
+            pwm_feedback: std::collections::BTreeMap::new(),
             servo_feedback: std::collections::BTreeMap::new(),
+            prepared_rotation_field: None,
             last_servo_health_poll: None,
             servo_health_poll_index: 0,
         }
@@ -147,7 +160,7 @@ impl Runtime {
         if self.screen_control {
             self.manual_input = ControllerState::default();
         }
-        self.screen_input_times = [None; 6];
+        self.screen_input_times = [None; crate::input::MACHINE_INPUT_COUNT];
     }
     fn stop_with_z_hold(&mut self) -> Result<()> {
         anyhow::ensure!(!self.emergency, "緊停中はz保持を有効化できません");
@@ -155,17 +168,29 @@ impl Runtime {
             anyhow::bail!("通信状態を確認できないためz保持へ移行できません");
         }
         let telemetry = self.telemetry.as_ref().context("実測位置がありません")?;
-        anyhow::ensure!(telemetry.held_slots.is_some(), "z保持に対応したCCTLへ書き込んでください");
-        let axis = self.cfg.machine.axes.iter().find(|a| a.name == "z")
+        anyhow::ensure!(
+            telemetry.held_slots.is_some(),
+            "z保持に対応したCCTLへ書き込んでください"
+        );
+        let axis = self
+            .cfg
+            .machine
+            .axes
+            .iter()
+            .find(|a| a.name == "z")
             .context("z軸が設定されていません")?;
         let mask = 1u8 << axis.slot;
-        anyhow::ensure!(telemetry.stale_slots & mask == 0, "zのフィードバックがありません");
+        anyhow::ensure!(
+            telemetry.stale_slots & mask == 0,
+            "zのフィードバックがありません"
+        );
         self.send(&format!("HOLD {mask}"))?;
         self.homing = None;
         self.pad.ee_armed = false;
         self.pad.home_since = None;
         self.pad.home_ready = false;
         self.ee = ee_control::Control::default();
+        self.bonus.cancel();
         self.sts.cancel();
         self.test.restart_blocked |= self.test.active;
         self.test.active = false;
@@ -179,7 +204,11 @@ impl Runtime {
     }
     fn configuration_failed(&mut self, error: String) {
         self.setup_error = true;
-        if self.telemetry.as_ref().is_some_and(|t| t.held_slots.unwrap_or(0) != 0) {
+        if self
+            .telemetry
+            .as_ref()
+            .is_some_and(|t| t.held_slots.unwrap_or(0) != 0)
+        {
             self.error = error;
             self.reason = "設定適用失敗・z保持を継続中".into();
         } else {
@@ -190,7 +219,7 @@ impl Runtime {
         if self.preparation == PreparationPhase::Waiting {
             self.preparation = PreparationPhase::Recovery;
         }
-        let stop_ee = self.sts.active || !self.ee.targets.is_empty();
+        let stop_ee = self.sts.active || !self.ee.targets.is_empty() || self.bonus.outputs_active();
         let cut = cut
             // RUN送信後、応答前は保持対象が確定していない。JOG 0ではなくSTOPで競合を閉じる。
             || self.drive.awaiting().is_some()
@@ -201,6 +230,7 @@ impl Runtime {
         self.pad.home_since = None;
         self.pad.home_ready = false;
         self.ee = ee_control::Control::default();
+        self.bonus.cancel();
         self.sts.cancel();
         self.test.restart_blocked |= self.test.active;
         self.test.active = false;
@@ -306,6 +336,9 @@ impl Runtime {
         self.communication_error = Some(reason);
         let _ = self.stop(true);
         self.test.peers.clear();
+        self.bonus.reset_reference();
+        self.sts.clear_position_history();
+        self.servo_feedback.clear();
         self.clear_drive();
         self.machine.invalidate_origins();
         self.rx = None;
@@ -442,6 +475,9 @@ impl Runtime {
                 crate::protocol::board::Board::SerialSvmd,
             ] {
                 if let Some(input) = crate::protocol::inputs::parse(&line, board) {
+                    if board == crate::protocol::board::Board::Dcmd {
+                        self.bonus.observe_contacts(input.stable, Instant::now());
+                    }
                     self.shared.update_status(|s| {
                         s.peripherals.insert(
                             format!("{} 接点", board.key()),
@@ -451,8 +487,20 @@ impl Runtime {
                 }
             }
             self.shared.log(format!("RX {line}"));
+            if let Some(state) = crate::protocol::svmd::parse_state(&line) {
+                self.pwm_feedback.insert(
+                    state.channel,
+                    PwmFeedback {
+                        seen: Instant::now(),
+                        state,
+                    },
+                );
+            }
             if let Some((id, detail)) = crate::protocol::serial_svmd::parse_diagnostic(&line) {
-                let position = self.servo_feedback.get(&id).map_or(0, |state| state.position);
+                let position = self
+                    .servo_feedback
+                    .get(&id)
+                    .map_or(0, |state| state.position);
                 self.servo_feedback.insert(
                     id,
                     ServoFeedback {
@@ -480,6 +528,7 @@ impl Runtime {
                 });
             }
             if let Some(encoder) = crate::protocol::dcmd::parse_encoder(&line) {
+                self.bonus.observe_encoder(encoder.count, Instant::now());
                 self.shared.update_status(|s| {
                     s.peripherals.insert(
                         "ボーナス機構エンコーダ".into(),
@@ -491,15 +540,18 @@ impl Runtime {
                 });
             }
             if let Some(servo) = crate::protocol::serial_svmd::parse_state(&line) {
+                // STS3215の実測値は4096カウントごとに折り返す。通常運転の再開時にも
+                // 同じ実測値を初回目標へ使えるよう、停止中を含めて連続位置に直す。
+                let position = self.sts.unwrap_position(servo.id, servo.position);
                 self.servo_feedback.insert(
                     servo.id,
                     ServoFeedback {
                         seen: Instant::now(),
-                        position: servo.position,
+                        position,
                         error: servo.error,
                         detail: format!(
                             "位置={}、出力={}、エラー=0x{:02X}",
-                            servo.position,
+                            position,
                             if servo.enabled { "有効" } else { "解除" },
                             servo.error
                         ),
@@ -514,7 +566,7 @@ impl Runtime {
                         format!("STS3215 ID {}", servo.id),
                         format!(
                             "位置={} 出力={} エラーコード={}",
-                            servo.position,
+                            position,
                             if servo.enabled { "有効" } else { "解除" },
                             servo.error
                         ),
@@ -572,6 +624,9 @@ impl Runtime {
                     t.uptime_ms < old.uptime_ms
                         && old.uptime_ms.wrapping_sub(t.uptime_ms) < 0x80000000
                 }) {
+                    self.sts.clear_position_history();
+                    self.servo_feedback.clear();
+                    self.bonus.reset_reference();
                     self.machine.invalidate_origins();
                     self.fault("基板の再起動を検出しました".into());
                     self.setup = false;
@@ -663,7 +718,7 @@ impl Runtime {
         if self.screen_control {
             for (index, stamp) in self.screen_input_times.iter_mut().enumerate() {
                 if stamp.is_some_and(|time| now.duration_since(time) > Duration::from_millis(150)) {
-                    self.manual_input.axes[index] = 0.0;
+                    self.manual_input.set_machine_axis(index, 0.0);
                     *stamp = None;
                 }
             }
@@ -725,9 +780,12 @@ impl Runtime {
                 let slow = self.adjustment
                     || (!self.authority.active() && self.screen_control)
                     || input.buttons[9] != 0;
-                let lines = self
-                    .machine
-                    .ramped_jog_lines(input, self.telemetry.as_ref().unwrap(), slow, now);
+                let lines = self.machine.ramped_jog_lines(
+                    input,
+                    self.telemetry.as_ref().unwrap(),
+                    slow,
+                    now,
+                );
                 for line in lines {
                     self.send(&line)?;
                 }
@@ -749,6 +807,10 @@ impl Runtime {
         }
         if let Err(error) = self.tick_ee(now) {
             self.fault_ee(error.to_string());
+        }
+        if let Err(error) = self.tick_bonus(now) {
+            self.bonus.cancel();
+            self.fault(error.to_string());
         }
         if let Err(error) = self.tick_sts(now) {
             self.fail_sts(error.to_string());
@@ -1128,8 +1190,11 @@ impl Runtime {
         self.shared.update_status(|s| {
             s.test_mode = self.test.enabled;
             s.ee_targets = self.ee.targets.clone();
+            self.publish_bonus(&mut s.bonus);
             s.homing = self.homing.as_ref().map(|h| h.label.clone());
-            s.homing_ready = self.court.is_some() && !self.preparation.locked() && self.homing_idle()
+            s.homing_ready = self.court.is_some()
+                && !self.preparation.locked()
+                && self.homing_idle()
                 && !self.authority.active()
                 && self.axes_ready(false).is_ok();
             s.homing_confirmation = self.pad.home_since.map(|t| t.elapsed().as_secs_f32());
@@ -1166,20 +1231,24 @@ impl Runtime {
             s.pad_guide = self.guide.enabled;
             s.preparation_step = self.preparation_step();
             s.guide_release = self.guide.confirmed;
-            s.operation_sound_available = self.fresh() && self.device.as_ref().is_some_and(|d| d.tone);
-            s.preparation_blocker = self.preparation_ready()
-                .err().map(|e| e.to_string()).unwrap_or_default();
+            s.operation_sound_available =
+                self.fresh() && self.device.as_ref().is_some_and(|d| d.tone);
+            s.preparation_blocker = self
+                .preparation_ready()
+                .err()
+                .map(|e| e.to_string())
+                .unwrap_or_default();
             s.emergency = self.emergency;
             s.outputs_active = self.homing.is_some()
                 || !self.ee.targets.is_empty()
+                || self.bonus.outputs_active()
                 || self.sts.active
                 || self.test.active
                 || self.drive.awaiting().is_some()
-                || self
-                    .telemetry
-                    .as_ref()
-                    .is_some_and(|t| (t.mode == RunMode::Run && t.enabled_slots != 0)
-                        || t.held_slots.unwrap_or(0) != 0);
+                || self.telemetry.as_ref().is_some_and(|t| {
+                    (t.mode == RunMode::Run && t.enabled_slots != 0)
+                        || t.held_slots.unwrap_or(0) != 0
+                });
             s.operating_state = if self.emergency {
                 "ソフト緊停中"
             } else if !self.fresh() {
@@ -1188,13 +1257,19 @@ impl Runtime {
                 "r・zホーミング中"
             } else if self.sequence.is_some() {
                 "シーケンス実行中"
+            } else if self.bonus.active() {
+                "ボーナスハンド動作中"
             } else if self.test.active {
                 "個別テスト出力中"
             } else if self.drive.running() {
                 "運転中"
             } else if self.drive.awaiting().is_some() {
                 "運転応答待ち"
-            } else if self.telemetry.as_ref().is_some_and(|t| t.held_slots.unwrap_or(0) != 0) {
+            } else if self
+                .telemetry
+                .as_ref()
+                .is_some_and(|t| t.held_slots.unwrap_or(0) != 0)
+            {
                 "出力停止・z保持"
             } else if s.outputs_active {
                 "停止・保持"
@@ -1328,11 +1403,12 @@ pub fn run(shared: Arc<Shared>) {
     let _ = runtime.stop(true);
 }
 
+mod bonus_control;
 mod ee_control;
 mod homing;
 mod pad_control;
-mod requests;
 mod preparation;
+mod requests;
 mod sequence_control;
 mod sts_control;
 mod test_control;

@@ -107,19 +107,14 @@ impl Target {
                     .into(),
                 )
             }
-            (Self::Pwm(_), Kind::Position) => (
-                profile
-                    .svmd_parameters
-                    .get("min_pulse_us")
-                    .copied()
-                    .unwrap_or(500.0),
-                profile
-                    .svmd_parameters
-                    .get("max_pulse_us")
-                    .copied()
-                    .unwrap_or(2500.0),
-                "µs".into(),
-            ),
+            (Self::Pwm(_), Kind::Position) => {
+                let parameters = profile.effective_svmd_parameters();
+                (
+                    parameters.get("min_pulse_us").copied().unwrap_or(500.0),
+                    parameters.get("max_pulse_us").copied().unwrap_or(2500.0),
+                    "µs".into(),
+                )
+            }
             (Self::Sts(_), Kind::Position) => (0.0, 4095.0, "step".into()),
             (Self::Dc, Kind::Duty) => (-100.0, 100.0, "‰".into()),
             _ => bail!("この対象では使えないテスト方式です"),

@@ -171,6 +171,8 @@ impl BridgeApp {
                 });
             }
         });
+        ui.add_space(8.0);
+        self.operate_bonus(ui, status);
     }
 
     pub(super) fn homing_controls(&mut self, ui: &mut egui::Ui, status: &Status) {
@@ -186,8 +188,13 @@ impl BridgeApp {
             .find(|a| a.name == "z")
             .map(|a| a.homing_retreat_mm())
             .unwrap_or(0.0);
-        let retreat = config.machine.axes.iter().find(|a| a.name == "r")
-            .map(|a| a.homing_retreat_mm()).unwrap_or(0.0);
+        let retreat = config
+            .machine
+            .axes
+            .iter()
+            .find(|a| a.name == "r")
+            .map(|a| a.homing_retreat_mm())
+            .unwrap_or(0.0);
         ui.label(format!(
             "{}：正面をθ=0°として、z上昇後にθを{:+.0}°へ旋回します。",
             court.label(),

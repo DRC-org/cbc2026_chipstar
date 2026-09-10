@@ -131,6 +131,7 @@ pub struct Status {
     pub homing_ready: bool,
     pub homing_confirmation: Option<f32>,
     pub ee_targets: std::collections::BTreeMap<String, f32>,
+    pub bonus: BonusStatus,
     pub sts: crate::application::sts::Status,
     pub test_mode: bool,
     pub test_target: String,
@@ -165,6 +166,23 @@ pub struct Status {
     pub can_devices: Vec<CanDeviceStatus>,
     pub saved: bool,
     pub logs: VecDeque<String>,
+}
+
+#[derive(Clone, Default, Serialize)]
+pub struct BonusStatus {
+    pub configured: bool,
+    pub semi_auto: bool,
+    pub handoff_captured: bool,
+    pub encoder_count: Option<i32>,
+    pub position_counts: Option<i32>,
+    pub handoff_limit_configured: bool,
+    pub handoff_limit: Option<bool>,
+    pub selected_box: usize,
+    pub box_names: Vec<String>,
+    pub loaded: u8,
+    pub capacity: u8,
+    pub active: bool,
+    pub phase: String,
 }
 
 pub struct Pending {

@@ -109,7 +109,7 @@ impl Control {
             .map_or(0, |epoch| epoch.elapsed().as_millis() as u64)
     }
 
-    fn unwrap_position(&mut self, id: u8, raw: i32) -> i32 {
+    pub(super) fn unwrap_position(&mut self, id: u8, raw: i32) -> i32 {
         let mut position = raw;
         if let Some(previous) = self.positions.get(&id).copied() {
             while position - previous > 2048 {
@@ -121,6 +121,10 @@ impl Control {
         }
         self.positions.insert(id, position);
         position
+    }
+
+    pub(super) fn clear_position_history(&mut self) {
+        self.positions.clear();
     }
 }
 

@@ -115,7 +115,7 @@ fn axis_request(
 ) -> f32 {
     axis.input_axis
         .map(|index| {
-            normalized(input.axes[index])
+            normalized(input.machine_axis(index).unwrap_or(0.0))
                 * axis.input_sign
                 * if slow { slow_speed_percent * 0.01 } else { 1.0 }
         })

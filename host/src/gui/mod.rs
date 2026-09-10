@@ -558,12 +558,13 @@ pub fn install_japanese_font(ctx: &egui::Context) {
         style.spacing.interact_size.y = 30.0;
     });
 }
+mod bonus;
 mod diagnose;
 mod ee;
 mod operate;
-mod sequence;
 mod pid;
 mod pid_plot;
+mod sequence;
 mod shortcuts;
 mod sts;
 mod tune;
@@ -577,8 +578,8 @@ mod gamepad;
 
 mod parameter_help;
 
-mod shell;
 mod preparation;
+mod shell;
 
 #[cfg(test)]
 mod workflow_tests {
@@ -616,7 +617,10 @@ mod workflow_tests {
                 thread::sleep(Duration::from_millis(10));
             }
             let mut app = BridgeApp::new(shared.clone());
-            app.request(Request { text: Some("red".into()), ..Request::new("preparation_court") });
+            app.request(Request {
+                text: Some("red".into()),
+                ..Request::new("preparation_court")
+            });
             Self {
                 app,
                 shared,
@@ -844,5 +848,4 @@ mod workflow_tests {
         harness.app.dispatch(Action::Tab(-1));
         assert_eq!(harness.app.screen, Screen::Debug);
     }
-
 }

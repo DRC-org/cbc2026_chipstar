@@ -11,7 +11,11 @@ impl BridgeApp {
                     self.switch_screen(Screen::Tune);
                 }
             });
-            ui.label(RichText::new("操縦を有効にしてから、各機構の移動先を指定してください。").size(12.0).color(MUTED));
+            ui.label(
+                RichText::new("操縦を有効にしてから、各機構の移動先を指定してください。")
+                    .size(12.0)
+                    .color(MUTED),
+            );
             ui.add_space(6.0);
             let axes = ee::axes(&self.shared.config().machine);
             let can = status.running
@@ -96,6 +100,27 @@ impl BridgeApp {
                 .iter()
                 .filter(|a| a.name.starts_with("ee_grip_"))
                 .collect();
+            let sequence = self.shared.sequence_config();
+            ui.horizontal_wrapped(|ui| {
+                for (label, values) in [
+                    ("取得時開", sequence.grip_open),
+                    ("把持閉 700 µs", sequence.grip_closed),
+                    ("受け渡し開 500 µs", sequence.grip_handoff_open),
+                ] {
+                    if ui
+                        .add_enabled(
+                            can && grips.len() == 3 && grips.iter().all(|axis| axis.enabled),
+                            egui::Button::new(label),
+                        )
+                        .clicked()
+                    {
+                        for (index, axis) in grips.iter().enumerate() {
+                            command.insert(axis.name.clone(), values[index]);
+                            self.ee_values.insert(axis.name.clone(), values[index]);
+                        }
+                    }
+                }
+            });
             if ui
                 .add_enabled(
                     can && grips.len() == 3 && grips.iter().all(|a| a.enabled),
@@ -109,7 +134,7 @@ impl BridgeApp {
                 }
             }
             ui.label(
-                RichText::new("PWMサーボには位置センサがないため、表示値は指令値です。")
+                RichText::new("DualSense：← 取得時開、→ 把持閉、○ 受け渡し開。PWMサーボには位置センサがないため、表示値は指令値です。")
                     .size(12.0)
                     .color(MUTED),
             );
@@ -299,7 +324,7 @@ impl BridgeApp {
                             &mut s.minimum_us,
                             &mut s.maximum_us,
                             &mut s.initial_us,
-                            500..=2500,
+                            100..=20000,
                             "µs",
                         );
                     });
@@ -315,9 +340,12 @@ impl BridgeApp {
                         ui.label("加減速度");
                         ui.add(
                             egui::DragValue::new(&mut s.acceleration_us_per_second2)
-                                .range(1.0..=20000.0)
+                                .range(0.0..=20000.0)
                                 .suffix(" µs/s²"),
                         );
+                        if s.acceleration_us_per_second2 == 0.0 {
+                            ui.label("なし");
+                        }
                     });
                     ui.label(
                         RichText::new("十字キーを押すと移動下限または上限へ移動し、離しても目標位置まで動きます。")
@@ -355,7 +383,7 @@ impl BridgeApp {
                         );
                     });
                     ui.label(
-                        RichText::new("△ボタンで0°/180°を切り替え、θの回転は回転換算係数で打ち消します。")
+                        RichText::new("△ボタンで正面合わせ時の向きから180°反転し、θの回転は回転換算係数で打ち消します。")
                             .size(12.0)
                             .color(MUTED),
                     );
@@ -376,7 +404,7 @@ impl BridgeApp {
             }
         });
         ui.label(
-            RichText::new("EE全体回転はSTS3215で、フィールド基準0°/180°を△で切り替えます。θの回転は回転換算係数で打ち消します。")
+            RichText::new("EE全体回転はSTS3215で、正面合わせ時の向きから△で180°反転します。θの回転は回転換算係数で打ち消します。")
                 .size(12.0)
                 .color(MUTED),
         );

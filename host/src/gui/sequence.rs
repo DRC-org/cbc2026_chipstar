@@ -64,6 +64,13 @@ impl Panel {
             } else if !status.sequence.message.is_empty() {
                 ui.label(&status.sequence.message);
             }
+            ui.label(
+                RichText::new(
+                    "単独実行では、取得準備後に取得r・θ、取得後に受け渡しr・θを手動調整します。連続実行は登録位置を使います。把持閉700 µs、受け渡し開500 µs。",
+                )
+                .size(12.0)
+                .color(MUTED),
+            );
             egui::CollapsingHeader::new("位置・姿勢・工程を設定").id_salt("sequence-settings").show(ui, |ui| {
                 let dirty = &self.edit != applied;
                 ui.horizontal_wrapped(|ui| {
@@ -101,13 +108,13 @@ impl Panel {
                             capture(status, "r", &mut group.r); capture(status, "theta", &mut group.theta);
                         }
                     });
-                    height(ui, status, "ワーク直上", &mut group.approach_z);
-                    height(ui, status, "把持高さ", &mut group.grab_z);
+                    height(ui, status, "取得高さ", &mut group.grab_z);
                     field_rotation(ui, "取得向き", &mut group.rotation);
                 });
-                egui::CollapsingHeader::new("移動高さ・受渡し位置").default_open(true).show(ui, |ui| {
-                    height(ui, status, "移動高さ", &mut self.edit.travel_z);
-                    number(ui, "把持後の小上昇量", &mut self.edit.lift_mm, " mm");
+                egui::CollapsingHeader::new("移動高さ・連続実行の受渡し位置").default_open(true).show(ui, |ui| {
+                    height(ui, status, "ワークなし移動高さ", &mut self.edit.travel_z);
+                    height(ui, status, "ワークあり移動高さ", &mut self.edit.loaded_travel_z);
+                    number(ui, "外枠へ下げる1段", &mut self.edit.handoff_descent_step_mm, " mm");
                     for (label, dest) in [("左", &mut self.edit.left), ("右", &mut self.edit.right)] {
                         ui.push_id(label, |ui| {
                             ui.separator(); ui.label(format!("{label}側への受渡し"));
@@ -117,7 +124,7 @@ impl Panel {
                                     capture(status, "r", &mut dest.r); capture(status, "theta", &mut dest.theta);
                                 }
                             });
-                            height(ui, status, "受渡し高さ", &mut dest.z);
+                            height(ui, status, "整列機構の外枠内", &mut dest.z);
                             field_rotation(ui, "受渡し向き", &mut dest.rotation);
                         });
                     }
@@ -129,6 +136,7 @@ impl Panel {
                         let role = format!("ee_grip_{}", i + 1);
                         servo(ui, status, &format!("把持{} 開", i + 1), &role, &mut self.edit.grip_open[i], " µs");
                         servo(ui, status, &format!("把持{} 閉", i + 1), &role, &mut self.edit.grip_closed[i], " µs");
+                        servo(ui, status, &format!("把持{} 受渡し開", i + 1), &role, &mut self.edit.grip_handoff_open[i], " µs");
                     }
                     for axis in crate::machine::ee::axes(machine) {
                         ui.label(format!("{}：{}〜{} {}{}", axis.label, axis.min, axis.max, axis.unit(), if axis.enabled { "" } else { "（通常出力未許可）" }));

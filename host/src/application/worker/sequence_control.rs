@@ -116,10 +116,12 @@ impl Runtime {
                     self.screen_control = true;
                 }
                 self.manual_input = ControllerState::default();
-                self.screen_input_times = [None; 6];
+                self.screen_input_times = [None; crate::input::MACHINE_INPUT_COUNT];
                 self.authority.clear_input();
                 self.pad.ee_armed = false;
-                if !self.drive.running() && let Err(error) = self.start() {
+                if !self.drive.running()
+                    && let Err(error) = self.start()
+                {
                     self.screen_control = previous_screen_control;
                     return Err(error);
                 }
@@ -346,7 +348,8 @@ mod tests {
         config.groups[0].approach_z = 15.0;
         config.groups[0].grab_z = 10.0;
         config.travel_z = 30.0;
-        config.lift_mm = 5.0;
+        config.loaded_travel_z = 35.0;
+        config.handoff_descent_step_mm = 2.0;
         config.left.r = 40.0;
         config.left.theta = 10.0;
         config.left.z = 25.0;
@@ -417,20 +420,20 @@ mod tests {
             .position
     }
     #[test]
-    fn three_gui_operations_move_pick_lift_transfer_and_hold_without_stop() {
+    fn separate_operations_preserve_manual_xy_at_pick_and_handoff() {
         let mut r = runtime();
         let mut now = Instant::now();
         start(&mut r, Stage::Prepare, Side::Left);
         finish(&mut r, &mut now);
         assert!((position(&r, "r") - 25.0).abs() < 0.1);
-        assert!((position(&r, "z") - 15.0).abs() < 0.1);
+        assert!((position(&r, "z") - 10.0).abs() < 0.1);
         assert!(r.drive.running());
         assert_eq!(r.ee.targets.len(), 5);
         let offset = r.shared.status_snapshot().logs.len();
-        // 工程境界で新しい選択に切替可能。取得完了では把持を保持する。
+        // 取得準備後のr・θを上書きせず、その位置で把持する。
         start(&mut r, Stage::Pick, Side::Right);
         finish(&mut r, &mut now);
-        assert!((position(&r, "z") - 15.0).abs() < 0.1);
+        assert!((position(&r, "z") - 35.0).abs() < 0.1);
         assert!(r.ee.targets.contains_key("ee_grip_3"));
         assert!(
             !r.shared
@@ -440,11 +443,14 @@ mod tests {
                 .skip(offset)
                 .any(|l| l == "TX STOP")
         );
+        let handoff_r = position(&r, "r");
+        let handoff_theta = position(&r, "theta");
         start(&mut r, Stage::Transfer, Side::Right);
         finish(&mut r, &mut now);
-        assert!((position(&r, "r") - 50.0).abs() < 0.1);
-        assert!((position(&r, "theta") + 10.0).abs() < 0.1);
-        assert!((position(&r, "z") - 28.0).abs() < 0.1);
+        // 受け渡し単独実行は、開始前に手動で合わせたr・θを保つ。
+        assert!((position(&r, "r") - handoff_r).abs() < 0.1);
+        assert!((position(&r, "theta") - handoff_theta).abs() < 0.1);
+        assert!((position(&r, "z") - 35.0).abs() < 0.1);
         assert!(r.drive.running() && r.ee.targets.len() == 5);
         let held = position(&r, "r");
         for _ in 0..5 {
@@ -563,16 +569,27 @@ mod tests {
         )
         .unwrap();
         r.tick().unwrap();
+        let grip = r
+            .cfg
+            .machine
+            .pwm_servos
+            .iter()
+            .find(|servo| servo.name == "ee_grip_1")
+            .unwrap();
+        let grip_target = grip.maximum_us;
         r.request(
             &Request {
-                text: Some("[targets]\nee_grip_1=1500".into()),
+                text: Some(format!("[targets]\nee_grip_1={grip_target}")),
                 ..Request::new("ee")
             },
             true,
         )
         .unwrap();
-        assert_eq!(r.ee.targets["ee_grip_1"], 611.0);
-        assert!(!r.ee_targets_reached(&BTreeMap::from([("ee_grip_1".into(), 1500.0)])));
+        assert_eq!(r.ee.targets["ee_grip_1"], 700.0);
+        assert!(!r.ee_targets_reached(&BTreeMap::from([(
+            "ee_grip_1".into(),
+            f32::from(grip_target),
+        )])));
         r.screen_control = false;
         r.gamepad_name = "test pad".into();
         r.guide.enabled = false; // デバッグ画面で従来の操縦を継続する経路。

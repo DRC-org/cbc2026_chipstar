@@ -21,7 +21,7 @@ impl Stage {
         match self {
             Self::Prepare => "取得準備",
             Self::Pick => "取得",
-            Self::Transfer => "搬送",
+            Self::Transfer => "受け渡し",
             Self::All => "３操作を連続実行",
         }
     }
@@ -57,9 +57,11 @@ pub enum Action {
     Fold,
     BonusRotation,
     BonusHeight,
+    HandoffOpen,
+    LoadedRetreat,
 }
 impl Action {
-    pub const ALL: [Self; 13] = [
+    pub const ALL: [Self; 15] = [
         Self::WorkPosition,
         Self::WorkRotation,
         Self::Unfold,
@@ -73,6 +75,8 @@ impl Action {
         Self::Fold,
         Self::BonusRotation,
         Self::BonusHeight,
+        Self::HandoffOpen,
+        Self::LoadedRetreat,
     ];
     pub fn label(self) -> &'static str {
         match self {
@@ -80,15 +84,17 @@ impl Action {
             Self::WorkRotation => "取得向きへEE回転",
             Self::Unfold => "EE展開",
             Self::Open => "把持開",
-            Self::Approach => "ワーク直上へ下降",
-            Self::Descend => "把持高さへ下降",
+            Self::Approach => "取得高さへ下降",
+            Self::Descend => "取得高さへ下降（旧工程）",
             Self::Close => "把持閉",
-            Self::Lift => "確認用に小上昇",
-            Self::TravelHeight => "移動高さへ上昇",
-            Self::BonusPosition => "ボーナス上空へ移動",
+            Self::Lift => "確認用に小上昇（旧工程）",
+            Self::TravelHeight => "ワークあり移動高さへ上昇",
+            Self::BonusPosition => "受け渡し場所上空へ移動",
             Self::Fold => "EEたたみ",
             Self::BonusRotation => "受渡し向きへEE回転",
-            Self::BonusHeight => "受渡し高さへ移動",
+            Self::BonusHeight => "外枠内へ段階下降",
+            Self::HandoffOpen => "受け渡しレベルまで把持開",
+            Self::LoadedRetreat => "ワークあり移動高さへ垂直退避",
         }
     }
 }
@@ -135,12 +141,22 @@ pub struct Config {
     pub groups: Vec<Group>,
     pub left: Destination,
     pub right: Destination,
+    /// ワークを持たない状態でr・θ移動に使うz高さ。
     pub travel_z: f32,
+    /// ワークを持った状態でr・θ移動と垂直退避に使うz高さ。
+    #[serde(default)]
+    pub loaded_travel_z: f32,
+    /// 受け渡し場所で外枠へ入れるときの1段あたりz移動量。
+    #[serde(default = "default_handoff_descent_step_mm")]
+    pub handoff_descent_step_mm: f32,
+    /// 旧設定ファイルの読込み用。標準工程では使用しない。
     pub lift_mm: f32,
     pub unfolded: f32,
     pub folded: f32,
     pub grip_open: [f32; 3],
     pub grip_closed: [f32; 3],
+    #[serde(default = "default_grip_level")]
+    pub grip_handoff_open: [f32; 3],
     pub speed_percent: f32,
     pub tolerance_mm: f32,
     pub tolerance_deg: f32,
@@ -148,6 +164,12 @@ pub struct Config {
     pub prepare: Vec<Step>,
     pub pick: Vec<Step>,
     pub transfer: Vec<Step>,
+}
+fn default_handoff_descent_step_mm() -> f32 {
+    5.0
+}
+fn default_grip_level() -> [f32; 3] {
+    [1500.0; 3]
 }
 impl Config {
     pub fn from_machine(machine: &MachineProfile) -> Self {
@@ -189,10 +211,26 @@ impl Config {
                     ) {
                         step.wait_seconds = 0.5;
                     }
+                    if *action == Action::Fold {
+                        step.wait_seconds = 2.0;
+                    }
                     step
                 })
                 .collect()
         };
+        let prepare = steps(&[
+            Action::WorkPosition,
+            Action::Unfold,
+            Action::WorkRotation,
+            Action::Open,
+            Action::Approach,
+        ]);
+        let transfer = steps(&[
+            Action::Fold,
+            Action::BonusHeight,
+            Action::HandoffOpen,
+            Action::LoadedRetreat,
+        ]);
         Self {
             groups: (1..=8)
                 .map(|i| Group {
@@ -207,30 +245,21 @@ impl Config {
             left: destination.clone(),
             right: destination,
             travel_z: position("z"),
+            loaded_travel_z: position("z"),
+            handoff_descent_step_mm: default_handoff_descent_step_mm(),
             lift_mm: 10.0,
             unfolded: servo("ee_fold", 1500.0),
             folded: servo("ee_fold", 1500.0),
             grip_open: grips,
-            grip_closed: grips,
+            grip_closed: [700.0; 3],
+            grip_handoff_open: [500.0; 3],
             speed_percent: 50.0,
             tolerance_mm: 1.0,
             tolerance_deg: 1.0,
             timeout_seconds: 60.0,
-            prepare: steps(&[
-                Action::WorkPosition,
-                Action::WorkRotation,
-                Action::Unfold,
-                Action::Open,
-                Action::Approach,
-            ]),
-            pick: steps(&[Action::Descend, Action::Close, Action::Lift]),
-            transfer: steps(&[
-                Action::TravelHeight,
-                Action::BonusPosition,
-                Action::Fold,
-                Action::BonusRotation,
-                Action::BonusHeight,
-            ]),
+            prepare,
+            pick: steps(&[Action::Close, Action::TravelHeight]),
+            transfer,
         }
     }
     pub fn steps(&self, stage: Stage) -> &[Step] {
@@ -274,6 +303,10 @@ impl Config {
             self.lift_mm.is_finite() && self.lift_mm >= 0.0,
             "小上昇量は0以上で指定してください"
         );
+        ensure!(
+            self.handoff_descent_step_mm.is_finite() && self.handoff_descent_step_mm > 0.0,
+            "受け渡し下降刻みは0より大きい値で指定してください"
+        );
         for group in 0..self.groups.len() {
             for side in [Side::Left, Side::Right] {
                 self.resolve(&Start {
@@ -301,11 +334,47 @@ impl Config {
         };
         let mut result = Vec::new();
         for stage in stages {
-            for step in self.steps(stage) {
+            let mut steps = self.steps(stage).to_vec();
+            // 個別の取得・受け渡し間では操作者がr・θを合わせる。
+            // 連続実行だけは登録した受け渡し上空位置へ自動移動する。
+            if start.stage == Stage::All
+                && stage == Stage::Transfer
+                && !steps
+                    .iter()
+                    .any(|step| step.actions.contains(&Action::BonusPosition))
+            {
+                steps.insert(0, Step::new(Action::BonusPosition));
+            }
+            for step in &steps {
                 ensure!(
                     step.wait_seconds.is_finite() && step.wait_seconds >= 0.0,
                     "工程の待ち時間は0以上で指定してください"
                 );
+                if step.actions.contains(&Action::BonusHeight) {
+                    ensure!(
+                        step.actions == [Action::BonusHeight],
+                        "外枠内への段階下降は単独工程にしてください"
+                    );
+                    let distance = dest.z - self.loaded_travel_z;
+                    let count = (distance.abs() / self.handoff_descent_step_mm)
+                        .ceil()
+                        .max(1.0) as usize;
+                    ensure!(count <= 1000, "受け渡し下降刻みが細かすぎます");
+                    for index in 1..=count {
+                        let z = self.loaded_travel_z + distance * index as f32 / count as f32;
+                        result.push(ResolvedStep {
+                            name: format!("{} / {} {index}/{count}", stage.label(), step.name),
+                            axes: BTreeMap::from([("z".into(), z)]),
+                            ee: BTreeMap::new(),
+                            wait_seconds: if index == count {
+                                step.wait_seconds
+                            } else {
+                                0.0
+                            },
+                        });
+                    }
+                    continue;
+                }
                 let mut resolved = ResolvedStep {
                     name: format!("{} / {}", stage.label(), step.name),
                     axes: BTreeMap::new(),
@@ -321,11 +390,12 @@ impl Config {
                         Action::WorkRotation => (false, vec![("ee_rotation", group.rotation)]),
                         Action::Unfold => (false, vec![("ee_fold", self.unfolded)]),
                         Action::Fold => (false, vec![("ee_fold", self.folded)]),
-                        Action::Open | Action::Close => {
-                            let values = if *action == Action::Open {
-                                self.grip_open
-                            } else {
-                                self.grip_closed
+                        Action::Open | Action::Close | Action::HandoffOpen => {
+                            let values = match action {
+                                Action::Open => self.grip_open,
+                                Action::Close => self.grip_closed,
+                                Action::HandoffOpen => self.grip_handoff_open,
+                                _ => unreachable!(),
                             };
                             (
                                 false,
@@ -336,13 +406,22 @@ impl Config {
                                 ],
                             )
                         }
-                        Action::Approach => (true, vec![("z", group.approach_z)]),
+                        Action::Approach => (true, vec![("z", group.grab_z)]),
                         Action::Descend => (true, vec![("z", group.grab_z)]),
                         Action::Lift => (true, vec![("z", group.grab_z + self.lift_mm)]),
-                        Action::TravelHeight => (true, vec![("z", self.travel_z)]),
-                        Action::BonusPosition => (true, vec![("r", dest.r), ("theta", dest.theta)]),
+                        Action::TravelHeight | Action::LoadedRetreat => {
+                            (true, vec![("z", self.loaded_travel_z)])
+                        }
+                        Action::BonusPosition => (
+                            true,
+                            vec![
+                                ("r", dest.r),
+                                ("theta", dest.theta),
+                                ("z", self.loaded_travel_z),
+                            ],
+                        ),
                         Action::BonusRotation => (false, vec![("ee_rotation", dest.rotation)]),
-                        Action::BonusHeight => (true, vec![("z", dest.z)]),
+                        Action::BonusHeight => unreachable!("段階下降は上で展開済み"),
                     };
                     let map = if arm {
                         &mut resolved.axes
@@ -395,7 +474,20 @@ pub fn config_path(profile: &Path) -> PathBuf {
     profile.with_extension("sequences.toml")
 }
 pub fn load(path: &Path) -> Result<Config> {
-    let config: Config = toml::from_str(&std::fs::read_to_string(path)?)?;
+    let mut value: toml::Value = toml::from_str(&std::fs::read_to_string(path)?)?;
+    if let Some(table) = value.as_table_mut() {
+        if !table.contains_key("loaded_travel_z")
+            && let Some(travel) = table.get("travel_z").cloned()
+        {
+            table.insert("loaded_travel_z".into(), travel);
+        }
+        if !table.contains_key("grip_handoff_open")
+            && let Some(open) = table.get("grip_open").cloned()
+        {
+            table.insert("grip_handoff_open".into(), open);
+        }
+    }
+    let config: Config = value.try_into()?;
     config.validate()?;
     Ok(config)
 }
@@ -412,10 +504,14 @@ mod tests {
         let mut config = Config::from_machine(&MachineProfile::embedded().unwrap());
         config.groups[1].r = 120.0;
         config.groups[1].grab_z = 25.0;
-        config.lift_mm = 8.0;
+        config.travel_z = 40.0;
+        config.loaded_travel_z = 33.0;
+        config.handoff_descent_step_mm = 2.0;
         config.left.rotation = 0.0;
         config.right.rotation = 180.0;
         config.right.r = 210.0;
+        config.right.z = 28.0;
+        config.grip_handoff_open = [1200.0, 1201.0, 1202.0];
         config.prepare[0].actions.push(Action::WorkRotation);
         let request = Start {
             group: 1,
@@ -426,12 +522,35 @@ mod tests {
         assert_eq!(steps[0].axes["r"], 120.0);
         assert!(steps[0].ee.contains_key("ee_rotation"));
         assert!(steps.iter().any(|s| s.axes.get("z") == Some(&33.0)));
-        assert!(
-            steps
-                .iter()
-                .any(|s| s.ee.get("ee_rotation") == Some(&180.0))
-        );
+        assert!(steps.iter().any(|s| s.ee.get("ee_grip_2") == Some(&1201.0)));
         assert!(steps.iter().any(|s| s.axes.get("r") == Some(&210.0)));
+        let descent: Vec<_> = steps
+            .iter()
+            .filter(|step| step.name.contains("外枠内へ段階下降"))
+            .map(|step| step.axes["z"])
+            .collect();
+        assert_eq!(descent, [31.333334, 29.666666, 28.0]);
+        assert_eq!(steps.last().unwrap().axes["z"], 33.0);
+        let transfer = config
+            .resolve(&Start {
+                group: 1,
+                side: Side::Right,
+                stage: Stage::Transfer,
+            })
+            .unwrap();
+        assert!(
+            transfer
+                .iter()
+                .all(|step| !step.axes.contains_key("r") && !step.axes.contains_key("theta"))
+        );
+        assert_eq!(
+            Config::from_machine(&MachineProfile::embedded().unwrap()).grip_closed,
+            [700.0; 3]
+        );
+        assert_eq!(
+            Config::from_machine(&MachineProfile::embedded().unwrap()).grip_handoff_open,
+            [500.0; 3]
+        );
         let encoded = toml::to_string_pretty(&config).unwrap();
         assert_eq!(toml::from_str::<Config>(&encoded).unwrap(), config);
         config.prepare[0].actions.push(Action::BonusPosition);

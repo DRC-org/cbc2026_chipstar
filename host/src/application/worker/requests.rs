@@ -2,12 +2,27 @@ use super::*;
 
 impl Runtime {
     pub(super) fn request(&mut self, req: &Request, manual: bool) -> Result<Reply> {
-        let audible = manual && self.guide.enabled && matches!(req.action.as_str(),
-            "preparation_court" | "preparation_restart" | "preparation_return" |
-            "preparation_wait" | "preparation_start" | "home" | "run" | "stop" | "estop_reset");
+        let audible = manual
+            && self.guide.enabled
+            && matches!(
+                req.action.as_str(),
+                "preparation_court"
+                    | "preparation_restart"
+                    | "preparation_return"
+                    | "preparation_wait"
+                    | "preparation_start"
+                    | "home"
+                    | "run"
+                    | "stop"
+                    | "estop_reset"
+            );
         let result = self.request_inner(req, manual);
         if audible {
-            self.operation_feedback(if result.as_ref().is_ok_and(|reply| reply.ok) { 1 } else { 2 });
+            self.operation_feedback(if result.as_ref().is_ok_and(|reply| reply.ok) {
+                1
+            } else {
+                2
+            });
         }
         result
     }
@@ -35,7 +50,13 @@ impl Runtime {
             && !leaving_test
             && !matches!(
                 req.action.as_str(),
-                "stop" | "cut" | "safe" | "fault" | "connection" | "preparation_guide" | "preparation_restart"
+                "stop"
+                    | "cut"
+                    | "safe"
+                    | "fault"
+                    | "connection"
+                    | "preparation_guide"
+                    | "preparation_restart"
             )
         {
             bail!("ソフト緊停中です。人間が解除するまで操作できません");
@@ -43,8 +64,12 @@ impl Runtime {
         if req.action.starts_with("preparation_") {
             return self.preparation_request(req, manual);
         }
-        if self.preparation.locked() && !matches!(req.action.as_str(),
-            "stop" | "cut" | "safe" | "fault" | "heartbeat" | "release") {
+        if self.preparation.locked()
+            && !matches!(
+                req.action.as_str(),
+                "stop" | "cut" | "safe" | "fault" | "heartbeat" | "release"
+            )
+        {
             bail!("開始待ちの操作ロック中です。準備画面から開始または再確認してください");
         }
         if req.action == "claim" {
@@ -87,12 +112,19 @@ impl Runtime {
         {
             bail!("ホーミングを停止してから操作してください");
         }
-        if self.sequence.is_some() && !matches!(req.action.as_str(),
-            "stop" | "cut" | "safe" | "heartbeat" | "release" | "fault" | "sequence_save") {
+        if self.sequence.is_some()
+            && !matches!(
+                req.action.as_str(),
+                "stop" | "cut" | "safe" | "heartbeat" | "release" | "fault" | "sequence_save"
+            )
+        {
             bail!("シーケンス実行中です。手動操作は中断後に行ってください");
         }
         if req.action.starts_with("sequence_") {
             return self.sequence_request(req, manual);
+        }
+        if req.action.starts_with("bonus_") {
+            return self.bonus_request(req);
         }
         if req.action == "sts" {
             return self.sts_request(req);
@@ -143,8 +175,12 @@ impl Runtime {
                 if !self.fresh() || self.device.is_none() {
                     bail!("基板との通信復旧を待ってから再確認してください");
                 }
-                if self.emergency || self.telemetry.as_ref().is_some_and(|t|
-                    t.mode != RunMode::Run && t.held_slots.unwrap_or(0) == 0) {
+                if self.emergency
+                    || self
+                        .telemetry
+                        .as_ref()
+                        .is_some_and(|t| t.mode != RunMode::Run && t.held_slots.unwrap_or(0) == 0)
+                {
                     self.stop(true)?;
                     self.send("SAFE")?;
                 } else {
@@ -167,7 +203,7 @@ impl Runtime {
                 self.stop(false)?;
                 self.screen_control = screen_control;
                 self.manual_input = ControllerState::default();
-                self.screen_input_times = [None; 6];
+                self.screen_input_times = [None; crate::input::MACHINE_INPUT_COUNT];
             }
             "release" => {
                 self.stop(false)?;
@@ -191,7 +227,9 @@ impl Runtime {
                     .iter()
                     .position(|a| Some(&a.name) == req.axis.as_ref())
                     .context("軸名が不正です")?;
-                let position = req.value.unwrap_or(self.cfg.machine.axes[index].origin_position);
+                let position = req
+                    .value
+                    .unwrap_or(self.cfg.machine.axes[index].origin_position);
                 if !self
                     .machine
                     .capture_coordinate(index, self.telemetry.as_ref(), position)
@@ -230,7 +268,7 @@ impl Runtime {
                     if value != 0.0 && !self.drive.running() {
                         bail!("運転再開してから操作してください");
                     }
-                    self.manual_input.axes[index] = value;
+                    self.manual_input.set_machine_axis(index, value);
                     self.screen_input_times[index] = Some(Instant::now());
                 } else {
                     self.authority.set_input(index, value, Instant::now());
@@ -254,7 +292,7 @@ impl Runtime {
                 self.test = test_control::TestControl::default();
                 self.screen_control = self.cfg.simulate;
                 self.manual_input = ControllerState::default();
-                self.screen_input_times = [None; 6];
+                self.screen_input_times = [None; crate::input::MACHINE_INPUT_COUNT];
                 self.shared
                     .update_status(|status| status.peripherals.clear());
                 self.shared.set_config(self.cfg.clone());
@@ -266,6 +304,9 @@ impl Runtime {
                 self.device = None;
                 self.telemetry = None;
                 self.rx = None;
+                self.sts.clear_position_history();
+                self.servo_feedback.clear();
+                self.bonus.reset_reference();
                 self.setup = false;
                 self.setup_error = false;
                 self.settings = Settings::new(&self.cfg.machine);
@@ -297,14 +338,31 @@ impl Runtime {
                 let profile =
                     MachineProfile::parse(req.text.as_deref().context("設定本文が必要です")?)?;
                 if self.fresh() {
-                    let identity_changed = ["c620_esc_id", "c620_slot2_esc_id", "el05_motor_id", "el05_host_id"]
-                        .iter().any(|key| profile.parameters.get(*key) != self.cfg.machine.parameters.get(*key))
-                        || profile.axes.iter().find(|a| a.name == "z").map(|a| a.slot)
-                            != self.cfg.machine.axes.iter().find(|a| a.name == "z").map(|a| a.slot);
+                    let identity_changed =
+                        [
+                            "c620_esc_id",
+                            "c620_slot2_esc_id",
+                            "el05_motor_id",
+                            "el05_host_id",
+                        ]
+                        .iter()
+                        .any(|key| {
+                            profile.parameters.get(*key) != self.cfg.machine.parameters.get(*key)
+                        }) || profile.axes.iter().find(|a| a.name == "z").map(|a| a.slot)
+                            != self
+                                .cfg
+                                .machine
+                                .axes
+                                .iter()
+                                .find(|a| a.name == "z")
+                                .map(|a| a.slot);
                     if identity_changed {
-                        anyhow::ensure!(self.telemetry.as_ref().is_some_and(|t|
-                            t.mode != RunMode::Run && t.held_slots == Some(0)),
-                            "通信ID・zのslot変更前に機構を支えて全トルクを解除してください");
+                        anyhow::ensure!(
+                            self.telemetry
+                                .as_ref()
+                                .is_some_and(|t| t.mode != RunMode::Run && t.held_slots == Some(0)),
+                            "通信ID・zのslot変更前に機構を支えて全トルクを解除してください"
+                        );
                         self.stop(true)?;
                         self.send("SAFE")?;
                     } else {

@@ -119,7 +119,7 @@ impl Runtime {
                 );
                 self.preparation_ready()?;
                 self.manual_input = ControllerState::default();
-                self.screen_input_times = [None; 6];
+                self.screen_input_times = [None; crate::input::MACHINE_INPUT_COUNT];
                 self.preparation = PreparationPhase::Waiting;
                 Ok(Reply::data(
                     "開始待ち。会場の合図後に「競技開始」を押してください".into(),

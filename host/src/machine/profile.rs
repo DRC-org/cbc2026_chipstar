@@ -10,8 +10,8 @@ use serde::{Deserialize, Serialize};
 pub(super) const EMBEDDED_PROFILE: &str = include_str!("../../config/rtheta.toml");
 const MAX_SLOTS: usize = 3;
 const PWM_CHANNEL_COUNT: usize = 4;
-const PWM_MIN_US: u16 = 500;
-const PWM_MAX_US: u16 = 2500;
+const PWM_MIN_US: u16 = 100;
+const PWM_MAX_US: u16 = 20000;
 const SERIAL_SERVO_MAX_COUNT: usize = 16;
 const CONTACT_COUNT: usize = 3;
 
@@ -218,6 +218,8 @@ pub struct MachineProfile {
     pub slow_speed_percent: f32,
     #[serde(default)]
     pub dc_motors: Vec<super::dc_motor::MotorProfile>,
+    #[serde(default)]
+    pub bonus: Option<super::bonus::BonusProfile>,
     pub protocol_version: u8,
     #[serde(default)]
     pub axes: Vec<AxisProfile>,
@@ -312,6 +314,19 @@ impl MachineProfile {
         values
     }
 
+    /// PWM基板の受理範囲は、機体側で設定した全サーボ端点を包むよう自動生成する。
+    /// 個別端点とは別に同じ範囲を設定させない。
+    pub fn effective_svmd_parameters(&self) -> ParameterMap {
+        let mut values = self.svmd_parameters.clone();
+        if let Some(minimum) = self.pwm_servos.iter().map(|servo| servo.minimum_us).min() {
+            values.insert("min_pulse_us".into(), f32::from(minimum));
+        }
+        if let Some(maximum) = self.pwm_servos.iter().map(|servo| servo.maximum_us).max() {
+            values.insert("max_pulse_us".into(), f32::from(maximum));
+        }
+        values
+    }
+
     /// 表示・保存されるCCTL設定も軸速度から生成した値へ揃える。
     pub fn sync_motor_speed_limits(&mut self) {
         self.parameters = self.cctl_parameters();
@@ -323,6 +338,22 @@ impl MachineProfile {
             bail!("slow_speed_percentは1..100で指定してください");
         }
         super::dc_motor::validate(&self.dc_motors)?;
+        if let Some(bonus) = &self.bonus {
+            bonus.validate()?;
+            if !self
+                .dc_motors
+                .iter()
+                .any(|motor| motor.name == bonus.selector_motor)
+            {
+                bail!("bonus.selector_motorに対応するDCモータがありません");
+            }
+            let servos = self.serial_svmd.as_ref().map(|board| &board.servos);
+            for name in [&bonus.lid_servo, &bonus.align_servo] {
+                if !servos.is_some_and(|servos| servos.iter().any(|servo| &servo.name == name)) {
+                    bail!("ボーナスハンドのSTS3215 {name} が設定されていません");
+                }
+            }
+        }
         if self.protocol_version != 1 {
             bail!(
                 "未対応のプロトコルバージョンです: {}",
@@ -418,8 +449,11 @@ impl MachineProfile {
             if axis.name.is_empty() || !names.insert(axis.name.as_str()) {
                 bail!("軸名は空でなく重複しない値にしてください: {}", axis.name);
             }
-            if axis.input_axis.is_some_and(|index| index >= 6) {
-                bail!("input_axisは0..5で指定してください: {}", axis.name);
+            if axis
+                .input_axis
+                .is_some_and(|index| index >= crate::input::MACHINE_INPUT_COUNT)
+            {
+                bail!("機体軸のinput_axisは0..6で指定してください: {}", axis.name);
             }
             let numbers = [
                 axis.input_sign,
@@ -487,7 +521,7 @@ impl MachineProfile {
                 || !servo.acceleration_us_per_second2.is_finite()
                 || servo.input_sign.abs() != 1.0
                 || servo.speed_us_per_second < 0.0
-                || servo.acceleration_us_per_second2 <= 0.0
+                || servo.acceleration_us_per_second2 < 0.0
                 || servo.minimum_us < PWM_MIN_US
                 || servo.maximum_us > PWM_MAX_US
                 || servo.minimum_us >= servo.maximum_us

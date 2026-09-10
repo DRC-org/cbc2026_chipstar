@@ -92,7 +92,7 @@ fn z_ten_mm_feedback_and_five_mm_per_second_command_use_rotor_degrees() {
     let moved = telemetry(1234.0 + axis.native_per_unit * 10.0);
     assert!((machine.origin_states(Some(&moved))[2].position - 10.0).abs() < 0.001);
     let mut input = ControllerState::default();
-    input.axes[axis.input_axis.unwrap()] = 1.0;
+    assert!(input.set_machine_axis(axis.input_axis.unwrap(), 1.0));
     let line = &machine.jog_lines(&input, &start, false)[2];
     let velocity: f32 = line.split_whitespace().last().unwrap().parse().unwrap();
     let expected = axis.input_sign * effective_speed * axis.native_per_unit;

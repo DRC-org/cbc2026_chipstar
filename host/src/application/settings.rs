@@ -86,11 +86,12 @@ impl Settings {
 /// 基板とIDを保持し、指令文字列の逆解析で応答先を推測しない。
 pub fn parameter_plan(profile: &MachineProfile) -> Vec<ParameterValue> {
     let cctl_parameters = profile.cctl_parameters();
+    let svmd_parameters = profile.effective_svmd_parameters();
     let boards: [(ParameterBoard, &ParameterMap, &[&str]); 4] = [
         (ParameterBoard::Cctl, &cctl_parameters, &PARAMETER_NAMES),
         (
             ParameterBoard::Svmd,
-            &profile.svmd_parameters,
+            &svmd_parameters,
             &svmd::PARAMETER_NAMES,
         ),
         (
@@ -136,6 +137,7 @@ mod tests {
         let mut profile = MachineProfile::embedded().unwrap();
         profile.parameters.clear();
         profile.axes.clear();
+        profile.pwm_servos.clear();
         profile.parameters.insert("m3508_vel_ki".into(), 0.0005);
         let mut sync = Settings::new(&profile);
         assert_eq!(sync.poll_command().unwrap().unwrap(), "PARAM 5 0.00050");
@@ -225,6 +227,7 @@ mod tests {
         let mut profile = MachineProfile::embedded().unwrap();
         profile.parameters.clear();
         profile.axes.clear();
+        profile.pwm_servos.clear();
         profile.svmd_parameters.insert("min_pulse_us".into(), 500.0);
         profile.dcmd_parameters.insert("max_duty".into(), 500.0);
         profile
