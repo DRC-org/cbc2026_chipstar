@@ -115,7 +115,9 @@ fn homing_speed_percent_is_valid_and_rejects_unsafe_values() {
 
 #[test]
 fn slow_speed_percent_defaults_to_twenty_and_is_configurable() {
-    let profile = MachineProfile::embedded().unwrap();
+    let mut unset: toml::Value = toml::from_str(EMBEDDED_PROFILE).unwrap();
+    unset.as_table_mut().unwrap().remove("slow_speed_percent");
+    let profile = MachineProfile::parse(&toml::to_string(&unset).unwrap()).unwrap();
     assert_eq!(profile.slow_speed_percent, 20.0);
 
     let mut configured = profile.clone();
