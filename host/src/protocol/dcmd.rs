@@ -92,6 +92,25 @@ pub const PARAMETER_NAMES: [&str; 6] = [
     "pwm_frequency_hz",
 ];
 
+// dcmd/src/domain/parameters.hpp の起動時既定値と受理範囲。
+pub const PARAMETER_DEFAULTS: [f32; 6] = [900.0, 10.0, 1.0, 2000.0, 250.0, 20000.0];
+pub const PARAMETER_RANGES: [(f32, f32); 6] = [
+    (0.0, 1000.0),
+    (1.0, 10000.0),
+    (1.0, 1000.0),
+    (0.0, 60000.0),
+    (1.0, 60000.0),
+    (500.0, 100000.0),
+];
+
+pub fn max_duty(parameters: &std::collections::BTreeMap<String, f32>) -> f32 {
+    parameters
+        .get("max_duty")
+        .copied()
+        .unwrap_or(PARAMETER_DEFAULTS[0])
+        .trunc()
+}
+
 /// `PARAM SET` のCANフレーム行。byte 4..7 に float32 を big endian で載せる。
 pub fn parameter_line(id: u8, value: f32) -> String {
     let bytes = value.to_be_bytes();

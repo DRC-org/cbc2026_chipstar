@@ -400,6 +400,17 @@ impl MachineProfile {
             }
         }
 
+        for (index, name) in crate::protocol::dcmd::PARAMETER_NAMES.iter().enumerate() {
+            let (min, max) = crate::protocol::dcmd::PARAMETER_RANGES[index];
+            if self
+                .dcmd_parameters
+                .get(*name)
+                .is_some_and(|v| !(min..=max).contains(v))
+            {
+                bail!("DCモータ基板の{name}は{min}..{max}で指定してください");
+            }
+        }
+
         if self
             .parameters
             .keys()

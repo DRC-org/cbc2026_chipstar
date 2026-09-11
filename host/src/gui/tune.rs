@@ -267,7 +267,6 @@ impl BridgeApp {
                     for (board, parameters) in [
                         ("cctl", &mut self.edit.parameters),
                         ("PWMサーボ基板", &mut self.edit.svmd_parameters),
-                        ("DCモータ基板", &mut self.edit.dcmd_parameters),
                         ("STS3215基板", &mut self.edit.serial_svmd_parameters),
                     ] {
                         if parameters.is_empty() {
@@ -310,6 +309,9 @@ impl BridgeApp {
                                     ui.end_row();
                                 }
                             });
+                    }
+                    if !self.edit.dc_motors.is_empty() || !self.edit.dcmd_parameters.is_empty() {
+                        edited |= super::dc::parameters(ui, &mut self.edit.dcmd_parameters);
                     }
                 });
         });

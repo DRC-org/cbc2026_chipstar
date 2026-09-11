@@ -116,7 +116,10 @@ impl Target {
                 )
             }
             (Self::Sts(_), Kind::Position) => (0.0, 4095.0, "step".into()),
-            (Self::Dc, Kind::Duty) => (-100.0, 100.0, "‰".into()),
+            (Self::Dc, Kind::Duty) => {
+                let maximum = dcmd::max_duty(&profile.dcmd_parameters);
+                (-maximum, maximum, "‰".into())
+            }
             _ => bail!("この対象では使えないテスト方式です"),
         })
     }

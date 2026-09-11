@@ -82,7 +82,7 @@ impl BonusProfile {
             || self.align_servo.is_empty()
             || self.lid_servo == self.align_servo
             || self.selector_duty == 0
-            || self.selector_duty > 900
+            || self.selector_duty > 1000
             || self.selector_slow_duty == 0
             || self.selector_slow_duty > self.selector_duty
             || self.selector_slow_zone_counts <= self.selector_tolerance_counts

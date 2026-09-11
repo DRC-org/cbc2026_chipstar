@@ -699,12 +699,17 @@ fn cctl_position_test_and_sensor_observation_do_not_reenable_other_axes() {
 #[test]
 fn dc_output_is_bounded_and_communication_loss_does_not_resume_tests() {
     let mut runtime = screen_runtime();
+    runtime
+        .cfg
+        .machine
+        .dcmd_parameters
+        .insert("max_duty".into(), 600.0);
     select_test(&mut runtime, "dc:0", "duty");
     assert!(
         runtime
             .request(
                 &Request {
-                    value: Some(101.0),
+                    value: Some(601.0),
                     ..Request::new("test_output")
                 },
                 true
@@ -714,7 +719,7 @@ fn dc_output_is_bounded_and_communication_loss_does_not_resume_tests() {
     runtime
         .request(
             &Request {
-                value: Some(-100.0),
+                value: Some(-600.0),
                 ..Request::new("test_output")
             },
             true,

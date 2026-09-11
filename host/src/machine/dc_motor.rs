@@ -19,7 +19,7 @@ pub fn validate(motors: &[MotorProfile]) -> Result<()> {
             || mask & (1 << motor.channel) != 0
             || motor.input_axis >= 6
             || motor.input_sign.abs() != 1.0
-            || motor.maximum_duty > 900
+            || motor.maximum_duty > 1000
             || motor.name.is_empty()
         {
             bail!("DCMDのchannel、入力、Duty上限が不正です");

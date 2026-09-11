@@ -559,6 +559,7 @@ pub fn install_japanese_font(ctx: &egui::Context) {
     });
 }
 mod bonus;
+mod dc;
 mod diagnose;
 mod ee;
 mod operate;
