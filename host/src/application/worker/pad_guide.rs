@@ -49,11 +49,12 @@ impl Runtime {
             return Ok(true);
         }
         let moving = self.drive.running() || self.drive.awaiting().is_some();
+        let automatic = self.homing.is_some() || self.sequence.is_some();
         let context = (
             self.preparation,
             self.preparation_step(),
             moving,
-            self.homing.is_some() || self.sequence.is_some(),
+            automatic,
             self.emergency,
         );
         if self.guide.context != Some(context) {
@@ -67,12 +68,16 @@ impl Runtime {
             self.guide.armed = released;
             return Ok(true);
         }
-        // ○だけは操縦・ホーミング中も「停止して最初へ戻る」として受け付ける。
-        if (moving || self.homing.is_some() || self.sequence.is_some())
+        // 操縦中の○はEE、R1+○はボーナスに渡す。準備へ戻る操作はPS停止後に行う。
+        if moving && !automatic {
+            return Ok(false);
+        }
+        // 自動動作中は機構操作へ渡さず、○による中断だけを受け付ける。
+        if automatic
             && input.buttons[1] == 0
             && !self.guide.pending.is_some_and(|button| button == 1)
         {
-            return Ok(self.homing.is_some() || self.sequence.is_some());
+            return Ok(true);
         }
         if let Some(button) = self.guide.pending {
             let only_button = neutral_axes
@@ -347,6 +352,36 @@ mod tests {
         r.read_pad(button(0), now + Duration::from_secs(2)).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Waiting);
+    }
+    #[test]
+    fn ps_then_fresh_circle_restarts_without_reusing_a_held_circle() {
+        let mut r = runtime();
+        r.court = Some(Court::Red);
+        origins(&mut r);
+        r.drive = DriveState::Running;
+        let now = Instant::now();
+        let mut stop = button(1);
+        stop.buttons[5] = 1;
+        r.read_pad(stop, now).unwrap();
+        r.read_pad(button(1), now).unwrap();
+        r.read_pad(button(1), now + Duration::from_secs(1)).unwrap();
+        r.read_pad(ControllerState::default(), now).unwrap();
+        assert!(!r.drive.running());
+        assert_eq!(r.court, Some(Court::Red));
+        assert!(
+            r.machine
+                .origin_states(r.telemetry.as_ref())
+                .iter()
+                .all(|o| o.captured)
+        );
+        press(&mut r, 1, 1).unwrap();
+        assert!(r.court.is_none());
+        assert!(
+            r.machine
+                .origin_states(r.telemetry.as_ref())
+                .iter()
+                .all(|o| !o.captured)
+        );
     }
     #[test]
     fn mouse_and_pad_share_actions_and_restart_cancels_motion_and_homing() {

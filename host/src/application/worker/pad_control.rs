@@ -399,6 +399,99 @@ mod tests {
         r.drive = DriveState::Running;
     }
     #[test]
+    fn circle_during_guided_driving_opens_grips_without_restarting_preparation() {
+        for phase in [PreparationPhase::Setting, PreparationPhase::Active] {
+            for deflected in [false, true] {
+                let mut r = runtime();
+                add_grips(&mut r);
+                r.guide.enabled = true;
+                r.preparation = phase;
+                let now = Instant::now();
+                for _ in 0..2 {
+                    r.read_pad(ControllerState::default(), now).unwrap();
+                }
+                let mut circle = ControllerState::default();
+                circle.buttons[1] = 1;
+                if deflected {
+                    circle.axes[0] = 0.5;
+                }
+                r.read_pad(circle, now).unwrap();
+                r.read_pad(ControllerState::default(), now).unwrap();
+                assert!(r.drive.running());
+                assert_eq!(r.preparation, phase);
+                assert_eq!(r.court, Some(Court::Red));
+                assert!(
+                    r.machine
+                        .origin_states(r.telemetry.as_ref())
+                        .iter()
+                        .all(|o| o.captured)
+                );
+                for (index, value) in r
+                    .shared
+                    .sequence_config()
+                    .grip_handoff_open
+                    .iter()
+                    .enumerate()
+                {
+                    assert_eq!(
+                        r.ee.goals.get(&format!("ee_grip_{}", index + 1)),
+                        Some(value)
+                    );
+                }
+            }
+        }
+    }
+    #[test]
+    fn guided_r1_circle_only_opens_bonus_lid_even_when_r1_is_released_first() {
+        let mut r = bonus_runtime();
+        add_grips(&mut r);
+        r.guide.enabled = true;
+        r.cfg.machine.bonus.as_mut().unwrap().lid_open_position = 2600;
+        let servo = r
+            .cfg
+            .machine
+            .serial_svmd
+            .as_mut()
+            .unwrap()
+            .servos
+            .iter_mut()
+            .find(|servo| servo.name == "bonus_lid")
+            .unwrap();
+        servo.enabled = true;
+        let expected = format!(
+            "TX {}",
+            crate::protocol::serial_svmd::Command::Target {
+                id: servo.id,
+                position: 2600,
+                speed: servo.speed_position_per_second.round() as u16,
+                acceleration: servo.acceleration,
+            }
+            .to_cctl_line()
+        );
+        let now = Instant::now();
+        for _ in 0..2 {
+            r.read_pad(ControllerState::default(), now).unwrap();
+        }
+        let mut input = ControllerState::default();
+        input.buttons[10] = 1;
+        r.read_pad(input.clone(), now).unwrap();
+        input.buttons[1] = 1;
+        r.read_pad(input.clone(), now).unwrap();
+        input.buttons[10] = 0;
+        r.read_pad(input, now).unwrap();
+        r.read_pad(ControllerState::default(), now).unwrap();
+        assert!(r.shared.status_snapshot().logs.contains(&expected));
+        assert!(r.ee.goals.is_empty());
+        assert!(r.drive.running());
+        assert_eq!(r.court, Some(Court::Red));
+        assert!(
+            r.machine
+                .origin_states(r.telemetry.as_ref())
+                .iter()
+                .all(|o| o.captured)
+        );
+    }
+    #[test]
     fn triangle_reverses_tip_rotation_and_returns_to_captured_field() {
         let mut r = runtime();
         r.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;

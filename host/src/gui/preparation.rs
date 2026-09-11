@@ -105,7 +105,7 @@ impl BridgeApp {
         section(
             ui,
             "競技の準備",
-            "×：主操作　□：配置完了　○：最初に戻る　PS：停止。マウスでも同じ操作ができます。",
+            "×：主操作　□：配置完了　停止中の○：最初に戻る　PS：停止。操縦中の○は受け渡し開です。",
         );
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -257,8 +257,8 @@ impl BridgeApp {
             self.preparation_action(
                 ui,
                 "停止して最初に戻る",
-                "○",
-                "押して離す",
+                if status.running { "PS → ○" } else { "○" },
+                if status.running { "PSで停止し、離してから○" } else { "押して離す" },
                 !status.ai_active,
                 "preparation_restart",
             );
