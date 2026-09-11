@@ -236,6 +236,41 @@ pub(super) fn screen_runtime() -> Runtime {
 }
 
 #[test]
+fn manual_limit_edge_captures_origin_only_during_adjustment_run() {
+    let mut runtime = screen_runtime();
+    runtime.machine.invalidate_origins();
+    runtime.adjustment = true;
+    runtime.drive = DriveState::Running;
+    let mut before = runtime.telemetry.clone().unwrap();
+    before.contacts = Some(0);
+    let mut reached = before.clone();
+    reached.contacts = Some(1);
+    reached.slots[0].measured = 42.0;
+
+    runtime.capture_manual_limit_edges(Some(&before), &reached);
+    let state = &runtime.machine.origin_states(Some(&reached))[0];
+    assert!(state.captured);
+    assert!((state.position - runtime.cfg.machine.axes[0].origin_position).abs() < 1e-3);
+    assert!(
+        runtime
+            .shared
+            .status_snapshot()
+            .logs
+            .iter()
+            .any(|line| line.contains("原点自動採用: rのリミット到達位置"))
+    );
+
+    runtime.machine.invalidate_origins();
+    runtime.adjustment = false;
+    runtime.capture_manual_limit_edges(Some(&before), &reached);
+    assert!(!runtime.machine.origin_states(Some(&reached))[0].captured);
+
+    runtime.adjustment = true;
+    runtime.capture_manual_limit_edges(Some(&reached), &reached);
+    assert!(!runtime.machine.origin_states(Some(&reached))[0].captured);
+}
+
+#[test]
 fn screen_jog_requires_running_and_expires_without_latching_on_restart() {
     let mut runtime = screen_runtime();
     // Exercise the real-mode input gate while retaining the simulated transport.

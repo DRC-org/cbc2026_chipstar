@@ -202,7 +202,7 @@ impl BridgeApp {
                     if adjustment {
                         ui.colored_label(
                             WARNING,
-                            "低速固定中。機体座標による移動範囲の制限は無効です。",
+                            "低速固定中。リミット到達時はその軸の原点を自動採用します。機体座標による移動範囲の制限は無効です。",
                         );
                     }
                     if let Some(axis) = self.edit.axes.iter_mut().find(|axis| axis.name == name) {

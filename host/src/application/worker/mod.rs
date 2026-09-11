@@ -149,6 +149,49 @@ impl Runtime {
         self.shared.update_status(|s| s.tx_count += 1);
         Ok(())
     }
+
+    /// 原点調整中に手動操作でリミットへ到達した軸の原点を、その場で採用する。
+    /// 通常運転中や、調整開始時から押されていた接点では座標を書き換えない。
+    fn capture_manual_limit_edges(&mut self, previous: Option<&Telemetry>, current: &Telemetry) {
+        if !self.adjustment
+            || !self.drive.running()
+            || self.authority.active()
+            || self.sequence.is_some()
+        {
+            return;
+        }
+        let (Some(before), Some(now)) = (
+            previous.and_then(|telemetry| telemetry.contacts),
+            current.contacts,
+        ) else {
+            return;
+        };
+        let reached: Vec<_> = self
+            .cfg
+            .machine
+            .axes
+            .iter()
+            .enumerate()
+            .filter_map(|(index, axis)| {
+                let limit = axis.limit?;
+                (!limit.reached(before) && limit.reached(now)).then(|| {
+                    (
+                        index,
+                        axis.name.clone(),
+                        axis.origin_position,
+                        axis.unit.clone(),
+                    )
+                })
+            })
+            .collect();
+        for (index, name, position, unit) in reached {
+            if self.machine.capture_origin(index, Some(current)) {
+                self.shared.log(format!(
+                    "原点自動採用: {name}のリミット到達位置を{position} {unit}として採用"
+                ));
+            }
+        }
+    }
     fn fresh(&self) -> bool {
         self.rx.is_some_and(|t| t.elapsed() <= FRESH)
     }
@@ -665,6 +708,8 @@ impl Runtime {
                 }
                 let before = self.machine.origin_states(self.telemetry.as_ref());
                 self.machine.observe(&t);
+                let previous = self.telemetry.clone();
+                self.capture_manual_limit_edges(previous.as_ref(), &t);
                 let origin_lost = self
                     .machine
                     .origin_states(Some(&t))
