@@ -154,6 +154,9 @@ mod tests {
     #[test]
     fn small_gain_requires_precise_reply_and_reports_both_values() {
         let mut profile = MachineProfile::embedded().unwrap();
+        profile.svmd_parameters.clear();
+        profile.dcmd_parameters.clear();
+        profile.serial_svmd_parameters.clear();
         profile.dc_motors.clear();
         profile.bonus = None;
         profile.parameters.clear();
@@ -248,6 +251,9 @@ mod tests {
     #[test]
     fn identical_parameter_ids_on_different_boards_do_not_cross_confirm() {
         let mut profile = MachineProfile::embedded().unwrap();
+        profile.svmd_parameters.clear();
+        profile.dcmd_parameters.clear();
+        profile.serial_svmd_parameters.clear();
         profile.dc_motors.clear();
         profile.bonus = None;
         profile.parameters.clear();

@@ -674,6 +674,8 @@ mod workflow_tests {
     fn bonus_tuning_applies_tests_stops_captures_and_saves_while_disabled() {
         let mut harness = Harness::new();
         harness.app.switch_screen(Screen::Tune);
+        harness.app.edit.bonus.as_mut().unwrap().enabled = false;
+        harness.app.edit.bonus.as_mut().unwrap().selector_slow_duty = 40;
         harness.app.edit.bonus.as_mut().unwrap().selector_duty = 450;
         harness
             .app

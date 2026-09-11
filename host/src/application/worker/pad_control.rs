@@ -270,6 +270,9 @@ mod tests {
         r.cfg.machine.serial_svmd = embedded.serial_svmd;
         r.cfg.machine.bonus = embedded.bonus;
         r.cfg.machine.bonus.as_mut().unwrap().enabled = true;
+        r.cfg.machine.bonus.as_mut().unwrap().selector_duty = 100;
+        r.cfg.machine.bonus.as_mut().unwrap().selector_slow_duty = 40;
+        r.cfg.machine.dc_motors[0].input_sign = 1.0;
         r
     }
     fn home_button() -> ControllerState {

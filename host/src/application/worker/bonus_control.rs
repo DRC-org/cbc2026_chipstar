@@ -32,6 +32,8 @@ mod tests {
         r.cfg.machine.bonus = embedded.bonus;
         let profile = r.cfg.machine.bonus.as_mut().unwrap();
         profile.enabled = true;
+        profile.selector_duty = 100;
+        profile.selector_slow_duty = 40;
         profile.boxes[0].offset_counts = 1000;
         profile.align_position = 2500;
         profile.align_home_position = 2000;
