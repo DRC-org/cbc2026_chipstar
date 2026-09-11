@@ -1,4 +1,5 @@
 slow_speed_percent = 10.0
+swap_dpad_left_right = true
 protocol_version = 1
 
 [[dc_motors]]

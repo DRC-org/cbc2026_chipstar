@@ -1,5 +1,15 @@
 use super::*;
 use crate::machine::{PwmServoProfile, SerialServoProfile, SerialSvmdProfile, ee};
+
+pub(super) fn grip_label(label: &str, values: [f32; 3]) -> String {
+    let [first, second, third] = values;
+    if first == second && second == third {
+        format!("{label} {first:.0} µs")
+    } else {
+        format!("{label} 1:{first:.0} / 2:{second:.0} / 3:{third:.0} µs")
+    }
+}
+
 impl BridgeApp {
     pub(super) fn operate_ee(&mut self, ui: &mut egui::Ui, status: &Status) {
         panel().show(ui, |ui| {
@@ -104,13 +114,13 @@ impl BridgeApp {
             ui.horizontal_wrapped(|ui| {
                 for (label, values) in [
                     ("取得時開", sequence.grip_open),
-                    ("把持閉 700 µs", sequence.grip_closed),
-                    ("受け渡し開 500 µs", sequence.grip_handoff_open),
+                    ("把持閉", sequence.grip_closed),
+                    ("受け渡し開", sequence.grip_handoff_open),
                 ] {
                     if ui
                         .add_enabled(
                             can && grips.len() == 3 && grips.iter().all(|axis| axis.enabled),
-                            egui::Button::new(label),
+                            egui::Button::new(grip_label(label, values)),
                         )
                         .clicked()
                     {

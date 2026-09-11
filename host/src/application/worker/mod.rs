@@ -1410,7 +1410,7 @@ pub fn run(shared: Arc<Shared>) {
                 let pad = gilrs.gamepad(id);
                 if pad.is_connected() {
                     runtime.gamepad_name = pad.name().into();
-                    if let Err(error) = runtime.read_pad(controller::read(&pad), cycle) {
+                    if let Err(error) = runtime.read_gamepad(controller::read(&pad), cycle) {
                         runtime.error = error.to_string();
                     }
                 } else {

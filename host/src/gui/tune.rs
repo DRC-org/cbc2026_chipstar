@@ -143,6 +143,10 @@ impl BridgeApp {
                 )
                 .on_hover_text(description)
                 .changed();
+            edited |= ui
+                .checkbox(&mut self.edit.swap_dpad_left_right, "十字キーの左右入力を補正")
+                .on_hover_text("←を押すと→と表示される場合に有効にします。EE・ボーナス・コート選択へ共通で反映します。変更後は適用・保存してください。")
+                .changed();
             if let Some(origin) = status
                 .origins
                 .iter()

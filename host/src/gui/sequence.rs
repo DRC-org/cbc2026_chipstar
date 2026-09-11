@@ -66,7 +66,7 @@ impl Panel {
             }
             ui.label(
                 RichText::new(
-                    "単独実行では、取得準備後に取得r・θ、取得後に受け渡しr・θを手動調整します。連続実行は登録位置を使います。把持閉700 µs、受け渡し開500 µs。",
+                    "単独実行では、取得準備後に取得r・θ、取得後に受け渡しr・θを手動調整します。連続実行は登録位置を使います。取得時開・把持閉・受け渡し開は「EE姿勢」で設定します。",
                 )
                 .size(12.0)
                 .color(MUTED),
@@ -134,7 +134,7 @@ impl Panel {
                     servo(ui, status, "たたみ", "ee_fold", &mut self.edit.folded, " µs");
                     for i in 0..3 {
                         let role = format!("ee_grip_{}", i + 1);
-                        servo(ui, status, &format!("把持{} 開", i + 1), &role, &mut self.edit.grip_open[i], " µs");
+                        servo(ui, status, &format!("把持{} 取得時開", i + 1), &role, &mut self.edit.grip_open[i], " µs");
                         servo(ui, status, &format!("把持{} 閉", i + 1), &role, &mut self.edit.grip_closed[i], " µs");
                         servo(ui, status, &format!("把持{} 受渡し開", i + 1), &role, &mut self.edit.grip_handoff_open[i], " µs");
                     }

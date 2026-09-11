@@ -1,4 +1,4 @@
-//! DualSenseの生入力と、機体設定を反映した操作要求の表示。
+//! DualSenseの左右補正済み入力と、機体設定を反映した操作要求の表示。
 use super::*;
 
 pub(super) fn monitor(ui: &mut egui::Ui, status: &Status, profile: &MachineProfile) {
@@ -29,6 +29,9 @@ pub(super) fn monitor(ui: &mut egui::Ui, status: &Status, profile: &MachineProfi
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("DualSense入力").strong());
+                if profile.swap_dpad_left_right {
+                    ui.label(RichText::new("左右補正あり").size(12.0).color(MUTED));
+                }
                 chip(ui, state.0, state.1);
                 ui.label(RichText::new(&status.gamepad).size(12.0).color(MUTED));
                 if pressed.is_empty() {
@@ -58,19 +61,25 @@ pub(super) fn monitor(ui: &mut egui::Ui, status: &Status, profile: &MachineProfi
                         true,
                     );
                 }
+            });
+            ui.horizontal_wrapped(|ui| {
+                ui.label(RichText::new("EE指令").size(12.0).color(MUTED))
+                    .on_hover_text("現在送信している位置指令です。機構の実測位置ではありません。");
                 for axis in crate::machine::ee::axes(profile) {
-                    request_value(
-                        ui,
-                        axis.label,
-                        normalized(axis.pad_value(input))
-                            * axis.sign
-                            * if slow {
-                                profile.slow_speed_percent * 0.01
-                            } else {
-                                1.0
-                            },
-                        axis.enabled,
-                    );
+                    let value = status.ee_targets.get(&axis.name);
+                    let color = if !axis.enabled {
+                        WARNING
+                    } else if value.is_some() {
+                        ACCENT
+                    } else {
+                        MUTED
+                    };
+                    let suffix = if axis.enabled { "" } else { "・未許可" };
+                    let label = match value {
+                        Some(value) => format!("{} {value:.0} {}{suffix}", axis.label, axis.unit()),
+                        None => format!("{} 未指令{suffix}", axis.label),
+                    };
+                    chip(ui, &label, color);
                 }
             });
             ui.columns(3, |columns| {

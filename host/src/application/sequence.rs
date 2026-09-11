@@ -188,7 +188,6 @@ impl Config {
         };
         // 回転はフィールド基準角[deg]。既定は0°で、工程では0°/180°を選ぶ。
         let rotation = 0.0;
-        let grips = std::array::from_fn(|i| servo(&format!("ee_grip_{}", i + 1), 1500.0));
         let destination = Destination {
             r: position("r"),
             theta: position("theta"),
@@ -250,9 +249,9 @@ impl Config {
             lift_mm: 10.0,
             unfolded: servo("ee_fold", 1500.0),
             folded: servo("ee_fold", 1500.0),
-            grip_open: grips,
-            grip_closed: [700.0; 3],
-            grip_handoff_open: [500.0; 3],
+            grip_open: [1000.0; 3],
+            grip_closed: [500.0; 3],
+            grip_handoff_open: [700.0; 3],
             speed_percent: 50.0,
             tolerance_mm: 1.0,
             tolerance_deg: 1.0,
@@ -544,12 +543,16 @@ mod tests {
                 .all(|step| !step.axes.contains_key("r") && !step.axes.contains_key("theta"))
         );
         assert_eq!(
+            Config::from_machine(&MachineProfile::embedded().unwrap()).grip_open,
+            [1000.0; 3]
+        );
+        assert_eq!(
             Config::from_machine(&MachineProfile::embedded().unwrap()).grip_closed,
-            [700.0; 3]
+            [500.0; 3]
         );
         assert_eq!(
             Config::from_machine(&MachineProfile::embedded().unwrap()).grip_handoff_open,
-            [500.0; 3]
+            [700.0; 3]
         );
         let encoded = toml::to_string_pretty(&config).unwrap();
         assert_eq!(toml::from_str::<Config>(&encoded).unwrap(), config);

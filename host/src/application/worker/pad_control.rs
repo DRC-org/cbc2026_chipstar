@@ -10,6 +10,14 @@ pub(super) struct Control {
 }
 
 impl Runtime {
+    /// 機体側の入力補正は、押下検出・画面表示・各操作への振り分けより先に1回だけ行う。
+    pub(super) fn read_gamepad(&mut self, mut input: ControllerState, now: Instant) -> Result<()> {
+        if self.cfg.machine.swap_dpad_left_right {
+            input.buttons.swap(13, 14);
+        }
+        self.read_pad(input, now)
+    }
+
     pub(super) fn read_pad(&mut self, input: ControllerState, now: Instant) -> Result<()> {
         let previous = self.pad.previous;
         self.pad.previous = input.buttons;
@@ -555,23 +563,83 @@ mod tests {
         r.read_pad(ControllerState::default(), now).unwrap();
         r.read_pad(input.clone(), now).unwrap();
         assert_eq!(r.ee.goals.len(), 3);
-        assert!(r.ee.goals.values().all(|value| *value == 700.0));
+        assert!(r.ee.goals.values().all(|value| *value == 500.0));
 
         r.read_pad(ControllerState::default(), now).unwrap();
         let mut pickup_open = ControllerState::default();
         pickup_open.buttons[13] = 1;
         r.read_pad(pickup_open, now).unwrap();
-        assert!(r.ee.goals.values().all(|value| *value == 1500.0));
+        assert!(r.ee.goals.values().all(|value| *value == 1000.0));
 
         r.read_pad(ControllerState::default(), now).unwrap();
         let mut handoff_open = ControllerState::default();
         handoff_open.buttons[1] = 1;
         r.read_pad(handoff_open, now).unwrap();
-        assert!(r.ee.goals.values().all(|value| *value == 500.0));
+        assert!(r.ee.goals.values().all(|value| *value == 700.0));
         r.stop(false).unwrap();
         assert!(r.ee.targets.is_empty());
         assert!(!r.pad.ee_armed);
     }
+    #[test]
+    fn physical_grip_buttons_use_calibrated_levels_after_input_correction() {
+        for swapped in [false, true] {
+            let mut r = runtime();
+            add_grips(&mut r);
+            r.cfg.machine.swap_dpad_left_right = swapped;
+            let now = Instant::now();
+            // 実機報告では物理←がraw[14]、物理→がraw[13]で届く。
+            for (logical, raw, pulse) in [
+                (13, if swapped { 14 } else { 13 }, 1000.0),
+                (14, if swapped { 13 } else { 14 }, 500.0),
+                (1, 1, 700.0),
+            ] {
+                r.read_gamepad(ControllerState::default(), now).unwrap();
+                let mut input = ControllerState::default();
+                input.buttons[raw] = 1;
+                r.read_gamepad(input, now).unwrap();
+                assert_eq!(r.gamepad_input.as_ref().unwrap().buttons[logical], 1);
+                assert_eq!(r.ee.goals.len(), 3);
+                for name in ["ee_grip_1", "ee_grip_2", "ee_grip_3"] {
+                    assert_eq!(r.ee.goals[name], pulse, "{name}, raw={raw}, swap={swapped}");
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn physical_dpad_correction_is_shared_by_bonus_and_court_selection() {
+        let now = Instant::now();
+        for (raw, court, target) in [
+            (14, Court::Red, "TX CAN 2 784 01040000FF9C0000"),
+            (13, Court::Blue, "TX CAN 2 784 0104000000640000"),
+        ] {
+            let mut r = bonus_runtime();
+            r.cfg.machine.swap_dpad_left_right = true;
+            let mut input = ControllerState::default();
+            input.buttons[10] = 1;
+            input.buttons[raw] = 1;
+            r.read_gamepad(input, now).unwrap();
+            assert!(
+                r.shared
+                    .status_snapshot()
+                    .logs
+                    .iter()
+                    .any(|line| line == target)
+            );
+
+            let mut r = runtime();
+            r.cfg.machine.swap_dpad_left_right = true;
+            r.guide.enabled = true;
+            r.court = None;
+            r.read_gamepad(ControllerState::default(), now).unwrap();
+            let mut input = ControllerState::default();
+            input.buttons[raw] = 1;
+            r.read_gamepad(input, now).unwrap();
+            r.read_gamepad(ControllerState::default(), now).unwrap();
+            assert_eq!(r.court, Some(court));
+        }
+    }
+
     #[test]
     fn fold_button_selects_one_endpoint_per_press() {
         let mut r = runtime();

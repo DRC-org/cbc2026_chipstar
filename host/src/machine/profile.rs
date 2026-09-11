@@ -218,6 +218,9 @@ pub const PARAMETER_NAMES: [&str; 43] = [
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct MachineProfile {
+    /// 十字キーの左右が逆に報告されるコントローラの入力補正。
+    #[serde(default)]
+    pub swap_dpad_left_right: bool,
     /// L1・画面操作・原点調整で使う通常最高速度に対する割合[%]。
     #[serde(
         default = "default_slow_speed_percent",

@@ -585,7 +585,7 @@ mod tests {
             true,
         )
         .unwrap();
-        assert_eq!(r.ee.targets["ee_grip_1"], 700.0);
+        assert_eq!(r.ee.targets["ee_grip_1"], 500.0);
         assert!(!r.ee_targets_reached(&BTreeMap::from([(
             "ee_grip_1".into(),
             f32::from(grip_target),

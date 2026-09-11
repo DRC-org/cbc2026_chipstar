@@ -42,6 +42,20 @@ fn embedded_profile_is_valid() {
 }
 
 #[test]
+fn dpad_swap_defaults_off_and_roundtrips_when_enabled() {
+    let mut source: toml::Value = toml::from_str(EMBEDDED_PROFILE).unwrap();
+    source
+        .as_table_mut()
+        .unwrap()
+        .remove("swap_dpad_left_right");
+    let mut profile = MachineProfile::parse(&toml::to_string(&source).unwrap()).unwrap();
+    assert!(!profile.swap_dpad_left_right);
+    profile.swap_dpad_left_right = true;
+    let restored = MachineProfile::parse(&toml::to_string(&profile).unwrap()).unwrap();
+    assert!(restored.swap_dpad_left_right);
+}
+
+#[test]
 fn serial_servo_bringup_profile_is_valid_and_initially_disabled() {
     let profile = MachineProfile::parse(include_str!("../../../config/serial_svmd_bringup.toml"));
     assert!(profile.is_ok(), "{profile:?}");
