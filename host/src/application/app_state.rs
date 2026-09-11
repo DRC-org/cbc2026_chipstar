@@ -179,6 +179,7 @@ pub struct BonusStatus {
     pub lid_position: Option<i32>,
     pub align_position: Option<i32>,
     pub position_counts: Option<i32>,
+    pub position_mm: Option<f32>,
     pub handoff_limit_configured: bool,
     pub handoff_limit: Option<bool>,
     pub selected_box: usize,

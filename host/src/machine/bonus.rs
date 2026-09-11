@@ -3,6 +3,10 @@
 use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
+pub const AMT102_PPR_VALUES: [u16; 16] = [
+    48, 96, 100, 125, 192, 200, 250, 256, 384, 400, 500, 512, 800, 1000, 1024, 2048,
+];
+
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct BoxProfile {
     pub name: String,
@@ -40,6 +44,15 @@ pub struct BonusProfile {
     pub selector_slow_duty: u16,
     pub selector_slow_zone_counts: i32,
     pub selector_tolerance_counts: i32,
+    /// AMT102-VのDIPで選んだ分解能。仕様書上のPPRで、DCMDカウントはこの4倍。
+    #[serde(default = "default_encoder_ppr")]
+    pub encoder_ppr: u16,
+    /// ラックのモジュール。M1なら1.0。
+    #[serde(default = "default_pinion_module_mm")]
+    pub pinion_module_mm: f32,
+    /// ラックを駆動するピニオンの歯数。
+    #[serde(default = "default_pinion_teeth")]
+    pub pinion_teeth: u16,
     /// 未指定なら、従来どおりAMT102-Vの登録位置だけで復帰する。
     #[serde(default)]
     pub handoff_limit: Option<HandoffLimit>,
@@ -74,8 +87,37 @@ fn default_capacity() -> u8 {
 fn default_normally_closed() -> bool {
     true
 }
+fn default_encoder_ppr() -> u16 {
+    2048
+}
+fn default_pinion_module_mm() -> f32 {
+    1.0
+}
+fn default_pinion_teeth() -> u16 {
+    20
+}
 
 impl BonusProfile {
+    pub fn encoder_counts_per_revolution(&self) -> i32 {
+        i32::from(self.encoder_ppr) * 4
+    }
+
+    pub fn travel_mm_per_revolution(&self) -> f32 {
+        std::f32::consts::PI * self.pinion_module_mm * f32::from(self.pinion_teeth)
+    }
+
+    pub fn counts_to_mm(&self, counts: i32) -> f32 {
+        counts as f32 * self.travel_mm_per_revolution()
+            / self.encoder_counts_per_revolution() as f32
+    }
+
+    pub fn mm_to_counts(&self, mm: f32) -> Option<i32> {
+        let counts =
+            mm * self.encoder_counts_per_revolution() as f32 / self.travel_mm_per_revolution();
+        (counts.is_finite() && counts >= i32::MIN as f32 && counts <= i32::MAX as f32)
+            .then(|| counts.round() as i32)
+    }
+
     pub fn validate(&self) -> Result<()> {
         if self.selector_motor.is_empty()
             || self.lid_servo.is_empty()
@@ -87,13 +129,19 @@ impl BonusProfile {
             || self.selector_slow_duty > self.selector_duty
             || self.selector_slow_zone_counts <= self.selector_tolerance_counts
             || self.selector_tolerance_counts <= 0
+            || !AMT102_PPR_VALUES.contains(&self.encoder_ppr)
+            || !self.pinion_module_mm.is_finite()
+            || self.pinion_module_mm <= 0.0
+            || self.pinion_teeth == 0
             || self.servo_tolerance_counts <= 0
             || self.capacity == 0
             || self.cycle_timeout_ms < 1000
             || self.boxes.is_empty()
             || self.boxes.iter().any(|b| b.name.is_empty())
         {
-            bail!("ボーナスハンド設定の名前、Duty、許容差、本数またはボックスが不正です");
+            bail!(
+                "ボーナスハンド設定の名前、Duty、エンコーダ、ラック、許容差、本数またはボックスが不正です"
+            );
         }
         if self
             .handoff_limit
@@ -144,5 +192,24 @@ mod tests {
         };
         assert!(!nc.reached(0b10));
         assert!(nc.reached(0));
+    }
+
+    #[test]
+    fn m1_twenty_tooth_pinion_converts_amt102_counts_to_mm() {
+        let mut profile = crate::machine::MachineProfile::embedded()
+            .unwrap()
+            .bonus
+            .unwrap();
+        assert_eq!(profile.encoder_ppr, 2048);
+        assert_eq!(profile.encoder_counts_per_revolution(), 8192);
+        assert!((profile.travel_mm_per_revolution() - 20.0 * std::f32::consts::PI).abs() < 1e-5);
+        assert!((profile.counts_to_mm(8192) - 20.0 * std::f32::consts::PI).abs() < 1e-5);
+        assert_eq!(
+            profile.mm_to_counts(20.0 * std::f32::consts::PI),
+            Some(8192)
+        );
+
+        profile.encoder_ppr = 123;
+        assert!(profile.validate().is_err());
     }
 }

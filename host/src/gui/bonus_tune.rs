@@ -6,8 +6,8 @@ pub(super) fn encoder_status(ui: &mut egui::Ui, status: &Status) {
         match (status.bonus.encoder_count, status.bonus.encoder_age_ms) {
             (Some(count), Some(age)) if status.connected && age < 300 => {
                 ui.label(format!("エンコーダ {count} count"));
-                if let Some(position) = status.bonus.position_counts {
-                    ui.label(format!("受け渡し位置から {position:+} count"));
+                if let Some(position) = status.bonus.position_mm {
+                    ui.label(format!("受け渡し位置から {position:+.2} mm"));
                 }
             }
             _ => {
@@ -143,10 +143,40 @@ impl BridgeApp {
             });
             ui.label("移動出力を単体テストと基板の上限にも反映します。単体テストの正出力でカウントが減る場合は、駆動方向を「逆転」に設定してください。");
             ui.horizontal_wrapped(|ui| {
+                ui.label("AMT102-VのDIP分解能");
+                egui::ComboBox::from_id_salt("bonus-encoder-ppr")
+                    .selected_text(format!("{} PPR", bonus.encoder_ppr))
+                    .show_ui(ui, |ui| {
+                        for ppr in crate::machine::bonus::AMT102_PPR_VALUES {
+                            ui.selectable_value(&mut bonus.encoder_ppr, ppr, format!("{ppr} PPR"));
+                        }
+                    });
+                ui.label("ラック module");
+                ui.add(egui::DragValue::new(&mut bonus.pinion_module_mm).range(0.1..=10.0).speed(0.1));
+                ui.label("ピニオン歯数");
+                ui.add(egui::DragValue::new(&mut bonus.pinion_teeth).range(1..=500));
+            });
+            ui.label(format!(
+                "DCMD {} count/回転、移動 {:.3} mm/回転、{:.2} count/mm",
+                bonus.encoder_counts_per_revolution(),
+                bonus.travel_mm_per_revolution(),
+                bonus.encoder_counts_per_revolution() as f32 / bonus.travel_mm_per_revolution()
+            ));
+            ui.horizontal_wrapped(|ui| {
                 ui.label("減速を始める残り距離");
-                ui.add(egui::DragValue::new(&mut bonus.selector_slow_zone_counts).range(1..=i32::MAX).suffix(" count"));
+                let mut slow_zone_mm = bonus.counts_to_mm(bonus.selector_slow_zone_counts).abs();
+                if ui.add(egui::DragValue::new(&mut slow_zone_mm).range(0.01..=10000.0).suffix(" mm")).changed()
+                    && let Some(counts) = bonus.mm_to_counts(slow_zone_mm)
+                {
+                    bonus.selector_slow_zone_counts = counts.abs().max(1);
+                }
                 ui.label("停止位置の許容幅");
-                ui.add(egui::DragValue::new(&mut bonus.selector_tolerance_counts).range(1..=i32::MAX).suffix(" count"));
+                let mut tolerance_mm = bonus.counts_to_mm(bonus.selector_tolerance_counts).abs();
+                if ui.add(egui::DragValue::new(&mut tolerance_mm).range(0.001..=1000.0).suffix(" mm")).changed()
+                    && let Some(counts) = bonus.mm_to_counts(tolerance_mm)
+                {
+                    bonus.selector_tolerance_counts = counts.abs().max(1);
+                }
             });
             ui.horizontal_wrapped(|ui| {
                 if ui.add_enabled(can_test, egui::Button::new("DCモータを単体テスト")).clicked() {
@@ -159,15 +189,21 @@ impl BridgeApp {
 
         panel().show(ui, |ui| {
             ui.heading("ボックスの位置");
-            ui.label("受け渡し基準からの相対カウントを保存します。各ボックスへ移動して「現在位置を取込」を押してください。");
+            ui.label("受け渡し基準からの距離をmmで設定します。各ボックスへ移動して「現在位置を取込」を押すこともできます。");
             if !status.bonus.handoff_captured { ui.label("先に受け渡し基準を登録してください。"); }
             let mut remove = None;
             let count = bonus.boxes.len();
+            let mm_per_count = bonus.travel_mm_per_revolution()
+                / bonus.encoder_counts_per_revolution() as f32;
             for (index, destination) in bonus.boxes.iter_mut().enumerate() {
                 ui.push_id(index, |ui| {
                     ui.horizontal_wrapped(|ui| {
                         ui.add(egui::TextEdit::singleline(&mut destination.name).desired_width(130.0));
-                        ui.add(egui::DragValue::new(&mut destination.offset_counts).suffix(" count"));
+                        let mut offset_mm = destination.offset_counts as f32 * mm_per_count;
+                        if ui.add(egui::DragValue::new(&mut offset_mm).speed(0.1).suffix(" mm")).changed()
+                        {
+                            destination.offset_counts = (offset_mm / mm_per_count).round() as i32;
+                        }
                         let measured = box_offset(&status);
                         if ui.add_enabled(measured.is_some(), egui::Button::new("現在位置を取込")).clicked() {
                             destination.offset_counts = measured.unwrap();

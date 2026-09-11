@@ -19,8 +19,8 @@ impl BridgeApp {
                 chip(ui, if status.bonus.semi_auto { "半自動" } else { "手動" }, ACCENT);
                 chip(ui, &format!("{} / {}個", status.bonus.loaded, status.bonus.capacity), ACCENT);
                 ui.label(format!("状態: {}", status.bonus.phase));
-                if let Some(position) = status.bonus.position_counts {
-                    ui.label(format!("受け渡し位置から {position:+} count"));
+                if let Some(position) = status.bonus.position_mm {
+                    ui.label(format!("受け渡し位置から {position:+.1} mm"));
                 }
                 if let Some(reached) = status.bonus.handoff_limit {
                     chip(

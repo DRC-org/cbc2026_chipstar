@@ -799,6 +799,9 @@ impl Runtime {
             .encoder
             .zip(self.bonus.handoff)
             .and_then(|((count, _), origin)| count.checked_sub(origin));
+        status.position_mm = profile
+            .zip(status.position_counts)
+            .map(|(profile, counts)| profile.counts_to_mm(counts));
         status.handoff_limit_configured = profile.is_some_and(|p| p.handoff_limit.is_some());
         status.handoff_limit = profile.and_then(|p| p.handoff_limit).and_then(|limit| {
             self.bonus.contacts.and_then(|(contacts, seen)| {
