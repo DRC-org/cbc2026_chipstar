@@ -102,8 +102,8 @@ impl Part {
             }
             Board::Dcmd | Board::Network => {
                 ensure!(
-                    value.fract() == 0.0 && value.abs() <= 100.0,
-                    "テスト出力は-100..100の整数です（最大10%）"
+                    value.fract() == 0.0 && value.abs() <= 1000.0,
+                    "Dutyは-1000..1000の整数です（1000=100%、出力上限は基板設定に従います）"
                 );
                 vec![
                     can(784, 0, 0, 0, 0),
@@ -261,9 +261,12 @@ impl Session {
             Board::SerialSvmd => {
                 "motor1..253 <位置0..4095>; read1..253（同時最大16 ID）".to_owned()
             }
-            Board::Dcmd => "motor0 <duty -100..100 permille>; encoder; status".to_owned(),
+            Board::Dcmd => {
+                "motor0 <duty -1000..1000 permille、基板設定の出力上限に従う>; encoder; status"
+                    .to_owned()
+            }
             Board::Network => format!(
-                "基板名を前置きする。応答のあった基板: {}\n  cctl.motor0..2 <位置>; cctl.status\n  svmd.motor0..3 <500..2500 us>; svmd.status\n  dcmd.motor0 <-100..100 permille>; dcmd.encoder; dcmd.status; dcmd.inputs",
+                "基板名を前置きする。応答のあった基板: {}\n  cctl.motor0..2 <位置>; cctl.status\n  svmd.motor0..3 <500..2500 us>; svmd.status\n  dcmd.motor0 <-1000..1000 permille、基板設定の出力上限に従う>; dcmd.encoder; dcmd.status; dcmd.inputs",
                 self.parts
                     .iter()
                     .map(|part| part.board.key())
@@ -568,8 +571,8 @@ mod tests {
     #[test]
     fn dcmd_signed_target_and_stop() {
         let mut s = session(Board::Dcmd);
-        let commands = s.command("on motor0 -100", Instant::now()).unwrap();
-        assert_eq!(commands[1], "CAN 2 784 01040000FF9C0000");
+        let commands = s.command("on motor0 -1000", Instant::now()).unwrap();
+        assert_eq!(commands[1], "CAN 2 784 01040000FC180000");
         assert_eq!(commands[2], "CAN 2 784 0102010000000000");
         assert_eq!(
             s.command("off motor0", Instant::now()).unwrap(),
@@ -590,7 +593,13 @@ mod tests {
             (Board::SerialSvmd, vec!["on motor0 2000", "on motor1 4096"]),
             (
                 Board::Dcmd,
-                vec!["on motor1 10", "on motor0 101", "on motor0"],
+                vec![
+                    "on motor1 10",
+                    "on motor0 1001",
+                    "on motor0 -1001",
+                    "on motor0 1.5",
+                    "on motor0",
+                ],
             ),
         ] {
             let mut s = session(board);

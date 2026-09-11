@@ -52,7 +52,7 @@ serial_svmdはSTOP/SAFE時に有効設定と保持目標を解除するFWを使�
 | svmd | `status` | `on status` | CAN返信、出力有効mask、指令パルス幅 |
 | serial_svmd | `motor1`〜`motor253` | `on motor1 2048` | 指定IDのSTS3215駆動。位置0〜4095、速度100・加速度10 |
 | serial_svmd | `read1`〜`read253` | `on read1` | 指定IDの実測位置・トルク有効状態・エラー |
-| DCMD | `motor0` | `on motor0 50` | PWM0/J10。±100 permille（±10%）以内 |
+| DCMD | `motor0` | `on motor0 50` | PWM0/J10。±1000 permille（±100%）まで指定可能。出力上限は基板の`max_duty`設定に従う |
 | DCMD | `encoder` | `on encoder` | ENC1/J6の符号付きカウント・X信号の累積回数 |
 | DCMD | `status` | `on status` | CAN返信、モード、有効状態、実際に適用されたduty |
 | serial_svmd / DCMD | `inputs` | `on inputs` | 接点の生値・10ms安定値とDIP |
