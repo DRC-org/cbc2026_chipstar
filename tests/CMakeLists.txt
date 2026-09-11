@@ -35,6 +35,7 @@ add_firmware_tests(dcmd_tests ${REPO_ROOT}/dcmd/src
 )
 
 add_firmware_tests(serial_svmd_tests ${REPO_ROOT}/serial_svmd/src
+    serial_svmd/can_rx_queue_test.cpp
     digital_inputs_test.cpp
     status_led_test.cpp
     serial_svmd/sts3215_protocol_test.cpp

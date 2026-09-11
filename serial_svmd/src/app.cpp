@@ -1,5 +1,6 @@
 #include "device_config.hpp"
 #include "domain/servo_can.hpp"
+#include "domain/can_rx_queue.hpp"
 #include "domain/servo_command.hpp"
 #include "domain/digital_inputs.hpp"
 #include "domain/parameters.hpp"
@@ -58,6 +59,7 @@ domain::DigitalInputs inputs(63);
 bool bus_ready = false;
 uint8_t address = 0;
 Link source = Link::Serial;
+domain::CanRxQueue can_rx_queue;
 
 // LED1..6は基板の左から並ぶ。状態は点け方で表す。
 domain::Status ledStatus() {
@@ -386,17 +388,24 @@ void apply(const domain::ServoCommand& command) {
 
 // cctlのFDCAN2から届いた指令を、USART2と同じ状態機械へ入れる。
 void pollCan(void) {
-  for (uint8_t count = 0; count < 4 && HAL_CAN_GetRxFifoFillLevel(&hcan, CAN_RX_FIFO0); ++count) {
-    CAN_RxHeaderTypeDef header = {};
-    uint8_t data[8] = {};
-    if (HAL_CAN_GetRxMessage(&hcan, CAN_RX_FIFO0, &header, data) != HAL_OK) break;
-    if (header.IDE != CAN_ID_STD || header.RTR != CAN_RTR_DATA ||
-        header.StdId != domain::servo_can::canId(domain::servo_can::COMMAND_ID, address)) {
-      continue;
+  for (uint8_t count = 0; count < 4; ++count) {
+    domain::CanCommandFrame frame;
+    const bool overflow = can_rx_queue.takeOverflow();
+    if (!overflow && !can_rx_queue.pop(frame)) break;
+    if (overflow || frame.expired(HAL_GetTick(), parameters.watchdogMs())) {
+      // 欠落した指令列や古いRUNを、通信回復後に再生しない。
+      can_rx_queue.discard();
+      source = Link::Can;
+      setMode(Mode::Stop);
+      protocol_ready = false;
+      sendStatus(domain::servo_can::Status::Rejected);
+      source = Link::Serial;
+      return;
     }
+    const auto* data = frame.data;
     domain::ServoCommand command;
     source = Link::Can;
-    if (header.DLC == 8 && data[1] >= 20 && data[1] <= 27) {
+    if (frame.length == 8 && data[1] >= 20 && data[1] <= 27) {
       if (protocol_ready && servo_uart_ready) {
         servo_service.handle(data, mode == Mode::Run);
       } else {
@@ -406,10 +415,10 @@ void pollCan(void) {
       source = Link::Serial;
       continue;
     }
-    if (domain::servo_can::parse(data, header.DLC, command)) {
+    if (domain::servo_can::parse(data, frame.length, command)) {
       if (command.kind == domain::ServoCommandKind::Run ||
           command.kind == domain::ServoCommandKind::Target ||
-          command.kind == domain::ServoCommandKind::Heartbeat) last_contact_ms = HAL_GetTick();
+          command.kind == domain::ServoCommandKind::Heartbeat) last_contact_ms = frame.received_ms;
       apply(command);
       if (command.kind != domain::ServoCommandKind::Read &&
           command.kind != domain::ServoCommandKind::InputRead &&
@@ -465,6 +474,31 @@ void pollSerial() {
 
 }  // namespace
 
+extern "C" void HAL_CAN_RxFifo0MsgPendingCallback(CAN_HandleTypeDef* handle) {
+  if (handle != &hcan) return;
+  // USARTの読戻しやトルク解除を待っている間も、深さ3のCAN FIFOを空ける。
+  while (HAL_CAN_GetRxFifoFillLevel(handle, CAN_RX_FIFO0)) {
+    CAN_RxHeaderTypeDef header{};
+    domain::CanCommandFrame frame;
+    if (HAL_CAN_GetRxMessage(handle, CAN_RX_FIFO0, &header, frame.data) != HAL_OK) {
+      can_rx_queue.markOverflow();
+      break;
+    }
+    if (header.IDE != CAN_ID_STD || header.RTR != CAN_RTR_DATA ||
+        header.StdId != domain::servo_can::canId(domain::servo_can::COMMAND_ID, address)) continue;
+    frame.length = static_cast<uint8_t>(header.DLC);
+    frame.received_ms = HAL_GetTick();
+    can_rx_queue.push(frame);
+  }
+}
+
+extern "C" void HAL_CAN_ErrorCallback(CAN_HandleTypeDef* handle) {
+  if (handle == &hcan && (handle->ErrorCode & HAL_CAN_ERROR_RX_FOV0)) {
+    can_rx_queue.markOverflow();
+    handle->ErrorCode &= ~HAL_CAN_ERROR_RX_FOV0;
+  }
+}
+
 extern "C" void setup(void) {
   __HAL_RCC_DMA1_CLK_ENABLE();
   servo_rx_dma.Instance = DMA1_Channel5; // STM32F303 USART1_RXの既定マッピング
@@ -498,7 +532,9 @@ extern "C" void setup(void) {
   hcan.Init.AutoRetransmission = ENABLE;
   bus_ready = HAL_CAN_Init(&hcan) == HAL_OK &&
               HAL_CAN_ConfigFilter(&hcan, &filter) == HAL_OK &&
-              HAL_CAN_Start(&hcan) == HAL_OK;
+              HAL_CAN_Start(&hcan) == HAL_OK &&
+              HAL_CAN_ActivateNotification(&hcan, CAN_IT_RX_FIFO0_MSG_PENDING |
+                                                  CAN_IT_RX_FIFO0_OVERRUN) == HAL_OK;
 }
 
 extern "C" void loop(void) {
