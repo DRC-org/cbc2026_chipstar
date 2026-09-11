@@ -35,7 +35,11 @@ void Controller::stop(Mode mode, uint32_t now) {
   mode_ = mode;
   enabled_ = 0;
   configured_ = 0;
-  for (uint8_t i = 0; i < 2; ++i) { target_[i] = 0; output_[i] = 0; zero_since_[i] = now; }
+  for (uint8_t i = 0; i < 2; ++i) {
+    target_[i] = 0;
+    if (output_[i] != 0) zero_since_[i] = now;
+    output_[i] = 0;
+  }
 }
 
 bool Controller::apply(const Command& cmd, uint32_t now) {
@@ -47,11 +51,12 @@ bool Controller::apply(const Command& cmd, uint32_t now) {
     case Op::Run:
       if (!ready_ || cmd.channel != 1 ||
           (configured_ & cmd.channel) != cmd.channel) return false;
+      // 個別テストからのRUN再送で、ランプの次回更新を先送りしない。
+      if (mode_ != Mode::Run) step_ = now;
       enabled_ = cmd.channel;
       mode_ = Mode::Run;
       timed_out_ = false;
       contact_ = now;
-      step_ = now;
       return true;
     case Op::Target:
       if (cmd.channel != 0 || cmd.duty < -parameters_.maxDuty() ||
@@ -91,8 +96,7 @@ void Controller::tick(uint32_t now) {
     else if (output_[i] > wanted) output_[i] = static_cast<int16_t>(output_[i] - step < wanted ? wanted : output_[i] - step);
     if (output_[i] != 0) direction_[i] = output_[i] > 0 ? 1 : -1;
     if (previous != 0 && output_[i] == 0) zero_since_[i] = now;
-    // STOPによる即時ゼロも、停止中の時刻から反転待ちを数える。
-    if (mode_ != Mode::Run) zero_since_[i] = now;
+    // STOPの即時ゼロはstop()で記録する。停止済みなら起点を維持する。
   }
 }
 }  // namespace dcmd

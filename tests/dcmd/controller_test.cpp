@@ -104,6 +104,57 @@ TEST_CASE("方向反転はゼロまで減速し2秒制動してから行う") {
   CHECK(c.output(0) == 0);
 }
 
+TEST_CASE("STOP中に経過した制動時間を逆転開始時にやり直さない") {
+  Controller c;
+  REQUIRE(c.apply({Op::Hello}, 0));
+  REQUIRE(c.apply({Op::Target, 0, 2}, 0));
+  REQUIRE(c.apply({Op::Run, 1}, 0));
+  c.tick(10); c.tick(20);
+  REQUIRE(c.output(0) == 2);
+  REQUIRE(c.apply({Op::Stop}, 21));
+  for (uint32_t t = 30; t <= 3020; t += 10) {
+    c.tick(t);
+    // GUIの出力解除・SAFE再送も停止時刻を更新してはいけない。
+    if (t % 100 == 0) REQUIRE(c.apply({Op::Safe}, t));
+  }
+  REQUIRE(c.apply({Op::Target, 0, -2}, 3021));
+  REQUIRE(c.apply({Op::Run, 1}, 3021));
+  c.tick(3031);
+  CHECK(c.output(0) == -1);
+}
+
+TEST_CASE("停止後すぐに逆転を指令した場合は残りの制動時間だけ待つ") {
+  Controller c;
+  c.apply({Op::Hello}, 0);
+  c.apply({Op::Target, 0, 2}, 0);
+  c.apply({Op::Run, 1}, 0);
+  c.tick(10); c.tick(20);
+  c.apply({Op::Stop}, 21);
+  for (uint32_t t = 30; t <= 1020; t += 10) c.tick(t);
+  c.apply({Op::Target, 0, -2}, 1021);
+  c.apply({Op::Run, 1}, 1021);
+  for (uint32_t t = 1031; t < 2021; t += 10) {
+    c.apply({Op::Heartbeat}, t);
+    CHECK(c.output(0) == 0);
+  }
+  c.apply({Op::Heartbeat}, 2021);
+  CHECK(c.output(0) == -1);
+}
+
+TEST_CASE("RUNを繰り返してもDutyランプの更新時刻をリセットしない") {
+  Controller c;
+  Command interval;
+  interval.op = Op::ParamSet;
+  interval.param_id = static_cast<uint8_t>(ParamId::RampIntervalMs);
+  interval.value = 100.0f;
+  REQUIRE(c.apply(interval, 0));
+  c.apply({Op::Hello}, 0);
+  c.apply({Op::Target, 0, -2}, 0);
+  c.apply({Op::Run, 1}, 0);
+  for (uint32_t t = 1; t <= 100; ++t) REQUIRE(c.apply({Op::Run, 1}, t));
+  CHECK(c.output(0) == -1);
+}
+
 TEST_CASE("実行時パラメータでDuty上限とランプを変えられる") {
   Controller c;
   // 既定では上限900、10msごとに1 permille。
