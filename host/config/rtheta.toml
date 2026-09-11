@@ -1,3 +1,4 @@
+slow_speed_percent = 10.0
 protocol_version = 1
 
 [[dc_motors]]
@@ -16,8 +17,11 @@ selector_duty = 600
 selector_slow_duty = 303
 selector_slow_zone_counts = 1000
 selector_tolerance_counts = 50
-lid_closed_position = 2048
-lid_open_position = 2048
+encoder_ppr = 2048
+pinion_module_mm = 1.0
+pinion_teeth = 20
+lid_closed_position = 19
+lid_open_position = 4079
 align_home_position = 2048
 align_position = 2048
 servo_tolerance_counts = 20
@@ -44,8 +48,7 @@ slot = 0
 input_axis = 1
 input_sign = 1.0
 speed_per_second = 600.0
-jog_ramp_seconds = 0.4
-homing_speed_percent = 40.0
+jog_ramp_seconds = 0.6
 homing_retreat_mm = 400.0
 native_per_unit = -0.04
 minimum = 0.0
@@ -65,7 +68,7 @@ slot = 1
 input_axis = 0
 input_sign = -1.0
 speed_per_second = 120.0
-jog_ramp_seconds = 0.4
+jog_ramp_seconds = 0.6
 homing_speed_percent = 40.0
 native_per_unit = 132.02206
 minimum = -180.0
@@ -80,9 +83,9 @@ slot = 2
 input_axis = 6
 input_sign = 1.0
 speed_per_second = 100.0
-jog_ramp_seconds = 0.0
+jog_ramp_seconds = 0.4
 homing_speed_percent = 40.0
-homing_retreat_mm = 100.0
+homing_retreat_mm = 200.0
 native_per_unit = -96.016
 minimum = 0.0
 maximum = 315.0
@@ -153,20 +156,20 @@ name = "bonus_lid"
 id = 2
 input_sign = 1.0
 speed_position_per_second = 300.0
-acceleration = 20
+acceleration = 50
 zero0_count = 2048.0
 counts_per_deg = 11.377778
-enabled = false
+enabled = true
 
 [[serial_svmd.servos]]
 name = "bonus_align"
 id = 3
 input_sign = 1.0
-speed_position_per_second = 300.0
-acceleration = 20
+speed_position_per_second = 500.0
+acceleration = 50
 zero0_count = 2048.0
 counts_per_deg = 11.377778
-enabled = false
+enabled = true
 
 [parameters]
 c620_esc_id = 1.0
