@@ -4,9 +4,15 @@ impl BridgeApp {
     pub(super) fn operate_bonus(&mut self, ui: &mut egui::Ui, status: &Status) {
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
-            ui.label(RichText::new("ボーナスハンド").strong());
+            ui.horizontal(|ui| {
+                ui.label(RichText::new("ボーナスハンド").strong());
+                if ui.button("設定・動作確認").clicked() {
+                    self.tune_view = tune::TuneView::Bonus;
+                    self.switch_screen(Screen::Tune);
+                }
+            });
             if !status.bonus.configured {
-                ui.colored_label(WARNING, "機構位置を実測して設定し、bonus.enabled=trueにすると操作できます。");
+                ui.label("「設定・動作確認」で位置と動作を確認し、通常操作を有効にしてください。");
                 return;
             }
             ui.horizontal_wrapped(|ui| {

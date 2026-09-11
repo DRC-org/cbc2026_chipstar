@@ -87,6 +87,7 @@ impl Settings {
 pub fn parameter_plan(profile: &MachineProfile) -> Vec<ParameterValue> {
     let cctl_parameters = profile.cctl_parameters();
     let svmd_parameters = profile.effective_svmd_parameters();
+    let dcmd_parameters = profile.effective_dcmd_parameters();
     let boards: [(ParameterBoard, &ParameterMap, &[&str]); 4] = [
         (ParameterBoard::Cctl, &cctl_parameters, &PARAMETER_NAMES),
         (
@@ -96,7 +97,7 @@ pub fn parameter_plan(profile: &MachineProfile) -> Vec<ParameterValue> {
         ),
         (
             ParameterBoard::Dcmd,
-            &profile.dcmd_parameters,
+            &dcmd_parameters,
             &dcmd::PARAMETER_NAMES,
         ),
         (
@@ -133,8 +134,28 @@ pub fn parameter_plan(profile: &MachineProfile) -> Vec<ParameterValue> {
 mod tests {
     use super::*;
     #[test]
+    fn bonus_drive_duty_is_shared_by_board_and_individual_test_even_before_enable() {
+        use crate::diagnostics::individual::{Kind, Target};
+        let mut profile = MachineProfile::embedded().unwrap();
+        profile.bonus.as_mut().unwrap().enabled = false;
+        profile.bonus.as_mut().unwrap().selector_duty = 1000;
+        profile.dcmd_parameters.insert("max_duty".into(), 100.0);
+        profile.validate().unwrap();
+        assert_eq!(Target::Dc.limits(Kind::Duty, &profile).unwrap().1, 1000.0);
+        let command = parameter_plan(&profile)
+            .into_iter()
+            .find(|value| value.key.board == ParameterBoard::Dcmd && value.key.id == 0)
+            .unwrap();
+        assert_eq!(command.command(), "CAN 2 784 01070000447A0000");
+        assert!(Target::Dc.validate(Kind::Duty, -1000.0, &profile).is_ok());
+        assert!(Target::Dc.validate(Kind::Duty, 1001.0, &profile).is_err());
+    }
+
+    #[test]
     fn small_gain_requires_precise_reply_and_reports_both_values() {
         let mut profile = MachineProfile::embedded().unwrap();
+        profile.dc_motors.clear();
+        profile.bonus = None;
         profile.parameters.clear();
         profile.axes.clear();
         profile.pwm_servos.clear();
@@ -208,6 +229,8 @@ mod tests {
     #[test]
     fn sends_can_board_parameters_through_the_gateway() {
         let mut profile = MachineProfile::embedded().unwrap();
+        profile.dc_motors.clear();
+        profile.bonus = None;
         profile.dcmd_parameters.insert("max_duty".into(), 1000.0);
         profile
             .serial_svmd_parameters
@@ -225,6 +248,8 @@ mod tests {
     #[test]
     fn identical_parameter_ids_on_different_boards_do_not_cross_confirm() {
         let mut profile = MachineProfile::embedded().unwrap();
+        profile.dc_motors.clear();
+        profile.bonus = None;
         profile.parameters.clear();
         profile.axes.clear();
         profile.pwm_servos.clear();

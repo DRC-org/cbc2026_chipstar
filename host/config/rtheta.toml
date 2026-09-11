@@ -149,7 +149,7 @@ selector_slow_duty = 40
 selector_slow_zone_counts = 1000
 selector_tolerance_counts = 50
 # 受け渡し位置側にDCMDのリミットスイッチを付ける場合だけ有効化する。
-# inputはSW1=0、SW2=1、SW3=2。directionは受け渡し側へ動くDutyの符号。
+# inputはSW1=0、SW2=1、SW3=2。directionは受け渡し側へ動くエンコーダ方向の符号。
 # [bonus.handoff_limit]
 # input = 0
 # direction = -1

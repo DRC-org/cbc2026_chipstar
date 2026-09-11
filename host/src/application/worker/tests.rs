@@ -734,6 +734,41 @@ fn dc_output_is_bounded_and_communication_loss_does_not_resume_tests() {
 }
 
 #[test]
+fn sts_individual_test_uses_configured_motion_including_zero_speed() {
+    for speed in [1000.0, 0.0] {
+        let mut runtime = screen_runtime();
+        runtime.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
+        let servo = runtime
+            .cfg
+            .machine
+            .serial_svmd
+            .as_mut()
+            .unwrap()
+            .servos
+            .iter_mut()
+            .find(|servo| servo.id == 3)
+            .unwrap();
+        servo.speed_position_per_second = speed;
+        servo.acceleration = 20;
+        select_test(&mut runtime, "sts:3", "position");
+        runtime
+            .request(
+                &Request {
+                    value: Some(2048.0),
+                    ..Request::new("test_output")
+                },
+                true,
+            )
+            .unwrap();
+        let expected = format!("TX CAN 2 800 010403140800{:04X}", speed as u16);
+        assert!(runtime.shared.status_snapshot().logs.contains(&expected));
+        assert!(runtime.test.active);
+        runtime.request(&Request::new("test_off"), true).unwrap();
+        assert!(!runtime.test.active);
+    }
+}
+
+#[test]
 fn malformed_and_negative_peripheral_feedback_cannot_leave_a_test_active() {
     let mut runtime = screen_runtime();
     select_test(&mut runtime, "sts:1", "position");

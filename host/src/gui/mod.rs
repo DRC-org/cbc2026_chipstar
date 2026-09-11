@@ -559,6 +559,7 @@ pub fn install_japanese_font(ctx: &egui::Context) {
     });
 }
 mod bonus;
+mod bonus_tune;
 mod dc;
 mod diagnose;
 mod ee;
@@ -667,6 +668,67 @@ mod workflow_tests {
                 worker.join().unwrap();
             }
         }
+    }
+
+    #[test]
+    fn bonus_tuning_applies_tests_stops_captures_and_saves_while_disabled() {
+        let mut harness = Harness::new();
+        harness.app.switch_screen(Screen::Tune);
+        harness.app.edit.bonus.as_mut().unwrap().selector_duty = 450;
+        harness
+            .app
+            .edit
+            .dcmd_parameters
+            .insert("max_duty".into(), 50.0);
+        harness.app.source = toml::to_string_pretty(&harness.app.edit).unwrap();
+        harness.app.dispatch(Action::Apply);
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        harness.wait(|s| s.configured);
+        harness.app.select_dc_test();
+        harness.wait(|s| s.test_mode && s.test_ready && s.test_target == "dc:0");
+        harness.app.request(Request {
+            value: Some(-400.0),
+            ..Request::new("test_output")
+        });
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        harness.wait(|s| s.test_active && s.bonus.selector_output == Some(-400));
+        harness.app.tune_view = tune::TuneView::Bonus;
+        harness.app.switch_screen(Screen::Tune);
+        harness.wait(|s| !s.test_mode && !s.outputs_active && s.bonus.selector_output == Some(0));
+        harness.app.request(Request::new("bonus_capture"));
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        harness.wait(|s| s.bonus.handoff_captured);
+
+        let before = harness.app.edit.clone();
+        let ctx = egui::Context::default();
+        let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+            egui::CentralPanel::default().show(ui, |ui| {
+                harness.app.tune_bonus(ui);
+            });
+        });
+        output.textures_delta.clear();
+        assert_eq!(
+            harness.app.edit, before,
+            "opening the tuning panel must not change settings"
+        );
+
+        harness.app.edit.bonus.as_mut().unwrap().boxes[0].offset_counts = -1234;
+        harness.app.source = toml::to_string_pretty(&harness.app.edit).unwrap();
+        harness.app.dispatch(Action::Apply);
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        let path =
+            std::env::temp_dir().join(format!("catchrobo-bonus-gui-{}.toml", std::process::id()));
+        harness.app.request(Request {
+            text: Some(path.display().to_string()),
+            ..Request::new("save")
+        });
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        let saved = crate::transport::profile_store::load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        let bonus = saved.bonus.unwrap();
+        assert!(!bonus.enabled);
+        assert_eq!(bonus.selector_duty, 450);
+        assert_eq!(bonus.boxes[0].offset_counts, -1234);
     }
 
     #[test]

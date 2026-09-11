@@ -93,6 +93,10 @@ CAN先の基板の調整値は`[svmd_parameters]`、`[dcmd_parameters]`、
 `[serial_svmd_parameters]`。設定した項目を送り、IDと適用値を含む応答で確認する。
 対応したFWが必要。周辺基板単体を再通電した場合は、停止して設定を再適用する。
 
+DCモータを登録している場合、`dcmd_parameters.max_duty`はhostが駆動設定から自動生成する。
+ボーナス選択軸は`bonus.selector_duty`、それ以外は`dc_motors.maximum_duty`を使い、
+単体テストも同じ範囲を使う。通常操作を無効にしていても設定されるため、登録・調整時にも使える。
+
 ## 周辺機構の定義
 
 `[[pwm_servos]]`、`[serial_svmd]`、`[[serial_svmd.servos]]`、`[[dc_motors]]`は

@@ -4,6 +4,7 @@ use super::*;
 pub(super) enum TuneView {
     Axes,
     Ee,
+    Bonus,
     Parameters,
     File,
 }
@@ -91,6 +92,7 @@ impl BridgeApp {
         let edited = match self.tune_view {
             TuneView::Axes => self.tune_axes(ui),
             TuneView::Ee => self.tune_ee(ui),
+            TuneView::Bonus => self.tune_bonus(ui),
             TuneView::Parameters => self.tune_parameters(ui),
             TuneView::File => {
                 self.tune_file(ui);
@@ -311,7 +313,10 @@ impl BridgeApp {
                             });
                     }
                     if !self.edit.dc_motors.is_empty() || !self.edit.dcmd_parameters.is_empty() {
-                        edited |= super::dc::parameters(ui, &mut self.edit.dcmd_parameters);
+                        let duty = (!self.edit.dc_motors.is_empty()).then(|| {
+                            crate::protocol::dcmd::max_duty(&self.edit.effective_dcmd_parameters())
+                        });
+                        edited |= super::dc::parameters(ui, &mut self.edit.dcmd_parameters, duty);
                     }
                 });
         });

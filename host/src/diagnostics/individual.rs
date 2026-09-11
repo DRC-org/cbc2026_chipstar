@@ -117,7 +117,7 @@ impl Target {
             }
             (Self::Sts(_), Kind::Position) => (0.0, 4095.0, "step".into()),
             (Self::Dc, Kind::Duty) => {
-                let maximum = dcmd::max_duty(&profile.dcmd_parameters);
+                let maximum = dcmd::max_duty(&profile.effective_dcmd_parameters());
                 (-maximum, maximum, "‰".into())
             }
             _ => bail!("この対象では使えないテスト方式です"),
@@ -146,7 +146,7 @@ impl Target {
             Self::Pwm(_) => vec![],
         }
     }
-    pub fn command(self, kind: Kind, value: f32) -> Vec<String> {
+    pub fn command(self, kind: Kind, value: f32, profile: &MachineProfile) -> Vec<String> {
         match self {
             Self::Cctl(id) => vec![format!(
                 "{} {id} {value}",
@@ -168,17 +168,24 @@ impl Target {
                 }
                 .to_cctl_line(),
             ],
-            Self::Sts(id) => vec![
-                serial_svmd::Command::Target {
-                    id,
-                    position: value as i16,
-                    speed: 100,
-                    acceleration: 10,
-                }
-                .to_cctl_line(),
-                serial_svmd::Command::Enable { id, enabled: true }.to_cctl_line(),
-                serial_svmd::Command::Run.to_cctl_line(),
-            ],
+            Self::Sts(id) => {
+                let servo = profile
+                    .serial_svmd
+                    .as_ref()
+                    .and_then(|board| board.servos.iter().find(|servo| servo.id == id));
+                vec![
+                    serial_svmd::Command::Target {
+                        id,
+                        position: value as i16,
+                        speed: servo
+                            .map_or(100, |servo| servo.speed_position_per_second.round() as u16),
+                        acceleration: servo.map_or(10, |servo| servo.acceleration),
+                    }
+                    .to_cctl_line(),
+                    serial_svmd::Command::Enable { id, enabled: true }.to_cctl_line(),
+                    serial_svmd::Command::Run.to_cctl_line(),
+                ]
+            }
             Self::Dc => vec![dcmd::line(4, 0, value as i16), dcmd::line(2, 1, 0)],
         }
     }

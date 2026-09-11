@@ -6,6 +6,7 @@ pub(super) struct Control {
     pub semi_auto: bool,
     pub handoff: Option<i32>,
     pub encoder: Option<(i32, Instant)>,
+    dc_feedback: Option<(i16, Instant)>,
     pub contacts: Option<(u8, Instant)>,
     pub selected_box: usize,
     pub loaded: u8,
@@ -124,6 +125,47 @@ mod tests {
     }
 
     #[test]
+    fn commissioning_captures_before_enable_but_rejects_stale_encoder() {
+        let mut r = runtime();
+        r.cfg.machine.bonus.as_mut().unwrap().enabled = false;
+        r.bonus.handoff = None;
+        r.bonus_request(&Request::new("bonus_capture")).unwrap();
+        assert_eq!(r.bonus.handoff, Some(100));
+        assert!(!r.bonus.outputs_active());
+        r.bonus
+            .observe_encoder(999, Instant::now() - Duration::from_secs(1));
+        assert!(r.bonus_request(&Request::new("bonus_capture")).is_err());
+        assert_eq!(r.bonus.handoff, Some(100));
+        assert!(
+            r.bonus_request(&Request {
+                value: Some(1.0),
+                ..Request::new("bonus_jog")
+            })
+            .is_err()
+        );
+    }
+
+    #[test]
+    fn selector_direction_maps_encoder_positive_motion_to_motor_output() {
+        let mut r = runtime();
+        r.cfg.machine.dc_motors[0].input_sign = -1.0;
+        r.bonus_request(&Request {
+            value: Some(1.0),
+            ..Request::new("bonus_jog")
+        })
+        .unwrap();
+        let command = format!("TX {}", crate::protocol::dcmd::line(4, 0, -100));
+        assert!(
+            r.shared
+                .status_snapshot()
+                .logs
+                .iter()
+                .any(|line| line == &command)
+        );
+        assert_eq!(r.bonus.last_dc.unwrap().0, 100);
+    }
+
+    #[test]
     fn manual_selector_stops_toward_handoff_limit_and_allows_retreat() {
         let mut r = runtime();
         r.cfg.machine.bonus.as_mut().unwrap().handoff_limit = Some(HandoffLimit {
@@ -223,11 +265,15 @@ impl Control {
         self.cancel();
         self.handoff = None;
         self.encoder = None;
+        self.dc_feedback = None;
         self.contacts = None;
         self.last_limit_poll = None;
     }
     pub fn observe_encoder(&mut self, count: i32, now: Instant) {
         self.encoder = Some((count, now));
+    }
+    pub fn observe_dc(&mut self, duty: i16, now: Instant) {
+        self.dc_feedback = Some((duty, now));
     }
     pub fn observe_contacts(&mut self, contacts: u8, now: Instant) {
         self.contacts = Some((contacts, now));
@@ -296,7 +342,7 @@ impl Runtime {
             servo.name
         );
         let id = servo.id;
-        let speed = servo.speed_position_per_second.round().clamp(1.0, 1000.0) as u16;
+        let speed = servo.speed_position_per_second.round() as u16;
         for line in [
             crate::protocol::serial_svmd::Command::Target {
                 id,
@@ -322,7 +368,16 @@ impl Runtime {
                 old != duty || now.duration_since(at) >= Duration::from_millis(100)
             })
         {
-            self.send(&crate::protocol::dcmd::line(4, 0, duty))?;
+            let profile = self.bonus_profile()?;
+            let motor = self
+                .cfg
+                .machine
+                .dc_motors
+                .iter()
+                .find(|motor| motor.name == profile.selector_motor)
+                .context("ボーナス選択軸のDCモータ設定がありません")?;
+            let output = duty * motor.input_sign as i16;
+            self.send(&crate::protocol::dcmd::line(4, motor.channel, output))?;
             self.bonus.last_dc = Some((duty, now));
         }
         Ok(())
@@ -399,23 +454,24 @@ impl Runtime {
                 && !self.sts.control_busy(),
             "ホーミング・シーケンス・個別テストを停止してください"
         );
+        // 位置の登録は出力を伴わず、通常運転を有効にする前にも使える。
+        if req.action == "bonus_capture" {
+            anyhow::ensure!(!self.bonus.active(), "動作を停止してください");
+            let (count, seen) = self.bonus.encoder.context("AMT102-Vの値を取得できません")?;
+            anyhow::ensure!(
+                seen.elapsed() < Duration::from_millis(300),
+                "AMT102-Vの値が古いため登録できません"
+            );
+            self.bonus.handoff = Some(count);
+            return Ok(Reply::data(format!(
+                "現在位置 {count} countを受け渡し位置として登録しました"
+            )));
+        }
         let profile = self.bonus_profile()?;
         match req.action.as_str() {
             "bonus_mode" => {
                 anyhow::ensure!(!self.bonus.active(), "動作を停止してから切り替えてください");
                 self.bonus.semi_auto = req.flag.context("モードが必要です")?;
-            }
-            "bonus_capture" => {
-                anyhow::ensure!(!self.bonus.active(), "動作を停止してください");
-                let (count, seen) = self.bonus.encoder.context("AMT102-Vの値を取得できません")?;
-                anyhow::ensure!(
-                    seen.elapsed() < Duration::from_millis(300),
-                    "AMT102-Vの値が古いため登録できません"
-                );
-                self.bonus.handoff = Some(count);
-                return Ok(Reply::data(format!(
-                    "現在位置 {count} countを受け渡し位置として登録しました"
-                )));
             }
             "bonus_select" => {
                 let index = req.value.context("ボックス番号が必要です")? as usize;
@@ -713,11 +769,36 @@ impl Runtime {
         status.semi_auto = self.bonus.semi_auto;
         status.handoff_captured = self.bonus.handoff.is_some();
         status.encoder_count = self.bonus.encoder.map(|v| v.0);
+        status.encoder_age_ms = self
+            .bonus
+            .encoder
+            .map(|(_, seen)| seen.elapsed().as_millis() as u64);
+        status.selector_output = self
+            .bonus
+            .dc_feedback
+            .filter(|(_, seen)| self.fresh() && seen.elapsed() < Duration::from_millis(300))
+            .map(|(duty, _)| duty);
+        let servo_position = |name: &str| {
+            self.cfg
+                .machine
+                .serial_svmd
+                .as_ref()
+                .and_then(|board| board.servos.iter().find(|servo| servo.name == name))
+                .and_then(|servo| self.servo_feedback.get(&servo.id))
+                .filter(|feedback| {
+                    self.fresh()
+                        && feedback.error == 0
+                        && feedback.seen.elapsed() < Duration::from_secs(1)
+                })
+                .map(|feedback| feedback.position)
+        };
+        status.lid_position = profile.and_then(|p| servo_position(&p.lid_servo));
+        status.align_position = profile.and_then(|p| servo_position(&p.align_servo));
         status.position_counts = self
             .bonus
             .encoder
             .zip(self.bonus.handoff)
-            .map(|((count, _), origin)| count - origin);
+            .and_then(|((count, _), origin)| count.checked_sub(origin));
         status.handoff_limit_configured = profile.is_some_and(|p| p.handoff_limit.is_some());
         status.handoff_limit = profile.and_then(|p| p.handoff_limit).and_then(|limit| {
             self.bonus.contacts.and_then(|(contacts, seen)| {

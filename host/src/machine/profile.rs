@@ -327,6 +327,25 @@ impl MachineProfile {
         values
     }
 
+    /// 選択軸の移動出力を基板へも反映し、別のDuty上限を設定させない。
+    pub fn effective_dcmd_parameters(&self) -> ParameterMap {
+        let mut values = self.dcmd_parameters.clone();
+        if let Some(maximum) = self
+            .dc_motors
+            .iter()
+            .map(|motor| {
+                self.bonus
+                    .as_ref()
+                    .filter(|bonus| bonus.selector_motor == motor.name)
+                    .map_or(motor.maximum_duty, |bonus| bonus.selector_duty)
+            })
+            .max()
+        {
+            values.insert("max_duty".into(), f32::from(maximum));
+        }
+        values
+    }
+
     /// 表示・保存されるCCTL設定も軸速度から生成した値へ揃える。
     pub fn sync_motor_speed_limits(&mut self) {
         self.parameters = self.cctl_parameters();

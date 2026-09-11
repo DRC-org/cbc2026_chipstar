@@ -195,7 +195,7 @@ impl Runtime {
                     }
                 }
                 self.test.renewed = Some(Instant::now());
-                for line in target.command(kind, command_value) {
+                for line in target.command(kind, command_value, &self.cfg.machine) {
                     self.send(&line)?;
                 }
             }

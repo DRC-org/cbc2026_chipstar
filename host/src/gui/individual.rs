@@ -22,6 +22,24 @@ impl Default for TestPanel {
     }
 }
 impl BridgeApp {
+    pub(super) fn select_dc_test(&mut self) {
+        self.end_test_on_tab_change();
+        self.switch_screen(Screen::Diagnose);
+        self.diagnosis_view = diagnose::DiagnosisView::Tests;
+        self.tests.board = "dc";
+        self.tests.id = 0;
+        self.tests.kind = Kind::Duty;
+        self.tests.value = 0.0;
+        self.request(Request {
+            flag: Some(true),
+            ..Request::new("test_mode")
+        });
+        self.request(Request {
+            axis: Some("dc:0".into()),
+            text: Some("duty".into()),
+            ..Request::new("test_select")
+        });
+    }
     pub(super) fn select_cctl_test(&mut self, slot: u8) {
         self.end_test_on_tab_change();
         self.switch_screen(Screen::Diagnose);
@@ -77,17 +95,54 @@ impl BridgeApp {
                 }
             }
         });
+        if !self.shared.config().machine.dc_motors.is_empty() {
+            ui.horizontal_wrapped(|ui| {
+                if ui
+                    .add_enabled(
+                        !status.ai_active && !status.emergency,
+                        egui::Button::new("ボーナス選択軸（DC）"),
+                    )
+                    .clicked()
+                {
+                    self.select_dc_test();
+                }
+                if ui.button("ボーナスの調整を開く").clicked() {
+                    self.tune_view = tune::TuneView::Bonus;
+                    self.switch_screen(Screen::Tune);
+                }
+            });
+        }
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
             ui.horizontal_wrapped(|ui| {
                 ui.label(RichText::new("1つの機構を動作確認").strong());
-                if ui.add_enabled(!status.emergency && !status.ai_active,
-                    egui::Button::new(if status.test_mode { "動作確認を終了" } else { "通常操縦を停止して動作確認を開始" })).clicked() {
-                    self.request(Request { flag: Some(!status.test_mode), ..Request::new("test_mode") });
+                if ui
+                    .add_enabled(
+                        !status.emergency && !status.ai_active,
+                        egui::Button::new(if status.test_mode {
+                            "動作確認を終了"
+                        } else {
+                            "通常操縦を停止して動作確認を開始"
+                        }),
+                    )
+                    .clicked()
+                {
+                    self.request(Request {
+                        flag: Some(!status.test_mode),
+                        ..Request::new("test_mode")
+                    });
                 }
             });
-            ui.label(RichText::new("出力できる対象は1つだけです。対象を変えると、それまでの出力を解除します。").size(12.0).color(MUTED));
-            if !status.test_mode { return; }
+            ui.label(
+                RichText::new(
+                    "出力できる対象は1つだけです。対象を変えると、それまでの出力を解除します。",
+                )
+                .size(12.0)
+                .color(MUTED),
+            );
+            if !status.test_mode {
+                return;
+            }
             ui.add_enabled_ui(!status.emergency && !status.ai_active, |ui| {
                 let mut changed = false;
                 ui.horizontal_wrapped(|ui| {
@@ -98,54 +153,162 @@ impl BridgeApp {
                         "dc" => "DCモータ",
                         _ => "対象未選択",
                     };
-                    egui::ComboBox::from_id_salt("test-board").selected_text(board_label).show_ui(ui, |ui| {
-                        for (key, label) in [("cctl", "cctl モータ"), ("pwm", "PWMサーボ"), ("sts", "STS3215"), ("dc", "DCモータ")] {
-                            if ui.selectable_value(&mut self.tests.board, key, label).changed() {
-                                self.tests.id = if key == "sts" { 1 } else { 0 };
-                                self.tests.kind = if key == "dc" { Kind::Duty } else if key == "cctl" { Kind::Velocity } else { Kind::Position };
-                                self.tests.value = if key == "pwm" { 1500.0 } else if key == "sts" { 2048.0 } else { 0.0 };
-                                changed = true;
+                    egui::ComboBox::from_id_salt("test-board")
+                        .selected_text(board_label)
+                        .show_ui(ui, |ui| {
+                            for (key, label) in [
+                                ("cctl", "cctl モータ"),
+                                ("pwm", "PWMサーボ"),
+                                ("sts", "STS3215"),
+                                ("dc", "DCモータ"),
+                            ] {
+                                if ui
+                                    .selectable_value(&mut self.tests.board, key, label)
+                                    .changed()
+                                {
+                                    self.tests.id = if key == "sts" { 1 } else { 0 };
+                                    self.tests.kind = if key == "dc" {
+                                        Kind::Duty
+                                    } else if key == "cctl" {
+                                        Kind::Velocity
+                                    } else {
+                                        Kind::Position
+                                    };
+                                    self.tests.value = if key == "pwm" {
+                                        1500.0
+                                    } else if key == "sts" {
+                                        2048.0
+                                    } else {
+                                        0.0
+                                    };
+                                    changed = true;
+                                }
                             }
-                        }
-                    });
+                        });
                     ui.label("モータ番号 / ID");
-                    let range = match self.tests.board { "cctl" => 0..=2, "pwm" => 0..=3, "sts" => 1..=253, _ => 0..=0 };
-                    changed |= ui.add(egui::DragValue::new(&mut self.tests.id).range(range)).changed();
+                    let range = match self.tests.board {
+                        "cctl" => 0..=2,
+                        "pwm" => 0..=3,
+                        "sts" => 1..=253,
+                        _ => 0..=0,
+                    };
+                    changed |= ui
+                        .add(egui::DragValue::new(&mut self.tests.id).range(range))
+                        .changed();
                     if self.tests.board == "cctl" {
-                        changed |= ui.selectable_value(&mut self.tests.kind, Kind::Velocity, "速度を確認").changed();
-                        changed |= ui.selectable_value(&mut self.tests.kind, Kind::Position, "位置を確認").changed();
+                        changed |= ui
+                            .selectable_value(&mut self.tests.kind, Kind::Velocity, "速度を確認")
+                            .changed();
+                        changed |= ui
+                            .selectable_value(&mut self.tests.kind, Kind::Position, "位置を確認")
+                            .changed();
                     }
                 });
                 let key = format!("{}:{}", self.tests.board, self.tests.id);
                 let target = Target::parse(&key).expect("GUI target range");
-                if let Ok((min, max, unit)) = target.limits(self.tests.kind, &self.shared.config().machine) {
+                if target == Target::Dc {
+                    super::bonus_tune::encoder_status(ui, status);
+                }
+                if let Ok((min, max, unit)) =
+                    target.limits(self.tests.kind, &self.shared.config().machine)
+                {
                     if changed || status.test_target.is_empty() {
                         self.tests.value = self.tests.value.clamp(min, max);
-                        self.request(Request { axis: Some(key.clone()), text: Some(self.tests.kind.key().into()), ..Request::new("test_select") });
+                        self.request(Request {
+                            axis: Some(key.clone()),
+                            text: Some(self.tests.kind.key().into()),
+                            ..Request::new("test_select")
+                        });
                     }
-                    ui.label(RichText::new(format!("指令範囲 {min:.3} .. {max:.3} {unit}")).size(12.0).color(MUTED));
+                    let range_text = if target == Target::Dc {
+                        format!(
+                            "指令範囲 {:.1} .. {:.1} %（設定した移動出力）",
+                            min / 10.0,
+                            max / 10.0
+                        )
+                    } else {
+                        format!("指令範囲 {min:.3} .. {max:.3} {unit}")
+                    };
+                    ui.label(RichText::new(range_text).size(12.0).color(MUTED));
                     if matches!((target, self.tests.kind), (Target::Cctl(_), Kind::Position)) {
-                        ui.label(RichText::new("機体座標で指定します。原点採用済みの軸だけ実行できます。").size(12.0).color(WARNING));
+                        ui.label(
+                            RichText::new(
+                                "機体座標で指定します。原点採用済みの軸だけ実行できます。",
+                            )
+                            .size(12.0)
+                            .color(WARNING),
+                        );
                     } else if matches!(target, Target::Cctl(_)) {
-                        ui.label(RichText::new("速度はモータ側の単位で指定します。").size(12.0).color(WARNING));
+                        ui.label(
+                            RichText::new("速度はモータ側の単位で指定します。")
+                                .size(12.0)
+                                .color(WARNING),
+                        );
                     }
                     ui.horizontal_wrapped(|ui| {
                         ui.label("指令値");
-                        ui.add(egui::DragValue::new(&mut self.tests.value).speed(if matches!(target, Target::Cctl(_)) { 0.01 } else { 1.0 }).range(min..=max).suffix(format!(" {unit}")));
-                        let can_output = status.test_ready && status.connected && status.configured && !self.stop_requested && status.test_target == key && status.test_kind == self.tests.kind.key();
-                        if self.tests.kind.momentary() {
-                            let response = ui.add_enabled(can_output, egui::Button::new("押している間だけ出力").min_size(egui::vec2(200.0, 40.0)));
-                            self.tests.requested = can_output && response.is_pointer_button_down_on();
-                        } else if ui.add_enabled(can_output, egui::Button::new("指定位置へ移動・保持")).clicked() {
-                            self.request(Request { value: Some(self.tests.value), flag: Some(true), ..Request::new("test_output") });
+                        if target == Target::Dc {
+                            let mut percent = self.tests.value / 10.0;
+                            if ui
+                                .add(
+                                    egui::DragValue::new(&mut percent)
+                                        .speed(0.1)
+                                        .range(min / 10.0..=max / 10.0)
+                                        .suffix(" %"),
+                                )
+                                .changed()
+                            {
+                                self.tests.value = (percent * 10.0).round();
+                            }
+                        } else {
+                            ui.add(
+                                egui::DragValue::new(&mut self.tests.value)
+                                    .speed(if matches!(target, Target::Cctl(_)) {
+                                        0.01
+                                    } else {
+                                        1.0
+                                    })
+                                    .range(min..=max)
+                                    .suffix(format!(" {unit}")),
+                            );
                         }
-                        if ui.button("出力解除").clicked() { self.dispatch(Action::Stop); }
+                        let can_output = status.test_ready
+                            && status.connected
+                            && status.configured
+                            && !self.stop_requested
+                            && status.test_target == key
+                            && status.test_kind == self.tests.kind.key();
+                        if self.tests.kind.momentary() {
+                            let response = ui.add_enabled(
+                                can_output,
+                                egui::Button::new("押している間だけ出力")
+                                    .min_size(egui::vec2(200.0, 40.0)),
+                            );
+                            self.tests.requested =
+                                can_output && response.is_pointer_button_down_on();
+                        } else if ui
+                            .add_enabled(can_output, egui::Button::new("指定位置へ移動・保持"))
+                            .clicked()
+                        {
+                            self.request(Request {
+                                value: Some(self.tests.value),
+                                flag: Some(true),
+                                ..Request::new("test_output")
+                            });
+                        }
+                        if ui.button("出力解除").clicked() {
+                            self.dispatch(Action::Stop);
+                        }
                     });
-                    ui.label(RichText::new(if self.tests.kind.momentary() {
-                        "ボタンを離すか入力更新が150ms途切れると出力解除します。"
-                    } else {
-                        "タブを切り替えると位置保持を解除し、個別テストを終了します。"
-                    }).size(12.0).color(MUTED));
+                    ui.label(
+                        RichText::new(if self.tests.kind.momentary() {
+                            "ボタンを離すか入力更新が150ms途切れると出力解除します。"
+                        } else {
+                            "タブを切り替えると位置保持を解除し、個別テストを終了します。"
+                        })
+                        .size(12.0)
+                        .color(MUTED),
+                    );
                 } else {
                     ui.colored_label(WARNING, "この対象の軸設定を読み込んでください。");
                 }

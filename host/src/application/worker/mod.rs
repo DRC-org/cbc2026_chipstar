@@ -560,6 +560,9 @@ impl Runtime {
                 });
             }
             if let Some(status) = crate::protocol::dcmd::parse_status(&line) {
+                if status.result == 0 {
+                    self.bonus.observe_dc(status.duty[0], Instant::now());
+                }
                 self.shared.update_status(|s| {
                     s.peripherals.insert(
                         "DCMD".into(),

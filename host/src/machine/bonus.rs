@@ -15,7 +15,7 @@ pub struct BoxProfile {
 pub struct HandoffLimit {
     /// DCMDの接点bit位置。SW1=0, SW2=1, SW3=2。
     pub input: u8,
-    /// 受け渡し位置へ近づくDutyの符号。`1`または`-1`。
+    /// 受け渡し位置へ近づくエンコーダ方向。`1`または`-1`。
     pub direction: i8,
     /// B接点（常閉）配線ならtrue。断線時も到達として扱う。
     #[serde(default = "default_normally_closed")]

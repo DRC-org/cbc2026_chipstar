@@ -2,7 +2,11 @@ use super::*;
 use crate::{machine::ParameterMap, protocol::dcmd};
 
 /// 未登録でもFWの既定値を表示し、実際に編集した項目だけを適用対象へ追加する。
-pub(super) fn parameters(ui: &mut egui::Ui, values: &mut ParameterMap) -> bool {
+pub(super) fn parameters(
+    ui: &mut egui::Ui,
+    values: &mut ParameterMap,
+    drive_duty: Option<f32>,
+) -> bool {
     let mut edited = false;
     ui.label(RichText::new("DCモータ基板").strong().color(ACCENT));
     ui.label("未設定の項目には基板の起動時初期値を表示します。変更後に「適用」「保存」を押してください。");
@@ -13,6 +17,15 @@ pub(super) fn parameters(ui: &mut egui::Ui, values: &mut ParameterMap) -> bool {
         .max_col_width((ui.available_width() - 330.0).max(150.0))
         .show(ui, |ui| {
             for (index, name) in dcmd::PARAMETER_NAMES.iter().enumerate() {
+                if *name == "max_duty"
+                    && let Some(duty) = drive_duty
+                {
+                    ui.label("DCモータ出力上限");
+                    ui.label(format!("{:.1} %", duty / 10.0));
+                    ui.label("移動出力から自動反映");
+                    ui.end_row();
+                    continue;
+                }
                 let mut value = values
                     .get(*name)
                     .copied()
