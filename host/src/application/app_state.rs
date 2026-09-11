@@ -175,6 +175,8 @@ pub struct BonusStatus {
     pub handoff_captured: bool,
     pub encoder_count: Option<i32>,
     pub encoder_age_ms: Option<u64>,
+    pub encoder_received: u64,
+    pub encoder_index_count: Option<u16>,
     pub selector_output: Option<i16>,
     pub lid_position: Option<i32>,
     pub align_position: Option<i32>,

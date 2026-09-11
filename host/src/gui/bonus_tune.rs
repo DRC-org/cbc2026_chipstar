@@ -2,17 +2,31 @@ use super::*;
 use crate::{diagnostics::individual::Target, machine::bonus::HandoffLimit};
 
 pub(super) fn encoder_status(ui: &mut egui::Ui, status: &Status) {
+    ui.label(RichText::new("エンコーダ実測（DCMD ENC1 / J6）").strong());
     ui.horizontal_wrapped(|ui| {
         match (status.bonus.encoder_count, status.bonus.encoder_age_ms) {
             (Some(count), Some(age)) if status.connected && age < 300 => {
-                ui.label(format!("エンコーダ {count} count"));
+                ui.label(RichText::new(format!("{count} count")).size(20.0));
                 if let Some(position) = status.bonus.position_mm {
                     ui.label(format!("受け渡し位置から {position:+.2} mm"));
                 }
+                ui.colored_label(
+                    ACCENT,
+                    format!("受信中 · {}件 · {age} ms前", status.bonus.encoder_received),
+                );
             }
             _ => {
-                ui.colored_label(WARNING, "エンコーダ応答待ち");
+                ui.colored_label(WARNING, "エンコーダ応答待ち（現在位置は不明）");
+                if let Some(count) = status.bonus.encoder_count {
+                    ui.label(format!("最終受信値 {count} count"));
+                }
+                if let Some(age) = status.bonus.encoder_age_ms {
+                    ui.label(format!("最終受信から {:.1} 秒", age as f64 / 1000.0));
+                }
             }
+        }
+        if let Some(index) = status.bonus.encoder_index_count {
+            ui.label(format!("X相通過 {index} 回（最終受信値）"));
         }
         if let Some(duty) = status.bonus.selector_output {
             ui.label(format!("基板の出力 {:+.1} %", f32::from(duty) / 10.0));
@@ -23,7 +37,13 @@ pub(super) fn encoder_status(ui: &mut egui::Ui, status: &Status) {
             } else {
                 "受け渡し側リミット：開放"
             });
+        } else if status.bonus.handoff_limit_configured {
+            ui.colored_label(WARNING, "受け渡し側リミット：未取得");
         }
+    });
+    ui.collapsing("動かしても実測値が変わらないとき", |ui| {
+        ui.label("受信件数が増えていれば、DCMDからデータが届いています。countが変わらない場合は、基板から同じ値が届いています。");
+        ui.label("接続先はJ6です。J5とJ6は両方にENC0と印刷されていますが、現在のFWはJ6を読みます。A/B相の配線、エンコーダ電源、軸が一緒に回っているかを確認してください。");
     });
 }
 
@@ -353,6 +373,52 @@ fn can_capture_servo(status: &Status) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn encoder_display_distinguishes_live_value_from_stale_value() {
+        let mut status = Status {
+            connected: true,
+            ..Status::default()
+        };
+        status.bonus.encoder_count = Some(2);
+        status.bonus.encoder_age_ms = Some(25);
+        status.bonus.encoder_received = 15;
+        status.bonus.encoder_index_count = Some(8);
+        status.bonus.position_mm = Some(1.0);
+        let render = |status: &Status| {
+            let ctx = egui::Context::default();
+            let mut output = ctx.run_ui(egui::RawInput::default(), |ui| {
+                encoder_status(ui, status);
+            });
+            output.textures_delta.clear();
+            output
+                .shapes
+                .into_iter()
+                .filter_map(|shape| {
+                    if let egui::Shape::Text(text) = shape.shape {
+                        Some(text.galley.job.text.clone())
+                    } else {
+                        None
+                    }
+                })
+                .collect::<Vec<_>>()
+                .join("\n")
+        };
+        let live = render(&status);
+        assert!(live.contains("2 count"), "{live}");
+        assert!(live.contains("受信中 · 15件"), "{live}");
+        assert!(live.contains("X相通過 8 回"), "{live}");
+        assert!(live.contains("受け渡し位置から"), "{live}");
+        status.bonus.encoder_age_ms = Some(301);
+        let stale = render(&status);
+        assert!(stale.contains("現在位置は不明"), "{stale}");
+        assert!(stale.contains("最終受信値 2 count"), "{stale}");
+        assert!(!stale.contains("受け渡し位置から"), "{stale}");
+        assert!(!stale.contains("受信中"), "{stale}");
+        status.bonus.encoder_age_ms = Some(25);
+        status.connected = false;
+        assert!(render(&status).contains("現在位置は不明"));
+    }
 
     #[test]
     fn box_capture_requires_fresh_stopped_feedback_and_a_reference() {

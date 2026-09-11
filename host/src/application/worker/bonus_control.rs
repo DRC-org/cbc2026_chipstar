@@ -6,6 +6,8 @@ pub(super) struct Control {
     pub semi_auto: bool,
     pub handoff: Option<i32>,
     pub encoder: Option<(i32, Instant)>,
+    encoder_received: u64,
+    encoder_index_count: Option<u16>,
     dc_feedback: Option<(i16, Instant)>,
     pub contacts: Option<(u8, Instant)>,
     pub selected_box: usize,
@@ -23,6 +25,57 @@ pub(super) struct Control {
 mod tests {
     use super::*;
     use crate::machine::bonus::HandoffLimit;
+
+    #[cfg(unix)]
+    #[test]
+    fn encoder_wire_frames_update_gui_snapshot_even_when_count_is_unchanged() {
+        use serialport::SerialPort;
+        use std::io::Write;
+
+        let mut r = runtime();
+        r.bonus.reset_reference();
+        r.bonus.handoff = Some(2);
+        let (mut peer, mut port) = serialport::TTYPort::pair().unwrap();
+        port.set_exclusive(false).unwrap();
+        let device = port.name().unwrap();
+        drop(port);
+        r.link = Link::new(&device, 115200, false);
+        r.send("HELLO 1").unwrap();
+
+        // 実機で観測したフレームと、次の位置・X相変化をシリアル受信経路へ入れる。
+        for (frame, count, index, received) in [
+            ("0101000000020008", 2, 8, 1),
+            ("0101000000020008", 2, 8, 2),
+            ("0101000000660009", 102, 9, 3),
+            ("0101FFFFFFFE0009", -2, 9, 4),
+        ] {
+            writeln!(peer, "CAN_RX bus=2 id=786 data={frame}").unwrap();
+            let deadline = Instant::now() + Duration::from_millis(500);
+            while r.bonus.encoder_received < received {
+                r.receive().unwrap();
+                assert!(Instant::now() < deadline, "エンコーダフレームの受信待ち");
+                std::thread::yield_now();
+            }
+            r.publish();
+            let bonus = r.shared.status_snapshot().bonus;
+            assert_eq!(bonus.encoder_count, Some(count));
+            assert_eq!(bonus.encoder_index_count, Some(index));
+            assert_eq!(bonus.encoder_received, received);
+            assert!(bonus.encoder_age_ms.unwrap() < 300);
+            assert_eq!(bonus.position_counts, Some(count - 2));
+            let profile = r.cfg.machine.bonus.as_ref().unwrap();
+            assert_eq!(bonus.position_mm, Some(profile.counts_to_mm(count - 2)));
+        }
+        r.bonus.encoder.as_mut().unwrap().1 = Instant::now() - Duration::from_secs(1);
+        r.publish();
+        assert!(r.shared.status_snapshot().bonus.encoder_age_ms.unwrap() >= 1000);
+        r.bonus.reset_reference();
+        r.publish();
+        let bonus = r.shared.status_snapshot().bonus;
+        assert_eq!(bonus.encoder_count, None);
+        assert_eq!(bonus.encoder_index_count, None);
+        assert_eq!(bonus.encoder_received, 0);
+    }
 
     fn runtime() -> Runtime {
         let mut r = crate::application::worker::tests::screen_runtime();
@@ -267,12 +320,23 @@ impl Control {
         self.cancel();
         self.handoff = None;
         self.encoder = None;
+        self.encoder_received = 0;
+        self.encoder_index_count = None;
         self.dc_feedback = None;
         self.contacts = None;
         self.last_limit_poll = None;
     }
     pub fn observe_encoder(&mut self, count: i32, now: Instant) {
         self.encoder = Some((count, now));
+        self.encoder_received = self.encoder_received.saturating_add(1);
+    }
+    pub fn observe_encoder_status(
+        &mut self,
+        encoder: &crate::protocol::dcmd::EncoderStatus,
+        now: Instant,
+    ) {
+        self.observe_encoder(encoder.count, now);
+        self.encoder_index_count = Some(encoder.index_count);
     }
     pub fn observe_dc(&mut self, duty: i16, now: Instant) {
         self.dc_feedback = Some((duty, now));
@@ -775,6 +839,8 @@ impl Runtime {
             .bonus
             .encoder
             .map(|(_, seen)| seen.elapsed().as_millis() as u64);
+        status.encoder_received = self.bonus.encoder_received;
+        status.encoder_index_count = self.bonus.encoder_index_count;
         status.selector_output = self
             .bonus
             .dc_feedback

@@ -574,7 +574,7 @@ impl Runtime {
                 });
             }
             if let Some(encoder) = crate::protocol::dcmd::parse_encoder(&line) {
-                self.bonus.observe_encoder(encoder.count, Instant::now());
+                self.bonus.observe_encoder_status(&encoder, Instant::now());
                 self.shared.update_status(|s| {
                     s.peripherals.insert(
                         "ボーナス機構エンコーダ".into(),
