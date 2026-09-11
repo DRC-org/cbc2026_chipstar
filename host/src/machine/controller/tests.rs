@@ -74,6 +74,29 @@ fn every_axis_can_be_jogged_for_manual_checks() {
 }
 
 #[test]
+fn homing_theta_defaults_and_roundtrips_with_validation() {
+    let profile = MachineProfile::embedded().unwrap();
+    let mut old_profile: toml::Value = toml::from_str(&toml::to_string(&profile).unwrap()).unwrap();
+    old_profile
+        .as_table_mut()
+        .unwrap()
+        .remove("homing_theta_deg");
+    let old_profile = MachineProfile::parse(&toml::to_string(&old_profile).unwrap()).unwrap();
+    assert_eq!(old_profile.homing_theta_deg, 90.0);
+    for angle in [0.0, 83.5, 180.0] {
+        let mut configured = old_profile.clone();
+        configured.homing_theta_deg = angle;
+        let restored = MachineProfile::parse(&toml::to_string(&configured).unwrap()).unwrap();
+        assert_eq!(restored.homing_theta_deg, angle);
+    }
+    for angle in [-1.0, 180.1, f32::NAN, f32::INFINITY] {
+        let mut configured = old_profile.clone();
+        configured.homing_theta_deg = angle;
+        assert!(configured.validate().is_err());
+    }
+}
+
+#[test]
 fn homing_speed_percent_is_valid_and_rejects_unsafe_values() {
     let profile = MachineProfile::embedded().unwrap();
     assert!(

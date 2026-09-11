@@ -244,6 +244,10 @@ fn settings_are_temporary_until_explicitly_saved() {
     let before = fs::read_to_string(host.dir.join("machine.toml")).unwrap();
     let config = host.call(Request::new("config")).data;
     let mut edited: toml::Value = toml::from_str(&config).unwrap();
+    edited
+        .as_table_mut()
+        .unwrap()
+        .insert("homing_theta_deg".into(), toml::Value::Float(83.5));
     let r = edited["axes"]
         .as_array_mut()
         .unwrap()
@@ -260,6 +264,8 @@ fn settings_are_temporary_until_explicitly_saved() {
         .ok
     );
     host.wait(|s| s["configured"].as_bool() == Some(true));
+    let applied: toml::Value = toml::from_str(&host.call(Request::new("config")).data).unwrap();
+    assert_eq!(applied["homing_theta_deg"].as_float(), Some(83.5));
     assert_eq!(
         fs::read_to_string(host.dir.join("machine.toml")).unwrap(),
         before
@@ -267,6 +273,12 @@ fn settings_are_temporary_until_explicitly_saved() {
     assert!(host.request("save", &token).ok);
     let after = fs::read_to_string(host.dir.join("machine.toml")).unwrap();
     assert_eq!(axis_speed(&after, "r"), 8.0);
+    assert_eq!(
+        host::machine::MachineProfile::parse(&after)
+            .unwrap()
+            .homing_theta_deg,
+        83.5
+    );
 }
 
 #[test]

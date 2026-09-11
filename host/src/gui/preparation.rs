@@ -1,5 +1,5 @@
 use super::*;
-use crate::application::app_state::{PreparationPhase, PreparationStep};
+use crate::application::app_state::{Court as SelectedCourt, PreparationPhase, PreparationStep};
 
 impl BridgeApp {
     // 操作名をマウス用ボタン、パッドの割当と押し方を別の列に統一する。
@@ -156,9 +156,13 @@ impl BridgeApp {
             } else {
                 match status.preparation_step {
                     Court => {
+                        let angle = self.shared.config().machine.homing_theta_deg;
                         self.preparation_action(
                             ui,
-                            "赤コートを選ぶ（θ −90°）",
+                            &format!(
+                                "赤コートを選ぶ（θ {:+.1}°）",
+                                SelectedCourt::Red.homing_theta(angle)
+                            ),
                             "十字キー ←",
                             "押して離す",
                             true,
@@ -166,7 +170,10 @@ impl BridgeApp {
                         );
                         self.preparation_action(
                             ui,
-                            "青コートを選ぶ（θ +90°）",
+                            &format!(
+                                "青コートを選ぶ（θ {:+.1}°）",
+                                SelectedCourt::Blue.homing_theta(angle)
+                            ),
                             "十字キー →",
                             "押して離す",
                             true,
@@ -205,9 +212,9 @@ impl BridgeApp {
                         };
                         if let Some(court) = status.court {
                             ui.label(format!(
-                                "z下端 → zを{:.0} mm上昇 → θ {:+.0}° → r前端 → rを{:.0} mm後退",
+                                "z下端 → zを{:.0} mm上昇 → θ {:+.1}° → r前端 → rを{:.0} mm後退",
                                 distance("z"),
-                                court.homing_theta(),
+                                court.homing_theta(config.machine.homing_theta_deg),
                                 distance("r")
                             ));
                         }

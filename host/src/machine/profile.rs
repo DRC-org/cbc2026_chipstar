@@ -149,6 +149,14 @@ fn is_default_homing_speed_percent(value: &f32) -> bool {
     *value == default_homing_speed_percent()
 }
 
+fn default_homing_theta_deg() -> f32 {
+    90.0
+}
+
+fn is_default_homing_theta_deg(value: &f32) -> bool {
+    *value == default_homing_theta_deg()
+}
+
 fn default_slow_speed_percent() -> f32 {
     20.0
 }
@@ -216,6 +224,12 @@ pub struct MachineProfile {
         skip_serializing_if = "is_default_slow_speed_percent"
     )]
     pub slow_speed_percent: f32,
+    /// 自動ホーミングで正面から旋回する角度。青は正、赤は負方向。
+    #[serde(
+        default = "default_homing_theta_deg",
+        skip_serializing_if = "is_default_homing_theta_deg"
+    )]
+    pub homing_theta_deg: f32,
     #[serde(default)]
     pub dc_motors: Vec<super::dc_motor::MotorProfile>,
     #[serde(default)]
@@ -352,6 +366,9 @@ impl MachineProfile {
     }
 
     pub fn validate(&self) -> Result<()> {
+        if !self.homing_theta_deg.is_finite() || !(0.0..=180.0).contains(&self.homing_theta_deg) {
+            bail!("ホーミング旋回角（homing_theta_deg）は0〜180°で指定してください");
+        }
         if !self.slow_speed_percent.is_finite() || !(1.0..=100.0).contains(&self.slow_speed_percent)
         {
             bail!("slow_speed_percentは1..100で指定してください");

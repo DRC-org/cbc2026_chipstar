@@ -41,10 +41,10 @@ pub enum Court {
     Blue,
 }
 impl Court {
-    pub fn homing_theta(self) -> f32 {
+    pub fn homing_theta(self, angle_deg: f32) -> f32 {
         match self {
-            Self::Red => -90.0,
-            Self::Blue => 90.0,
+            Self::Red => -angle_deg,
+            Self::Blue => angle_deg,
         }
     }
     pub fn label(self) -> &'static str {

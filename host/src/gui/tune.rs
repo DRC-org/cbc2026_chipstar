@@ -208,9 +208,13 @@ impl BridgeApp {
                         );
                     }
                     if let Some(axis) = self.edit.axes.iter_mut().find(|axis| axis.name == name) {
-                        edited |= axis_settings(ui, axis);
+                        edited |= axis_settings(ui, axis, &mut self.edit.homing_theta_deg);
                     }
                     if name == "theta" {
+                        ui.label(format!(
+                            "ホーミング旋回先：青 {:+.1}° ／ 赤 {:+.1}°",
+                            self.edit.homing_theta_deg, -self.edit.homing_theta_deg
+                        ));
                         ui.colored_label(
                             WARNING,
                             "θはどのz高さでも干渉する可能性があります。旋回前に実機を確認してください。",
@@ -371,7 +375,11 @@ impl BridgeApp {
     }
 }
 
-fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> bool {
+fn axis_settings(
+    ui: &mut egui::Ui,
+    axis: &mut crate::machine::AxisProfile,
+    homing_theta_deg: &mut f32,
+) -> bool {
     let mut edited = false;
     let unit = axis.unit.clone();
     ui.add_space(8.0);
@@ -431,6 +439,15 @@ fn axis_settings(ui: &mut egui::Ui, axis: &mut crate::machine::AxisProfile) -> b
                 ui.end_row();
             }
             if axis.limit.is_some() || axis.name == "theta" {
+                if axis.name == "theta" {
+                    let help = "開始時の正面を0°として、z上昇後に旋回する角度です。青は＋、赤は−方向へ旋回します。変更後は「適用」「保存」を押してください。";
+                    ui.label("ホーミング旋回角").on_hover_text(help);
+                    edited |= ui.add(egui::DragValue::new(homing_theta_deg)
+                        .speed(0.1).range(0.0..=180.0).fixed_decimals(1).suffix(" °"))
+                        .on_hover_text(help).changed();
+                    ui.label("ⓘ").on_hover_text(help);
+                    ui.end_row();
+                }
                 let description =
                     "自動ホーミングで使う速度です。θの旋回とr・zの探索速度を、軸の最高速度に対する1〜100%で指定します。";
                 if matches!(axis.name.as_str(), "r" | "z") {

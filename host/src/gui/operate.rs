@@ -196,9 +196,9 @@ impl BridgeApp {
             .map(|a| a.homing_retreat_mm())
             .unwrap_or(0.0);
         ui.label(format!(
-            "{}：正面をθ=0°として、z上昇後にθを{:+.0}°へ旋回します。",
+            "{}：正面をθ=0°として、z上昇後にθを{:+.1}°へ旋回します。",
             court.label(),
-            court.homing_theta()
+            court.homing_theta(config.machine.homing_theta_deg)
         ));
         ui.label(
             RichText::new(format!(

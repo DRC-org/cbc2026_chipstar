@@ -64,7 +64,7 @@ impl Runtime {
         let theta_target = self
             .court
             .context("赤コートか青コートを選んでください")?
-            .homing_theta();
+            .homing_theta(self.cfg.machine.homing_theta_deg);
         self.axes_ready(false)?;
         let theta_index = self
             .cfg
@@ -437,7 +437,7 @@ impl Runtime {
                 h.phase = Phase::AwaitRotationRun;
                 h.since = now;
                 h.axis_started = now;
-                h.label = format!("θを{:+.0}°へ旋回しています（z保持中）", h.theta_target);
+                h.label = format!("θを{:+.1}°へ旋回しています（z保持中）", h.theta_target);
             } else {
                 anyhow::ensure!(
                     now.duration_since(home.axis_started).as_secs_f32() < home.timeout_seconds,
@@ -648,14 +648,28 @@ mod tests {
     #[test]
     fn homes_z_then_rotates_for_each_court_then_sets_r_at_limit() {
         for court in [Court::Red, Court::Blue] {
-            check_homing_retreat(court, None, None);
-            check_homing_retreat(court, Some(25.0), Some(60.0));
+            check_homing_retreat(court, None, None, 90.0);
+            check_homing_retreat(court, Some(25.0), Some(60.0), 90.0);
         }
     }
 
-    fn check_homing_retreat(court: Court, z_distance: Option<f32>, r_distance: Option<f32>) {
+    #[test]
+    fn homes_with_configured_rotation_angle_for_both_courts() {
+        for court in [Court::Red, Court::Blue] {
+            check_homing_retreat(court, Some(25.0), Some(60.0), 83.5);
+        }
+    }
+
+    fn check_homing_retreat(
+        court: Court,
+        z_distance: Option<f32>,
+        r_distance: Option<f32>,
+        angle: f32,
+    ) {
         let mut r = crate::application::worker::tests::screen_runtime();
         r.court = Some(court);
+        r.cfg.machine.homing_theta_deg = angle;
+        let expected_theta = if court == Court::Blue { angle } else { -angle };
         r.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
         let feedback_at = Instant::now();
         r.test.peers.insert("sts", feedback_at);
@@ -780,8 +794,8 @@ mod tests {
             .iter()
             .find(|a| a.name == "theta")
             .unwrap();
-        let expected_sign = (court.homing_theta() * theta.native_per_unit).signum();
-        let theta_native = theta.native_per_unit * court.homing_theta();
+        let expected_sign = (expected_theta * theta.native_per_unit).signum();
+        let theta_native = theta.native_per_unit * expected_theta;
         let turn = r
             .shared
             .status_snapshot()
@@ -863,7 +877,7 @@ mod tests {
         );
         assert_eq!(
             origins.iter().find(|a| a.name == "theta").unwrap().position,
-            court.homing_theta()
+            expected_theta
         );
         r.publish();
         assert!(r.shared.status_snapshot().homing_ready);
@@ -932,6 +946,32 @@ mod tests {
             .minimum = -45.0;
         assert!(r.begin_homing(true, true, 180.0).is_err());
         assert_eq!(r.shared.status_snapshot().tx_count, count);
+    }
+
+    #[test]
+    fn configured_rotation_outside_travel_is_rejected_before_output() {
+        for court in [Court::Red, Court::Blue] {
+            let mut r = crate::application::worker::tests::screen_runtime();
+            r.court = Some(court);
+            r.cfg.machine.homing_theta_deg = 100.0;
+            let theta = r
+                .cfg
+                .machine
+                .axes
+                .iter_mut()
+                .find(|a| a.name == "theta")
+                .unwrap();
+            theta.minimum = -95.0;
+            theta.maximum = 95.0;
+            let count = r.shared.status_snapshot().tx_count;
+            assert!(
+                r.begin_homing(true, true, 180.0)
+                    .unwrap_err()
+                    .to_string()
+                    .contains("可動域外")
+            );
+            assert_eq!(r.shared.status_snapshot().tx_count, count);
+        }
     }
 
     #[test]

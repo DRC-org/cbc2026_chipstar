@@ -232,8 +232,16 @@ mod tests {
         assert_eq!(r.court, Some(Court::Blue));
         assert!(r.ee.targets.is_empty());
         assert_eq!(r.court, Some(Court::Blue));
-        assert_eq!(r.court.unwrap().homing_theta(), 90.0);
-        assert_eq!(Court::Red.homing_theta(), -90.0);
+        assert_eq!(
+            r.court
+                .unwrap()
+                .homing_theta(r.cfg.machine.homing_theta_deg),
+            90.0
+        );
+        assert_eq!(
+            Court::Red.homing_theta(r.cfg.machine.homing_theta_deg),
+            -90.0
+        );
         assert_eq!(r.preparation_step(), PreparationStep::Home);
         assert!(press(&mut r, 2, 1).is_err());
         assert_eq!(r.preparation_step(), PreparationStep::Home);
