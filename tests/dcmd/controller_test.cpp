@@ -123,6 +123,43 @@ TEST_CASE("STOP中に経過した制動時間を逆転開始時にやり直さ�
   CHECK(c.output(0) == -1);
 }
 
+TEST_CASE("反転待ち0なら正逆切替は減速後に待機せず立ち上がる") {
+  Controller c;
+  Command parameter;
+  parameter.op = Op::ParamSet;
+  parameter.param_id = static_cast<uint8_t>(ParamId::ReverseBrakeMs);
+  parameter.value = 0.0f;
+  REQUIRE(c.apply(parameter, 0));
+  parameter.param_id = static_cast<uint8_t>(ParamId::RampStep);
+  parameter.value = 130.0f;
+  REQUIRE(c.apply(parameter, 0));
+  REQUIRE(c.apply({Op::Hello}, 0));
+  REQUIRE(c.apply({Op::Target, 0, 600}, 0));
+  REQUIRE(c.apply({Op::Run, 1}, 0));
+  for (uint32_t t = 10; t <= 50; t += 10) c.tick(t);
+  REQUIRE(c.output(0) == 600);
+
+  // R1を保持したまま、右から左へ切り替える。
+  REQUIRE(c.apply({Op::Target, 0, -600}, 50));
+  for (uint32_t t = 60; t <= 100; t += 10) {
+    REQUIRE(c.apply({Op::Run, 1}, t));
+    CHECK(c.output(0) >= 0);
+  }
+  REQUIRE(c.output(0) == 0);
+  c.tick(110);
+  CHECK(c.output(0) == -130);
+  for (uint32_t t = 120; t <= 150; t += 10) c.tick(t);
+  REQUIRE(c.output(0) == -600);
+
+  // ボタンを離してSTOPした直後の正方向操作にも追加待機を入れない。
+  REQUIRE(c.apply({Op::Stop}, 151));
+  REQUIRE(c.output(0) == 0);
+  REQUIRE(c.apply({Op::Target, 0, 600}, 152));
+  REQUIRE(c.apply({Op::Run, 1}, 152));
+  c.tick(162);
+  CHECK(c.output(0) == 130);
+}
+
 TEST_CASE("停止後すぐに逆転を指令した場合は残りの制動時間だけ待つ") {
   Controller c;
   c.apply({Op::Hello}, 0);

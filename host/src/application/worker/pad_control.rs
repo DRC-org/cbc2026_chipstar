@@ -336,6 +336,22 @@ mod tests {
                 .any(|line| line == "TX CAN 2 784 0104000000640000")
         );
 
+        let mut left = ControllerState::default();
+        left.buttons[10] = 1;
+        left.buttons[13] = 1;
+        r.read_pad(left.clone(), now + Duration::from_millis(20))
+            .unwrap();
+        r.read_pad(left, now + Duration::from_millis(40)).unwrap();
+        assert_eq!(
+            r.shared
+                .status_snapshot()
+                .logs
+                .iter()
+                .filter(|line| *line == "TX CAN 2 784 01040000FF9C0000")
+                .count(),
+            2
+        );
+
         let mut released = ControllerState::default();
         released.buttons[10] = 1;
         r.read_pad(released, now + Duration::from_millis(50))

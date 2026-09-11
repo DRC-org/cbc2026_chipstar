@@ -207,5 +207,6 @@ watchdog_ms = 250.0
 
 [dcmd_parameters]
 ramp_step = 130.0
+reverse_brake_ms = 0.0
 
 [serial_svmd_parameters]
