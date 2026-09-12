@@ -25,6 +25,9 @@ struct Args {
     machine_profile: Option<PathBuf>,
     #[arg(long)]
     simulate: bool,
+    /// 模擬機体の自動テスト用。実機のゲームパッド入力を読み取らない。
+    #[arg(long, requires = "simulate")]
+    no_gamepad: bool,
     /// GUIを開かず、同じワーカーとAPIを起動する。
     #[arg(long)]
     headless: bool,
@@ -52,7 +55,7 @@ fn main() -> anyhow::Result<()> {
         simulate: args.simulate,
     }));
     let worker_shared = shared.clone();
-    let worker = thread::spawn(move || worker::run(worker_shared));
+    let worker = thread::spawn(move || worker::run_with_gamepad(worker_shared, !args.no_gamepad));
     let api_shared = shared.clone();
     let api = thread::spawn(move || server.run(api_shared));
     let result = if args.headless {

@@ -1472,8 +1472,12 @@ impl Runtime {
 }
 
 pub fn run(shared: Arc<Shared>) {
+    run_with_gamepad(shared, true);
+}
+
+pub fn run_with_gamepad(shared: Arc<Shared>, gamepad: bool) {
     let mut runtime = Runtime::new(shared.clone());
-    let mut gilrs = gilrs::Gilrs::new().ok();
+    let mut gilrs = gamepad.then(|| gilrs::Gilrs::new().ok()).flatten();
     let mut selected = None;
     while shared.is_running() {
         let cycle = Instant::now();

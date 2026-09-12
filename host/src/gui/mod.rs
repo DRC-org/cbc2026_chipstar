@@ -620,7 +620,7 @@ mod workflow_tests {
                 simulate: true,
             }));
             let worker_shared = shared.clone();
-            let worker = thread::spawn(move || worker::run(worker_shared));
+            let worker = thread::spawn(move || worker::run_with_gamepad(worker_shared, false));
             let start = Instant::now();
             while !shared.status_snapshot().configured {
                 assert!(start.elapsed() < Duration::from_secs(5));

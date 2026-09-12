@@ -31,7 +31,7 @@ impl Host {
         .unwrap();
         let socket = dir.join("host.sock");
         let child = Command::new(env!("CARGO_BIN_EXE_host"))
-            .args(["--headless", "--simulate", "--socket"])
+            .args(["--headless", "--simulate", "--no-gamepad", "--socket"])
             .arg(&socket)
             .arg("--machine-profile")
             .arg(dir.join("machine.toml"))
