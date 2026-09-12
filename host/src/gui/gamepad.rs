@@ -49,7 +49,15 @@ pub(super) fn monitor(ui: &mut egui::Ui, status: &Status, profile: &MachineProfi
                     .on_hover_text(
                         "向き・低速・デッドゾーンを反映した要求値です。停止条件や可動域によって出力されない場合があります。",
                     );
+                let xy_mode = status.planar_mode == crate::machine::xy::PlanarMode::Xy;
+                if xy_mode {
+                    let scale = if slow { profile.slow_speed_percent * 0.01 } else { 1.0 };
+                    let request = crate::machine::xy::stick(input);
+                    request_value(ui, "X（右）", request[0] * scale, status.xy_blocker.is_empty());
+                    request_value(ui, "Y（正面）", request[1] * scale, status.xy_blocker.is_empty());
+                }
                 for axis in &profile.axes {
+                    if xy_mode && matches!(axis.name.as_str(), "r" | "theta") { continue; }
                     request_value(
                         ui,
                         if axis.name == "theta" {

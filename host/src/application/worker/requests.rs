@@ -15,6 +15,7 @@ impl Runtime {
                     | "run"
                     | "stop"
                     | "estop_reset"
+                    | "planar_mode"
             );
         let result = self.request_inner(req, manual);
         if audible {
@@ -159,6 +160,21 @@ impl Runtime {
             bail!("個別テストの出力を停止してから操作してください");
         }
         match req.action.as_str() {
+            "planar_mode" => {
+                if let Some(reason) = self.planar_mode_blocker() {
+                    bail!("{reason}");
+                }
+                self.planar_mode = match req.text.as_deref() {
+                    Some("rtheta") => crate::machine::xy::PlanarMode::Rtheta,
+                    Some("xy") => crate::machine::xy::PlanarMode::Xy,
+                    _ => bail!("移動モードはrthetaまたはxyを指定してください"),
+                };
+                self.machine.reset_jog();
+                return Ok(Reply::data(format!(
+                    "左スティックを{}に切り替えました",
+                    self.planar_mode.label()
+                )));
+            }
             "home" => {
                 return self.begin_homing(
                     manual,

@@ -303,7 +303,8 @@ impl BridgeApp {
                         .spacing([24.0, 8.0])
                         .show(ui, |ui| {
                             for (key, action) in [
-                                ("左スティック", "r・θを操縦"),
+                                ("左スティック", status.planar_mode.label()),
+                                ("L3", "中立でr・θ移動 / XY移動を切替"),
                                 ("L2 / R2", "z下降 / z上昇"),
                                 ("↑ / ↓", "畳み機構を動かす"),
                                 ("← / →", "取得時開 / 把持閉"),

@@ -168,6 +168,22 @@ impl BridgeApp {
             }
         });
         ui.add_space(8.0);
+        panel().show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.label(RichText::new("XY移動").strong());
+            ui.horizontal_wrapped(|ui| {
+                ui.label("移動速度");
+                edited |= ui.add(egui::DragValue::new(&mut self.edit.xy.speed_mm_per_second)
+                    .range(1.0..=10000.0).speed(1.0).suffix(" mm/s")).changed();
+                ui.separator();
+                ui.label("半径オフセット");
+                edited |= ui.add(egui::DragValue::new(&mut self.edit.xy.radius_offset_mm)
+                    .range(0.0..=10000.0).speed(1.0).suffix(" mm")).changed();
+            });
+            ui.label(RichText::new("実際の旋回半径 = r座標 + 半径オフセット。r=0のときの旋回中心からEEまでの水平距離を入力してください。")
+                .size(12.0).color(MUTED));
+        });
+        ui.add_space(8.0);
         let selected = axes
             .iter()
             .find(|(name, _)| name == &self.tune_axis)

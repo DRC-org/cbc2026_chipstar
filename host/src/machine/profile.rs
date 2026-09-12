@@ -218,6 +218,8 @@ pub const PARAMETER_NAMES: [&str; 43] = [
 
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq)]
 pub struct MachineProfile {
+    #[serde(default, skip_serializing_if = "super::xy::XyProfile::is_default")]
+    pub xy: super::xy::XyProfile,
     /// 十字キーの左右が逆に報告されるコントローラの入力補正。
     #[serde(default)]
     pub swap_dpad_left_right: bool,
@@ -369,6 +371,7 @@ impl MachineProfile {
     }
 
     pub fn validate(&self) -> Result<()> {
+        self.xy.validate()?;
         if !self.homing_theta_deg.is_finite() || !(0.0..=180.0).contains(&self.homing_theta_deg) {
             bail!("ホーミング旋回角（homing_theta_deg）は0〜180°で指定してください");
         }

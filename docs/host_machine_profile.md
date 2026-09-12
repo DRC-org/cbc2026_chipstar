@@ -36,7 +36,7 @@ origin_position = 0.0
 ```
 
 `speed_per_second`を軸速度の唯一の設定値とする。hostは`native_per_unit`でEL05のrad/sまたはM3508のrpmへ換算し、CCTLの速度上限にも同じ値を設定する。
-スティック値×`input_sign`×`speed_per_second`が機体単位の速度になる。
+r・θ移動では、スティック値×`input_sign`×`speed_per_second`が機体単位の速度になる。
 `native_per_unit`を掛けて`JOG <slot> <速度>`として送る。
 位置目標をhostで積み上げない。入力の絶対値0.1未満は中立、L1は設定した低速率にする。
 L1を押したとき・離したときも、各軸の`jog_ramp_seconds`（GUIの「加減速時間」）で
@@ -51,6 +51,27 @@ slotは0..2で重複不可。機体座標の可動域はhostが一元管理す�
 「原点調整モード」は機体座標の可動域制限を外し、低速で原点へ移動するための操作。
 接点による方向制限は残る。原点調整中は位置のソフトリミットがないため、
 人間が経路と干渉を確認する。
+
+### XY移動の設定
+
+DualSenseの左スティックを固定XY座標で操作するための設定。省略時は速度100 mm/s、半径オフセット0 mm。
+画面では「調整 → アーム → XY移動」で編集できる。
+
+```toml
+[xy]
+speed_mm_per_second = 100.0
+radius_offset_mm = 0.0 # r=0のときの旋回中心からEEまでの水平距離を実測して設定
+```
+
+`radius_offset_mm`は0〜10000 mm。実際の旋回半径ρは`r + radius_offset_mm`で、
+r原点やリミット位置は変更しない。`speed_mm_per_second`は0より大きく10000 mm/s以下。
+各軸の`speed_per_second`はXY移動時も上限として使う。
+
+θ=0を正面（+Y）、右を+X、正のθを左回りとして、`x=-ρ sinθ, y=ρ cosθ`の速度逆変換を使う。
+XY入力はLX・LYに固定し、軸ごとの`input_axis`と`input_sign`は適用しない。
+モータの向き・単位換算には通常どおり`native_per_unit`を使う。
+斜め入力の速度を正規化し、固定XY座標で加減速してから、2軸に共通の倍率で速度・可動域を制限する。
+zとEEの入力割当は変わらない。
 
 ## 原点とリミットスイッチ
 

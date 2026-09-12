@@ -7,3 +7,4 @@ pub use profile::*;
 pub mod bonus;
 pub mod dc_motor;
 pub mod ee;
+pub mod xy;

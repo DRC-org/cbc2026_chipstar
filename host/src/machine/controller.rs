@@ -30,6 +30,7 @@ pub struct MachineController {
     moving: Vec<bool>,
     jog_velocity: Vec<f32>,
     jog_tick: Option<Instant>,
+    xy_velocity: [f32; 2],
 }
 
 impl MachineController {
@@ -43,6 +44,7 @@ impl MachineController {
             moving: vec![false; profile.axes.len()],
             jog_velocity: vec![0.0; profile.axes.len()],
             jog_tick: None,
+            xy_velocity: [0.0; 2],
             profile,
             targets,
         }
@@ -298,6 +300,7 @@ impl MachineController {
         self.moving = vec![false; self.profile.axes.len()];
         self.jog_velocity = vec![0.0; self.profile.axes.len()];
         self.jog_tick = None;
+        self.xy_velocity = [0.0; 2];
     }
 
     fn constrain_velocity(
@@ -387,6 +390,7 @@ impl MachineController {
     pub fn reset_jog(&mut self) {
         self.jog_velocity.fill(0.0);
         self.jog_tick = None;
+        self.xy_velocity = [0.0; 2];
     }
 
     pub fn ramped_jog_lines(
@@ -446,6 +450,17 @@ impl MachineController {
         slow: bool,
         dt: Option<f32>,
     ) -> Vec<String> {
+        self.jog_lines_with_xy(input, telemetry, slow, dt, None)
+    }
+
+    fn jog_lines_with_xy(
+        &mut self,
+        input: &ControllerState,
+        telemetry: &Telemetry,
+        slow: bool,
+        dt: Option<f32>,
+        xy: Option<[f32; 2]>,
+    ) -> Vec<String> {
         let mut lines = Vec::with_capacity(self.profile.axes.len());
         for i in 0..self.profile.axes.len() {
             let axis = &self.profile.axes[i];
@@ -463,7 +478,14 @@ impl MachineController {
                 * axis.input_sign
                 * self.profile.effective_axis_speed(axis)
                 * if slow { slow_scale } else { 1.0 };
-            if let Some(dt) = dt.filter(|_| axis.jog_ramp_seconds > 0.0) {
+            let planar = xy.and_then(|v| match axis.name.as_str() {
+                "r" => Some(v[0]),
+                "theta" => Some(v[1]),
+                _ => None,
+            });
+            if let Some(value) = planar {
+                velocity = value;
+            } else if let Some(dt) = dt.filter(|_| axis.jog_ramp_seconds > 0.0) {
                 let desired = self.braking_velocity(i, velocity, telemetry);
                 let delta = axis.speed_per_second / axis.jog_ramp_seconds * dt;
                 let previous = self.jog_velocity[i];
@@ -475,6 +497,14 @@ impl MachineController {
             }
             self.jog_velocity[i] = velocity;
             let measured = telemetry.slots[axis.slot as usize].measured;
+            if planar.is_some()
+                && (!measured.is_finite() || telemetry.stale_slots & (1 << axis.slot) != 0)
+            {
+                // 実測が欠けた瞬間は位置目標を作らず停止し、復帰時の位置を採用する。
+                self.moving[i] = true;
+                lines.push(format!("JOG {} 0.00000", axis.slot));
+                continue;
+            }
             if velocity != 0.0 {
                 self.targets[i] = (measured - self.origins_native[i]) / axis.native_per_unit;
                 self.moving[i] = true;
@@ -517,3 +547,5 @@ mod manual_tests;
 
 #[cfg(test)]
 mod ramp_tests;
+
+mod xy_control;

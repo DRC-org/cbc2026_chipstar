@@ -7,9 +7,34 @@ pub(super) struct Control {
     pub home_ready: bool,
     pub home_since: Option<Instant>,
     pub ee_armed: bool,
+    planar_ready: bool,
 }
 
 impl Runtime {
+    pub(super) fn planar_mode_blocker(&self) -> Option<&'static str> {
+        if self.emergency
+            || self.preparation.locked()
+            || self.homing.is_some()
+            || self.sequence.is_some()
+            || self.test.enabled
+            || self.sts.active
+            || self.sts.control_busy()
+            || self.drive.awaiting().is_some()
+        {
+            return Some("自動動作・個別テスト・開始待ちを終了してから切り替えてください");
+        }
+        if self.screen_control {
+            return Some("DualSense操作で使う移動モードです");
+        }
+        let input = self.authority.input().unwrap_or(&self.manual_input);
+        if input.axes.iter().any(|v| !v.is_finite() || v.abs() >= 0.1)
+            || !self.machine.jog_at_rest()
+        {
+            return Some("スティックとトリガーを中立に戻し、移動が止まってから切り替えてください");
+        }
+        None
+    }
+
     /// 機体側の入力補正は、押下検出・画面表示・各操作への振り分けより先に1回だけ行う。
     pub(super) fn read_gamepad(&mut self, mut input: ControllerState, now: Instant) -> Result<()> {
         if self.cfg.machine.swap_dpad_left_right {
@@ -22,6 +47,8 @@ impl Runtime {
         let previous = self.pad.previous;
         self.pad.previous = input.buttons;
         let buttons = input.buttons;
+        let planar_pressed = buttons[7] != 0 && previous[7] == 0 && self.pad.planar_ready;
+        self.pad.planar_ready = buttons[7] == 0;
         self.gamepad_input = Some(input.clone());
         // 停止は操作権に関係なく優先し、押下中は他の操作を受け付けない。
         if buttons[5] != 0 {
@@ -37,6 +64,22 @@ impl Runtime {
                     self.stop(false)?;
                 }
             }
+            return Ok(());
+        }
+        // L3は移動モード切替。R1+L3のボックス選択と、準備の決定操作を混ぜない。
+        if planar_pressed && buttons[10] == 0 && !self.authority.active() && !self.screen_control {
+            self.manual_input = input.clone();
+            let mode = match self.planar_mode {
+                crate::machine::xy::PlanarMode::Rtheta => "xy",
+                crate::machine::xy::PlanarMode::Xy => "rtheta",
+            };
+            self.request(
+                &Request {
+                    text: Some(mode.into()),
+                    ..Request::new("planar_mode")
+                },
+                true,
+            )?;
             return Ok(());
         }
         if self.read_guide(&input, now)? {
@@ -268,15 +311,18 @@ impl Runtime {
 }
 
 #[cfg(test)]
+mod xy_tests;
+
+#[cfg(test)]
 mod tests {
     use super::*;
-    fn runtime() -> Runtime {
+    pub(super) fn runtime() -> Runtime {
         let mut r = super::super::tests::screen_runtime();
         r.screen_control = false;
         r.gamepad_name = "DualSense test".into();
         r
     }
-    fn bonus_runtime() -> Runtime {
+    pub(super) fn bonus_runtime() -> Runtime {
         let mut r = runtime();
         let embedded = MachineProfile::embedded().unwrap();
         r.cfg.machine.dc_motors = embedded.dc_motors;

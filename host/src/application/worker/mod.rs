@@ -42,6 +42,7 @@ impl DriveState {
 }
 
 struct Runtime {
+    planar_mode: crate::machine::xy::PlanarMode,
     court: Option<Court>,
     preparation: PreparationPhase,
     guide: pad_guide::Guide,
@@ -104,6 +105,7 @@ impl Runtime {
     fn new(shared: Arc<Shared>) -> Self {
         let cfg = shared.config();
         Self {
+            planar_mode: crate::machine::xy::PlanarMode::default(),
             court: None,
             preparation: PreparationPhase::Setting,
             guide: pad_guide::Guide::default(),
@@ -861,12 +863,24 @@ impl Runtime {
                 let slow = self.adjustment
                     || (!self.authority.active() && self.screen_control)
                     || input.buttons[9] != 0;
-                let lines = self.machine.ramped_jog_lines(
-                    input,
-                    self.telemetry.as_ref().unwrap(),
-                    slow,
-                    now,
-                );
+                let lines = if self.planar_mode == crate::machine::xy::PlanarMode::Xy
+                    && !self.screen_control
+                    && !self.authority.active()
+                {
+                    self.machine.ramped_xy_jog_lines(
+                        input,
+                        self.telemetry.as_ref().unwrap(),
+                        slow,
+                        now,
+                    )
+                } else {
+                    self.machine.ramped_jog_lines(
+                        input,
+                        self.telemetry.as_ref().unwrap(),
+                        slow,
+                        now,
+                    )
+                };
                 for line in lines {
                     self.send(&line)?;
                 }
@@ -1366,6 +1380,16 @@ impl Runtime {
             .into();
             s.simulated = self.cfg.simulate;
             s.screen_control = self.screen_control;
+            s.planar_mode = self.planar_mode;
+            s.planar_mode_blocker = self.planar_mode_blocker().unwrap_or_default().into();
+            s.xy_blocker = if self.adjustment {
+                "原点調整中はr・θ移動を使ってください".into()
+            } else {
+                self.machine
+                    .xy_blocker(self.telemetry.as_ref())
+                    .unwrap_or_default()
+                    .into()
+            };
             s.connected = self.fresh();
             s.configured = self.setup && self.settings.ready() && !self.setup_error;
             s.ai_active = self.authority.active();
