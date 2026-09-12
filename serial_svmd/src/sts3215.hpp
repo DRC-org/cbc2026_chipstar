@@ -25,6 +25,7 @@ class Sts3215 {
     ServoError,
     UnsupportedMode,
     ReadbackMismatch,
+    FeedbackModeRequired,
   };
 
   using Target = domain::sts3215::Target;
@@ -69,6 +70,9 @@ class Sts3215 {
   // 複数サーボの目標値をブロードキャストで一括送信する（応答なし）。
   Result syncWriteTargets(const Target* targets, std::size_t count);
 
+  // 通常の位置指令と同じ多回転座標で読み出す。未設定時だけ、トルクOFFを
+  // 確認してPhaseのbit4を保存設定する。純粋なレジスタ診断にはread()を使う。
+  Result ensureMultiTurnFeedback(uint8_t id);
   Result readPosition(uint8_t id, uint16_t& position);
   Result writeVerified(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length);
   Result verifyReadback(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length);

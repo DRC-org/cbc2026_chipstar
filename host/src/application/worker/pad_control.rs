@@ -530,6 +530,16 @@ mod tests {
         r.drive = DriveState::Running;
         r.test.peers.insert("sts", Instant::now());
         let now = Instant::now();
+        r.servo_feedback.insert(
+            1,
+            ServoFeedback {
+                seen: now,
+                position: 1500,
+                absolute_position: true,
+                error: 0,
+                detail: String::new(),
+            },
+        );
         r.ee.rotation_field = -45.0;
         r.read_pad(ControllerState::default(), now).unwrap();
         let mut triangle = ControllerState::default();

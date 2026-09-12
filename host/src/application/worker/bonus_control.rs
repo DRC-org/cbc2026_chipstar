@@ -121,6 +121,7 @@ mod tests {
         r.servo_feedback.insert(
             id,
             ServoFeedback {
+                absolute_position: true,
                 seen: now,
                 position,
                 error: 0,

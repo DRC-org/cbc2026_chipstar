@@ -294,7 +294,7 @@ impl Simulator {
                                     7 => {
                                         let (position, enabled) =
                                             self.servos.get(&bytes[2]).copied().unwrap_or_default();
-                                        self.rx.push_back(format!("CAN_RX bus=2 id=802 data=01{:02X}{position:04X}{:02X}000000", bytes[2], u8::from(enabled)));
+                                        self.rx.push_back(format!("CAN_RX bus=2 id=802 data=01{:02X}{position:04X}{:02X}000100", bytes[2], u8::from(enabled)));
                                     }
                                     8 => self.rx.push_back(
                                         "CAN_RX bus=2 id=803 data=010000003F000000".into(),

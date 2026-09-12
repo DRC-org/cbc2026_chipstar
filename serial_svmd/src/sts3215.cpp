@@ -279,16 +279,47 @@ Sts3215::Result Sts3215::syncWriteRawTargets(const Target* targets, std::size_t 
                          static_cast<uint8_t>(offset));
 }
 
+Sts3215::Result Sts3215::ensureMultiTurnFeedback(uint8_t id) {
+  constexpr uint8_t PHASE = 18;
+  constexpr uint8_t LOCK = 55;
+  constexpr uint8_t MULTI_TURN_FEEDBACK = 0x10;
+  uint8_t phase = 0;
+  auto result = read(id, PHASE, &phase, 1);
+  if (result != Result::Ok || (phase & MULTI_TURN_FEEDBACK) != 0) return result;
+  uint8_t torque = 0;
+  result = read(id, proto::reg::TORQUE_ENABLE, &torque, 1);
+  if (result != Result::Ok) return result;
+  if (torque != 0) return Result::FeedbackModeRequired;
+  uint8_t lock = 0;
+  result = read(id, LOCK, &lock, 1);
+  if (result != Result::Ok) return result;
+  if (lock != 0) {
+    const uint8_t unlock = 0;
+    result = writeVerified(id, LOCK, &unlock, 1);
+  }
+  if (result == Result::Ok) {
+    phase |= MULTI_TURN_FEEDBACK;
+    result = writeVerified(id, PHASE, &phase, 1);
+  }
+  // unlock/Phaseの読戻しが失敗した場合も、変更前のロック状態へ戻す。
+  // もともと解除中ならロックへ書き込まない。
+  const auto restored = lock != 0 ? writeVerified(id, LOCK, &lock, 1) : Result::Ok;
+  return result == Result::Ok ? restored : result;
+}
+
 Sts3215::Result Sts3215::readPosition(uint8_t id, uint16_t& position) {
+  auto result = ensureMultiTurnFeedback(id);
+  if (result != Result::Ok) return result;
   uint8_t data[2];
-  const Result result = read(id, proto::reg::PRESENT_POSITION, data, sizeof(data));
+  result = read(id, proto::reg::PRESENT_POSITION, data, sizeof(data));
   if (result != Result::Ok) {
     return result;
   }
 
   position = proto::decodeUint16(data);
-  return position != 0x8000 && (position & 0x7fff) <= MAX_POSITION ? Result::Ok
-                                                                  : Result::ProtocolError;
+  // フィードバックは符号付き15bit全域を受け取る。指令の上限を適用すると
+  // 範囲外へ手で動かした実測位置まで読めず、現在地を把握できなくなる。
+  return position != 0x8000 ? Result::Ok : Result::ProtocolError;
 }
 
 Sts3215::Result Sts3215::writeVerified(uint8_t id, uint8_t address, const uint8_t* data, uint8_t length) {

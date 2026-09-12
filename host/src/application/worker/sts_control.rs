@@ -215,6 +215,12 @@ impl Runtime {
                 );
                 let id = self.sts.teach_id.context("較正を開始してください")?;
                 anyhow::ensure!(
+                    self.servo_feedback
+                        .get(&id)
+                        .is_some_and(|feedback| feedback.absolute_position && feedback.error == 0),
+                    "較正には内部絶対座標の確認が必要です。SerialSVMD FWを更新し位置応答を確認してください"
+                );
+                anyhow::ensure!(
                     self.machine
                         .axis_position("theta", self.telemetry.as_ref())
                         .is_some(),
@@ -380,7 +386,7 @@ impl Runtime {
                 .machine
                 .axis_position("theta", self.telemetry.as_ref())
                 .context("θの原点または実測値が失われたため取込を中止しました")?;
-            let position = position_read.expect("position read was decoded above");
+            let position = sts::decode_signed(value, 15);
             anyhow::ensure!(
                 self.fresh() && position.abs() <= 28672,
                 "較正には有効な多回転位置が必要です"

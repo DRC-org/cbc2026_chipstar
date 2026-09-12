@@ -96,6 +96,7 @@ struct PwmFeedback {
 struct ServoFeedback {
     seen: Instant,
     position: i32,
+    absolute_position: bool,
     error: u8,
     detail: String,
 }
@@ -566,6 +567,7 @@ impl Runtime {
                     ServoFeedback {
                         seen: Instant::now(),
                         position,
+                        absolute_position: false,
                         error: 0xFF,
                         detail: detail.clone(),
                     },
@@ -603,20 +605,26 @@ impl Runtime {
                 });
             }
             if let Some(servo) = crate::protocol::serial_svmd::parse_state(&line) {
-                // STS3215の実測値は4096カウントごとに折り返す。通常運転の再開時にも
-                // 同じ実測値を初回目標へ使えるよう、停止中を含めて連続位置に直す。
-                let position = self.sts.unwrap_position(servo.id, servo.position);
+                // 指令には基板が確認したサーボ内部座標だけを使う。
+                // hostのunwrap累積値はサーボの絶対位置と一致するとは限らない。
+                let position = servo.position;
                 self.servo_feedback.insert(
                     servo.id,
                     ServoFeedback {
                         seen: Instant::now(),
                         position,
+                        absolute_position: servo.absolute_position,
                         error: servo.error,
                         detail: format!(
-                            "位置={}、出力={}、エラー=0x{:02X}",
+                            "位置={}、出力={}、エラー=0x{:02X}{}",
                             position,
                             if servo.enabled { "有効" } else { "解除" },
-                            servo.error
+                            servo.error,
+                            if servo.absolute_position {
+                                ""
+                            } else {
+                                "・SerialSVMD FW更新が必要"
+                            }
                         ),
                     },
                 );
@@ -628,10 +636,15 @@ impl Runtime {
                     s.peripherals.insert(
                         format!("STS3215 ID {}", servo.id),
                         format!(
-                            "位置={} 出力={} エラーコード={}",
+                            "位置={} 出力={} エラーコード={}{}",
                             position,
                             if servo.enabled { "有効" } else { "解除" },
-                            servo.error
+                            servo.error,
+                            if servo.absolute_position {
+                                "（内部絶対座標）"
+                            } else {
+                                "（指令座標未確認・SerialSVMD FW更新が必要）"
+                            }
                         ),
                     );
                 });

@@ -119,6 +119,7 @@ TEST_CASE("応答を8 byteへ符号化する") {
     CHECK(frame[3] == 0x00);
     CHECK(frame[4] == 1);
     CHECK(frame[5] == 0x04);
+    CHECK(frame[6] == 1);
 
     encodeInputs(3, 1, 5, 63, frame);
     CHECK(frame[1] == 3);

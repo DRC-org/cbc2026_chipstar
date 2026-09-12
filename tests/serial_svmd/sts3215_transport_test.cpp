@@ -13,13 +13,14 @@ uint32_t ticks=0;
 std::array<uint8_t,256> regs;
 std::vector<std::vector<uint8_t>> sent;
 bool silent=false, noise=false, ignore_write=false;
+int ignored_write_address=-1;
 unsigned delayed_reads=0, dropped_writes=0, dropped_reads=0;
 std::vector<uint8_t> pending_write;
 uint8_t pending_address=0;
 uint8_t fault=0;
 bool receiver_stalled=false, fail_start=false, receive_error=false;
 unsigned receiver_starts=0;
-void reset() { regs.fill(0);regs[56]=0x34;regs[57]=0x08;sent.clear();ticks=0;silent=noise=ignore_write=false;fault=0;uart.ErrorCode=0;receiver_stalled=fail_start=receive_error=false;receiver_starts=0;delayed_reads=0;dropped_writes=0;dropped_reads=0;pending_write.clear(); }
+void reset() { regs.fill(0);regs[18]=0x1c;regs[56]=0x34;regs[57]=0x08;sent.clear();ticks=0;silent=noise=ignore_write=false;ignored_write_address=-1;fault=0;uart.ErrorCode=0;receiver_stalled=fail_start=receive_error=false;receiver_starts=0;delayed_reads=0;dropped_writes=0;dropped_reads=0;pending_write.clear(); }
 void append(const std::vector<uint8_t>& bytes) { for(auto b:bytes) {rx[head]=b;head=(head+1)%size;} dma.count=size-head; }
 void status(uint8_t id, const std::vector<uint8_t>& data, uint8_t error=0) {
  std::vector<uint8_t> p{255,255,id,static_cast<uint8_t>(data.size()+2),error};
@@ -43,12 +44,12 @@ HAL_StatusTypeDef HAL_UART_Transmit(UART_HandleTypeDef*,uint8_t* p,uint16_t n,ui
  if(silent) return HAL_OK;
  if(p[4]==0x83) {
   if(dropped_writes) {--dropped_writes;return HAL_OK;}
-  if(!ignore_write) {
+  if(!ignore_write && p[5]!=ignored_write_address) {
    if(delayed_reads) {pending_address=p[5];pending_write.assign(p+8,p+8+p[6]);}
    else std::memcpy(regs.data()+p[5],p+8,p[6]);
   }
  } else if(p[4]==3) {
-  if(!ignore_write) std::memcpy(regs.data()+p[5],p+6,n-7);
+  if(!ignore_write && p[5]!=ignored_write_address) std::memcpy(regs.data()+p[5],p+6,n-7);
   if(p[2]!=254)status(p[2],{},fault);
  } else if(p[4]==2) {
   if(dropped_reads) {--dropped_reads;return HAL_OK;}
@@ -92,7 +93,7 @@ TEST_CASE("一時的な読取り応答の欠落は受信再初期化と3回目�
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
  dropped_reads=2;uint16_t position=0;
  REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
- CHECK(position==2100);CHECK(sent.size()==3);CHECK(receiver_starts==3);
+ CHECK(position==2100);CHECK(sent.size()==4);CHECK(receiver_starts==3);
  for(const auto& packet:sent) CHECK(packet[4]==2);
  CHECK(ticks>=5000);
 }
@@ -153,15 +154,18 @@ TEST_CASE("読戻し時のサーボ保護異常は再試行しない") {
  CHECK(sent.size()==2);CHECK(bus.lastServoError()==4);
 }
 TEST_CASE("現在位置の目標を書いてからトルクを有効化する") {
- reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ reset();regs[18]=12;regs[55]=1;
+ Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
  REQUIRE(bus.preparePosition(1)==Sts3215::Result::Ok);
  CHECK(regs[42]==0x34);CHECK(regs[43]==0x08);CHECK(regs[40]==1);
- unsigned target=999,enable=999;
+ CHECK(regs[18]==28);CHECK(regs[55]==1);
+ unsigned phase=999,target=999,enable=999;
  for(unsigned i=0;i<sent.size();++i) if(sent[i][4]==0x83) {
+  if(sent[i][5]==18) phase=i;
   if(sent[i][5]==41) target=i;
   if(sent[i][5]==40&&sent[i][8]==1)enable=i;
  }
- CHECK(target<enable);
+ CHECK(phase<target);CHECK(target<enable);
 }
 TEST_CASE("速度モードやサーボ異常では位置操作を開始しない") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
@@ -169,7 +173,54 @@ TEST_CASE("速度モードやサーボ異常では位置操作を開始しない
  regs[33]=0;fault=4;CHECK(bus.preparePosition(1)==Sts3215::Result::ServoError);CHECK(bus.lastServoError()==4);
  fault=0;uint16_t pos=0;CHECK(bus.readPosition(1,pos)==Sts3215::Result::Ok);CHECK(bus.lastServoError()==0);
  regs[56]=0x00;regs[57]=0x98;CHECK(bus.readPosition(1,pos)==Sts3215::Result::Ok);CHECK(pos==0x9800);
- regs[56]=0x01;regs[57]=0xF0;CHECK(bus.readPosition(1,pos)==Sts3215::Result::ProtocolError);
+ regs[56]=0x01;regs[57]=0xF0;CHECK(bus.readPosition(1,pos)==Sts3215::Result::Ok);CHECK(pos==0xF001);
+ regs[56]=0x00;regs[57]=0x80;CHECK(bus.readPosition(1,pos)==Sts3215::Result::ProtocolError);
+}
+TEST_CASE("多回転位置の準備は脱力中だけPhase bit4を設定し元のロックへ戻す") {
+ reset();regs[18]=12;regs[55]=1;regs[56]=0x30;regs[57]=0x75;
+ Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ uint16_t position=0;REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
+ CHECK(position==30000);CHECK(regs[18]==28);CHECK(regs[55]==1);CHECK(regs[40]==0);
+ std::vector<std::vector<uint8_t>> writes;
+ for(const auto& packet:sent) if(packet[4]==0x83) writes.push_back(packet);
+ REQUIRE(writes.size()==3);
+ CHECK(writes[0][5]==55);CHECK(writes[0][8]==0);
+ CHECK(writes[1][5]==18);CHECK(writes[1][8]==28);
+ CHECK(writes[2][5]==55);CHECK(writes[2][8]==1);
+ sent.clear();REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
+ for(const auto& packet:sent) CHECK(packet[4]==2);
+}
+TEST_CASE("Phase設定済みの有効なサーボへ書き込まず未設定なら出力状態を変更しない") {
+ reset();regs[40]=1;Sts3215 bus(&uart,20,false);
+ REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ uint16_t position=0;REQUIRE(bus.readPosition(1,position)==Sts3215::Result::Ok);
+ regs[18]=12;sent.clear();
+ CHECK(bus.readPosition(1,position)==Sts3215::Result::FeedbackModeRequired);
+ CHECK(regs[18]==12);CHECK(regs[40]==1);
+ for(const auto& packet:sent) CHECK(packet[4]==2);
+}
+TEST_CASE("Phase設定時の読戻し不一致でも元のEEPROMロックを復元する") {
+ reset();regs[18]=12;regs[55]=1;ignored_write_address=18;
+ Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ uint16_t position=0;
+ CHECK(bus.readPosition(1,position)==Sts3215::Result::ReadbackMismatch);
+ CHECK(regs[18]==12);CHECK(regs[55]==1);CHECK(regs[40]==0);
+ CHECK(bus.lastReadbackMismatch().address==18);
+ unsigned phase_writes=0;
+ for(const auto& packet:sent) if(packet[4]==0x83) {
+  CHECK((packet[5]==18 || packet[5]==55));
+  phase_writes+=packet[5]==18;
+ }
+ CHECK(phase_writes==1);
+}
+TEST_CASE("元から解除中のEEPROMロックを維持し診断レジスタREADは設定を変更しない") {
+ reset();regs[18]=12;Sts3215 bus(&uart,20,false);
+ REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);
+ uint8_t raw[2]{};REQUIRE(bus.read(1,56,raw,2)==Sts3215::Result::Ok);
+ CHECK(regs[18]==12);for(const auto& packet:sent) CHECK(packet[4]==2);
+ sent.clear();REQUIRE(bus.ensureMultiTurnFeedback(1)==Sts3215::Result::Ok);
+ CHECK(regs[18]==28);CHECK(regs[55]==0);
+ for(const auto& packet:sent) if(packet[4]==0x83) CHECK(packet[5]==18);
 }
 TEST_CASE("目標の符号化が公式SDKの7byte指令と一致する") {
  reset();Sts3215 bus(&uart,20,false);REQUIRE(bus.startReceiver()==Sts3215::Result::Ok);

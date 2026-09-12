@@ -217,7 +217,7 @@ impl BridgeApp {
                 egui::ComboBox::from_id_salt("sts-metric").selected_text(METRICS[self.sts_ui.metric]).show_ui(ui, |ui| { for (index, label) in METRICS.iter().enumerate() { ui.selectable_value(&mut self.sts_ui.metric, index, *label); } });
             });
             if let Some(s) = status.sts.samples.iter().rev().find(|s| s.id == self.sts_ui.id) {
-                ui.label(format!("最終受信 {} ms前 · 位置 {} · 速度 {} · 負荷 {} · {:.1} V · {} °C · 電流 {:.1} mA · {}", status.sts.elapsed_ms.saturating_sub(s.elapsed_ms), s.position, s.speed, s.load, s.voltage, s.temperature, s.current_ma, if s.moving { "移動中" } else { "停止中" }));
+                ui.label(format!("最終受信 {} ms前 · 表示累積位置 {} · 速度 {} · 負荷 {} · {:.1} V · {} °C · 電流 {:.1} mA · {}", status.sts.elapsed_ms.saturating_sub(s.elapsed_ms), s.position, s.speed, s.load, s.voltage, s.temperature, s.current_ma, if s.moving { "移動中" } else { "停止中" }));
             }
             plot(ui, &status.sts.samples, self.sts_ui.id, self.sts_ui.metric);
             ui.label(RichText::new("電流はサーボの報告値を6.5 mA/countで換算しています。").size(12.0).color(MUTED));

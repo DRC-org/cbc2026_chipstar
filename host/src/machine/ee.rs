@@ -65,10 +65,13 @@ impl Axis {
 
     /// フィールド基準角[deg]と現在θ[deg]から、θ回転を打ち消した先端回転の
     /// STS位置カウントを求める。count = zero0 + cpds×(field − θ)。
-    pub fn rotation_count(&self, field_deg: f32, theta_deg: f32) -> i16 {
-        (self.zero0_count + self.counts_per_deg * (field_deg - theta_deg))
-            .round()
-            .clamp(-28672.0, 28672.0) as i16
+    pub fn rotation_count(&self, field_deg: f32, theta_deg: f32) -> Result<i16> {
+        let count = (self.zero0_count + self.counts_per_deg * (field_deg - theta_deg)).round();
+        ensure!(
+            count.is_finite() && (-28672.0..=28672.0).contains(&count),
+            "EE回転目標 {count} はSTS指令範囲 -28672〜28672 の外です。停止して座標を確認してください"
+        );
+        Ok(count as i16)
     }
 
     /// 先端回転のSTS指令行。initialのときだけトルク有効化とRUNも添える。
@@ -236,12 +239,12 @@ mod tests {
             counts_per_deg: 10.0,
         };
         // θ=0では field角×cpds のオフセット。
-        assert_eq!(axis.rotation_count(0.0, 0.0), 1024);
-        assert_eq!(axis.rotation_count(180.0, 0.0), 2824);
+        assert_eq!(axis.rotation_count(0.0, 0.0).unwrap(), 1024);
+        assert_eq!(axis.rotation_count(180.0, 0.0).unwrap(), 2824);
         // θが+10degなら cpds×(−θ)= −100 ずれてフィールド基準を保つ。
-        assert_eq!(axis.rotation_count(0.0, 10.0), 924);
-        assert_eq!(axis.rotation_count(180.0, -3000.0), 28672);
-        assert_eq!(axis.rotation_count(0.0, 3000.0), -28672);
+        assert_eq!(axis.rotation_count(0.0, 10.0).unwrap(), 924);
+        assert!(axis.rotation_count(180.0, -3000.0).is_err());
+        assert!(axis.rotation_count(0.0, 3000.0).is_err());
     }
 
     #[test]
@@ -261,8 +264,8 @@ mod tests {
             zero0_count: 1024.0,
             counts_per_deg: 4096.0 * 3.0 / 360.0,
         };
-        assert_eq!(axis.rotation_count(0.0, -82.5), 3840);
-        assert_eq!(axis.rotation_count(180.0, -82.5), 9984);
+        assert_eq!(axis.rotation_count(0.0, -82.5).unwrap(), 3840);
+        assert_eq!(axis.rotation_count(180.0, -82.5).unwrap(), 9984);
         assert!(axis.rotation_command(9984, false)[0].contains("2700"));
     }
 }

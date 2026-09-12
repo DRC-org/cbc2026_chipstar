@@ -123,7 +123,7 @@ void encodePosition(uint8_t id, uint16_t position, bool enabled, uint8_t error, 
     putBe16(position, &out[2]);
     out[4] = enabled ? 1 : 0;
     out[5] = error;
-    out[6] = 0;
+    out[6] = 1;  // Phase bit4を確認したサーボ内部絶対座標。
     out[7] = 0;
 }
 

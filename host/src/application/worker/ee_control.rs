@@ -76,6 +76,14 @@ impl Runtime {
             "先端回転の角度換算が設定されていません"
         );
         let count = i16::try_from(feedback.position).context("EEサーボ位置が指令範囲外です")?;
+        anyhow::ensure!(
+            feedback.absolute_position,
+            "EEの内部絶対座標を確認できません。SerialSVMD FWを更新してください"
+        );
+        anyhow::ensure!(
+            count.unsigned_abs() <= 28672,
+            "EE現在位置がSTS指令範囲外です。停止したままサーボ座標を確認してください"
+        );
         let theta = self
             .machine
             .axis_position("theta", self.telemetry.as_ref())
@@ -173,18 +181,22 @@ impl Runtime {
             "先端回転の角度換算が設定されていません"
         );
         let count = i16::try_from(feedback.position).context("EEサーボ位置が指令範囲外です")?;
+        anyhow::ensure!(
+            feedback.absolute_position,
+            "EEの内部絶対座標を確認できません。SerialSVMD FWを更新してください"
+        );
+        anyhow::ensure!(
+            count.unsigned_abs() <= 28672,
+            "EE現在位置がSTS指令範囲外です。停止したままサーボ座標を確認してください"
+        );
         let theta = self
             .machine
             .axis_position("theta", self.telemetry.as_ref())
             .context("θ原点を確認してください")?;
-        let count = if let Some(field) = self.prepared_rotation_field {
-            self.ee.rotation_field = field;
-            axis.rotation_count(field, theta)
-        } else {
-            self.ee.rotation_field =
-                theta + (f32::from(count) - axis.zero0_count) / axis.counts_per_deg;
-            count
-        };
+        self.ee.rotation_field = self
+            .prepared_rotation_field
+            .unwrap_or(theta + (f32::from(count) - axis.zero0_count) / axis.counts_per_deg);
+        let count = axis.rotation_count(self.ee.rotation_field, theta)?;
         self.prepared_rotation_field = None;
         self.ee.targets.insert(axis.name.clone(), f32::from(count));
         self.ee
@@ -315,12 +327,24 @@ impl Runtime {
             "{}の基板応答を待ってください",
             axis.label
         );
-        self.ee.rotation_field = field_deg;
+        let Target::Sts(id) = axis.target else {
+            bail!("EE回転にはSTSを設定してください");
+        };
+        anyhow::ensure!(
+            self.servo_feedback
+                .get(&id)
+                .is_some_and(|feedback| feedback.absolute_position
+                    && feedback.position.unsigned_abs() <= 28672
+                    && feedback.error == 0
+                    && feedback.seen.elapsed() < Duration::from_millis(500)),
+            "EEの内部絶対座標を確認できません。SerialSVMD FWと位置応答を確認してください"
+        );
         let theta = self
             .machine
             .axis_position("theta", self.telemetry.as_ref())
             .unwrap_or(0.0);
-        let count = axis.rotation_count(field_deg, theta);
+        let count = axis.rotation_count(field_deg, theta)?;
+        self.ee.rotation_field = field_deg;
         let first = !self.ee.targets.contains_key(&axis.name);
         self.ee.targets.insert(axis.name.clone(), f32::from(count));
         self.ee
@@ -457,7 +481,7 @@ impl Runtime {
                 .machine
                 .axis_position("theta", self.telemetry.as_ref())
                 .unwrap_or(0.0);
-            let count = axis.rotation_count(self.ee.rotation_field, theta);
+            let count = axis.rotation_count(self.ee.rotation_field, theta)?;
             if self.ee.sent.get(&axis.name).is_none_or(|(value, sent)| {
                 *value != f32::from(count) && now.duration_since(*sent) >= Duration::from_millis(50)
             }) {
@@ -513,6 +537,52 @@ impl Runtime {
 mod tests {
     use super::*;
 
+    fn rotation_runtime(position: i16) -> Runtime {
+        let mut runtime = crate::application::worker::tests::screen_runtime();
+        runtime.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
+        receive_rotation_position(&mut runtime, position);
+        runtime
+    }
+
+    fn receive_rotation_position(runtime: &mut Runtime, position: i16) {
+        use crate::protocol::serial_svmd::Command;
+        // 模擬サーボへ実測位置を与え、通常の802受信経路を通す。
+        runtime
+            .link
+            .write_line(
+                &Command::Target {
+                    id: 1,
+                    position,
+                    speed: 1000,
+                    acceleration: 0,
+                }
+                .to_cctl_line(),
+            )
+            .unwrap();
+        runtime
+            .link
+            .write_line(&Command::Read { id: 1 }.to_cctl_line())
+            .unwrap();
+        runtime.receive().unwrap();
+        assert_eq!(runtime.servo_feedback[&1].position, i32::from(position));
+        assert!(runtime.servo_feedback[&1].absolute_position);
+    }
+
+    fn rotation_targets_since(runtime: &Runtime, before: usize) -> Vec<i32> {
+        runtime
+            .shared
+            .status_snapshot()
+            .logs
+            .iter()
+            .skip(before)
+            .filter_map(|line| {
+                let payload = line.strip_prefix("TX CAN 2 800 010401")?;
+                let raw = u16::from_str_radix(&payload[2..6], 16).unwrap();
+                Some(crate::application::sts::decode_signed(raw, 15))
+            })
+            .collect()
+    }
+
     #[test]
     fn normal_run_starts_rotation_tracking_from_measured_position_without_triangle() {
         let mut r = crate::application::worker::tests::screen_runtime();
@@ -523,6 +593,7 @@ mod tests {
         r.servo_feedback.insert(
             1,
             ServoFeedback {
+                absolute_position: true,
                 seen: now,
                 position: 1500,
                 error: 0,
@@ -561,39 +632,102 @@ mod tests {
     }
 
     #[test]
-    fn stop_and_restart_keeps_the_unwrapped_rotation_position() {
-        let mut r = crate::application::worker::tests::screen_runtime();
-        r.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
-        let now = Instant::now();
-        r.test.peers.insert("sts", now);
-
-        assert_eq!(r.sts.unwrap_position(1, 4085), 4085);
-        r.ee.targets.insert("ee_rotation".into(), 4085.0);
-        r.stop(false).unwrap();
-
-        let position = r.sts.unwrap_position(1, 0);
-        assert_eq!(position, 4096);
-        r.servo_feedback.insert(
-            1,
-            ServoFeedback {
-                seen: now,
-                position,
-                error: 0,
-                detail: String::new(),
-            },
-        );
-        r.drive = DriveState::Running;
-
-        r.tick_ee(now).unwrap();
-
-        assert_eq!(r.ee.targets["ee_rotation"], 4096.0);
-        assert!(
-            r.shared
-                .status_snapshot()
-                .logs
+    fn homing_and_restart_use_internal_position_instead_of_accumulated_display() {
+        for theta_offset in [-90.0, 90.0] {
+            let mut r = rotation_runtime(609);
+            assert_eq!(r.sts.unwrap_position(1, 609), 609);
+            for _ in 0..8 {
+                for raw in [1609, 2609, 3609, 609] {
+                    r.sts.unwrap_position(1, raw);
+                }
+            }
+            assert_eq!(r.sts.unwrap_position(1, 609), 33377);
+            receive_rotation_position(&mut r, 609);
+            let now = Instant::now();
+            let field = r.measured_rotation_field(now).unwrap().unwrap();
+            r.stop(false).unwrap();
+            r.prepared_rotation_field = Some(field);
+            let theta = r
+                .cfg
+                .machine
+                .axes
                 .iter()
-                .any(|line| { line.starts_with("TX CAN 2 800 010401") && line.contains("1000") })
-        );
+                .find(|axis| axis.name == "theta")
+                .unwrap();
+            let slot = usize::from(theta.slot);
+            let theta_native_offset = theta.native_per_unit * theta_offset;
+            r.telemetry.as_mut().unwrap().slots[slot].measured += theta_native_offset;
+            r.drive = DriveState::Running;
+            let before = r.shared.status_snapshot().logs.len();
+
+            r.tick_ee(now).unwrap();
+
+            let expected = if theta_offset > 0.0 { -2463 } else { 3681 };
+            assert_eq!(r.ee.targets["ee_rotation"], expected as f32);
+            assert_eq!(rotation_targets_since(&r, before), vec![expected]);
+            assert!((r.ee.rotation_field - field).abs() < 0.001);
+            assert!(r.prepared_rotation_field.is_none());
+            assert_eq!(r.sts.unwrap_position(1, 609), 33377);
+
+            r.telemetry.as_mut().unwrap().slots[slot].measured -= theta_native_offset;
+            r.tick_ee(now + Duration::from_millis(60)).unwrap();
+            assert_eq!(r.ee.targets["ee_rotation"], 609.0);
+            r.stop(false).unwrap();
+            r.drive = DriveState::Running;
+            let before = r.shared.status_snapshot().logs.len();
+            r.tick_ee(now + Duration::from_millis(120)).unwrap();
+            assert_eq!(rotation_targets_since(&r, before), vec![609]);
+        }
+    }
+
+    #[test]
+    fn unconfirmed_or_out_of_range_internal_position_never_sends_rotation_target() {
+        for (position, absolute) in [(609, false), (30000, true), (-30000, true)] {
+            for prepared in [None, Some(0.0)] {
+                let mut r = rotation_runtime(position);
+                r.servo_feedback.get_mut(&1).unwrap().absolute_position = absolute;
+                r.prepared_rotation_field = prepared;
+                r.drive = DriveState::Running;
+                let now = Instant::now();
+                let before = r.shared.status_snapshot().logs.len();
+
+                assert!(r.measured_rotation_field(now).is_err());
+                assert!(
+                    r.tick_ee(now).is_err(),
+                    "position={position}, prepared={prepared:?}"
+                );
+                assert!(r.rotation_request(0.0).is_err());
+                assert!(r.ee.targets.is_empty());
+                assert!(rotation_targets_since(&r, before).is_empty());
+            }
+        }
+    }
+
+    #[test]
+    fn out_of_range_rotation_requests_and_theta_tracking_fail_before_target_send() {
+        let mut r = rotation_runtime(609);
+        r.drive = DriveState::Running;
+        let now = Instant::now();
+        r.tick_ee(now).unwrap();
+        let field = r.ee.rotation_field;
+        let before = r.shared.status_snapshot().logs.len();
+        for invalid in [1000.0, -1000.0, f32::NAN, f32::INFINITY] {
+            assert!(r.rotation_request(invalid).is_err());
+            assert_eq!(r.ee.rotation_field, field);
+            assert_eq!(r.ee.targets["ee_rotation"], 609.0);
+        }
+        let theta = r
+            .cfg
+            .machine
+            .axes
+            .iter()
+            .find(|axis| axis.name == "theta")
+            .unwrap();
+        r.telemetry.as_mut().unwrap().slots[usize::from(theta.slot)].measured +=
+            theta.native_per_unit * 1000.0;
+        assert!(r.tick_ee(now + Duration::from_millis(60)).is_err());
+        assert_eq!(r.ee.targets["ee_rotation"], 609.0);
+        assert!(rotation_targets_since(&r, before).is_empty());
     }
 
     #[test]
@@ -606,6 +740,7 @@ mod tests {
         r.servo_feedback.insert(
             1,
             ServoFeedback {
+                absolute_position: true,
                 seen: now,
                 position: 1500,
                 error: 0,
@@ -622,7 +757,7 @@ mod tests {
             .into_iter()
             .find(|axis| axis.name == "ee_rotation")
             .unwrap();
-        let expected = axis.rotation_count(field, theta);
+        let expected = axis.rotation_count(field, theta).unwrap();
 
         r.tick_ee(now).unwrap();
 

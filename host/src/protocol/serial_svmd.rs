@@ -97,6 +97,7 @@ pub struct ServoState {
     pub position: i32,
     pub enabled: bool,
     pub error: u8,
+    pub absolute_position: bool,
 }
 
 pub fn parse_state(line: &str) -> Option<ServoState> {
@@ -113,6 +114,7 @@ pub fn parse_state(line: &str) -> Option<ServoState> {
         position: decode_signed(u16::from(byte(2)?) << 8 | u16::from(byte(3)?)),
         enabled: byte(4)? != 0,
         error: byte(5)?,
+        absolute_position: byte(6)? & 1 != 0,
     })
 }
 
@@ -148,6 +150,7 @@ pub fn parse_diagnostic(line: &str) -> Option<(u8, String)> {
         6 => "サーボ保護状態",
         7 => "位置モードではありません（Mode=0が必要）",
         8 => "書込み値と読戻し値の不一致",
+        9 => "多回転位置の読取り準備が必要です。STSを停止して再確認してください",
         _ => "未定義の通信結果",
     };
     let mut detail = format!("{result} / HAL={} / error=0x{:02X}", byte(3)?, byte(4)?);
@@ -233,9 +236,15 @@ mod tests {
                 position: 2048,
                 enabled: true,
                 error: 4,
+                absolute_position: false,
             })
         );
         assert!(parse_state("CAN_RX bus=2 id=801 data=0100000000000000").is_none());
+        assert!(
+            parse_state("CAN_RX bus=2 id=802 data=0101026100000100")
+                .unwrap()
+                .absolute_position
+        );
         assert_eq!(
             parse_state("CAN_RX bus=2 id=802 data=010C980001000000")
                 .unwrap()

@@ -167,6 +167,7 @@ fn can_status_distinguishes_serial_svmd_board_from_servo_feedback() {
     runtime.servo_feedback.insert(
         1,
         ServoFeedback {
+            absolute_position: true,
             seen: Instant::now(),
             position: 2048,
             error: 0,
