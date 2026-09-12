@@ -82,7 +82,6 @@ struct Runtime {
     c620_scan: Option<(u8, Instant)>,
     pwm_feedback: std::collections::BTreeMap<u8, PwmFeedback>,
     servo_feedback: std::collections::BTreeMap<u8, ServoFeedback>,
-    prepared_rotation_field: Option<f32>,
     last_servo_health_poll: Option<Instant>,
     servo_health_poll_index: usize,
 }
@@ -144,7 +143,6 @@ impl Runtime {
             c620_scan: None,
             pwm_feedback: std::collections::BTreeMap::new(),
             servo_feedback: std::collections::BTreeMap::new(),
-            prepared_rotation_field: None,
             last_servo_health_poll: None,
             servo_health_poll_index: 0,
         }

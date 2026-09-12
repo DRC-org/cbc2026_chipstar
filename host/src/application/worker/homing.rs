@@ -375,7 +375,8 @@ impl Runtime {
             );
             if matches!(phase, Phase::AwaitHold) {
                 if t.mode == RunMode::Run && t.enabled_slots == holding {
-                    self.prepared_rotation_field = home.rotation_field;
+                    self.ee.prepared_rotation_field = home.rotation_field;
+                    self.ee.preparation_hold_since = home.rotation_field.map(|_| now);
                     self.front_return_pending = Some(home.timeout_seconds);
                     self.homing = None;
                     self.reason = "ホーミング完了。rを後退し、θ・zを保持しています".into();
@@ -932,7 +933,7 @@ mod tests {
             .find(|axis| axis.name == "ee_rotation")
             .unwrap();
         let expected_field = (1500.0 - axis.zero0_count) / axis.counts_per_deg;
-        assert!((r.prepared_rotation_field.unwrap() - expected_field).abs() < f32::EPSILON);
+        assert!((r.ee.prepared_rotation_field.unwrap() - expected_field).abs() < f32::EPSILON);
         assert!(!r.drive.running());
         assert_eq!(r.front_return_pending, Some(180.0));
         let logs = r.shared.status_snapshot().logs;
@@ -951,6 +952,35 @@ mod tests {
         assert!(
             logs.iter()
                 .any(|l| l == &format!("TX TARGET 1 {theta_native:.5}"))
+        );
+        // ホーミング中はEEを動かさず、完了直後に操縦開始を待たずにフィールド角を復元する。
+        assert!(
+            !logs
+                .iter()
+                .any(|line| line.starts_with("TX CAN 2 800 010401"))
+        );
+        let completed_at = now + Duration::from_millis(50);
+        r.servo_feedback.get_mut(&1).unwrap().seen = completed_at;
+        r.test.peers.insert("sts", completed_at);
+        r.tick_ee(completed_at).unwrap();
+        assert_eq!(r.ee.rotation_field, expected_field);
+        assert_eq!(r.ee.targets.len(), 1);
+        assert_eq!(
+            r.ee.targets["ee_rotation"],
+            f32::from(axis.rotation_count(expected_field, expected_theta).unwrap())
+        );
+        assert!(!r.drive.running() && r.drive.awaiting().is_none());
+        assert_eq!(r.front_return_pending, Some(180.0));
+        assert!(
+            r.shared
+                .status_snapshot()
+                .logs
+                .iter()
+                .skip(logs.len())
+                .all(|line| !line.starts_with("TX RUN")
+                    && !line.starts_with("TX ENABLE")
+                    && !line.starts_with("TX JOG")
+                    && !line.starts_with("TX TARGET"))
         );
         let origins = r.machine.origin_states(r.telemetry.as_ref());
         let r_origin = r

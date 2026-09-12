@@ -2,6 +2,10 @@ use super::*;
 use crate::{diagnostics::individual::Target, machine::ee};
 use std::collections::BTreeMap;
 
+#[cfg(test)]
+#[path = "ee_preparation_tests.rs"]
+mod preparation_tests;
+
 fn pwm_step(
     previous: f32,
     goal: f32,
@@ -38,6 +42,9 @@ pub(super) struct Control {
     tick: Option<Instant>,
     poll: Option<Instant>,
     pwm_arming_since: BTreeMap<String, Instant>,
+    /// ホーミング完了後は操縦開始前から回転軸だけを保持する。停止時に一緒に解除する。
+    pub(super) preparation_hold_since: Option<Instant>,
+    pub(super) prepared_rotation_field: Option<f32>,
     /// 先端回転のフィールド基準角[deg]。運転開始時は実測姿勢を採用し、△で180°反転する。
     pub(super) rotation_field: f32,
 }
@@ -144,10 +151,10 @@ impl Runtime {
         Ok(())
     }
 
-    /// 通常運転へ入った時点の実測姿勢をそのままフィールド基準として採用し、
-    /// 最初からθ追従を有効にする。実測と同じカウントを初回目標にするため急動作しない。
+    /// ホーミング完了後は保存したフィールド角を復元し、操縦開始前からθ追従する。
+    /// 通常の再開時は、その時点の実測姿勢を採用する。
     fn start_rotation_tracking(&mut self, now: Instant) -> Result<()> {
-        if !self.drive.running()
+        if (!self.drive.running() && self.ee.preparation_hold_since.is_none())
             || self.sequence.is_some()
             || self.ee.targets.contains_key("ee_rotation")
         {
@@ -194,10 +201,11 @@ impl Runtime {
             .axis_position("theta", self.telemetry.as_ref())
             .context("θ原点を確認してください")?;
         self.ee.rotation_field = self
+            .ee
             .prepared_rotation_field
             .unwrap_or(theta + (f32::from(count) - axis.zero0_count) / axis.counts_per_deg);
         let count = axis.rotation_count(self.ee.rotation_field, theta)?;
-        self.prepared_rotation_field = None;
+        self.ee.prepared_rotation_field = None;
         self.ee.targets.insert(axis.name.clone(), f32::from(count));
         self.ee
             .sent
@@ -405,6 +413,29 @@ impl Runtime {
         Ok(())
     }
     pub(super) fn tick_ee(&mut self, now: Instant) -> Result<()> {
+        if self.drive.running() {
+            self.ee.preparation_hold_since = None;
+        } else if let Some(since) = self.ee.preparation_hold_since {
+            anyhow::ensure!(
+                !self.emergency
+                    && !self.test.enabled
+                    && !self.sts.active
+                    && !self.sts.busy()
+                    && self
+                        .homing
+                        .as_ref()
+                        .is_none_or(|home| home.is_front_return())
+                    && self.ee.targets.keys().all(|name| name == "ee_rotation")
+                    && self.ee.goals.is_empty(),
+                "セッティング姿勢でのEE保持を継続できません"
+            );
+            self.ready()?;
+            anyhow::ensure!(
+                self.ee.targets.contains_key("ee_rotation")
+                    || now.saturating_duration_since(since) < Duration::from_millis(500),
+                "セッティング姿勢でEE保持を開始するための位置応答がありません"
+            );
+        }
         let dt = self
             .ee
             .tick
@@ -416,7 +447,7 @@ impl Runtime {
             return Ok(());
         }
         anyhow::ensure!(
-            self.drive.running() && self.fresh(),
+            (self.drive.running() || self.ee.preparation_hold_since.is_some()) && self.fresh(),
             "EE操作中に通常運転または通信を失いました"
         );
         let axes = ee::axes(&self.cfg.machine);
@@ -646,7 +677,7 @@ mod tests {
             let now = Instant::now();
             let field = r.measured_rotation_field(now).unwrap().unwrap();
             r.stop(false).unwrap();
-            r.prepared_rotation_field = Some(field);
+            r.ee.prepared_rotation_field = Some(field);
             let theta = r
                 .cfg
                 .machine
@@ -666,7 +697,7 @@ mod tests {
             assert_eq!(r.ee.targets["ee_rotation"], expected as f32);
             assert_eq!(rotation_targets_since(&r, before), vec![expected]);
             assert!((r.ee.rotation_field - field).abs() < 0.001);
-            assert!(r.prepared_rotation_field.is_none());
+            assert!(r.ee.prepared_rotation_field.is_none());
             assert_eq!(r.sts.unwrap_position(1, 609), 33377);
 
             r.telemetry.as_mut().unwrap().slots[slot].measured -= theta_native_offset;
@@ -686,7 +717,7 @@ mod tests {
             for prepared in [None, Some(0.0)] {
                 let mut r = rotation_runtime(position);
                 r.servo_feedback.get_mut(&1).unwrap().absolute_position = absolute;
-                r.prepared_rotation_field = prepared;
+                r.ee.prepared_rotation_field = prepared;
                 r.drive = DriveState::Running;
                 let now = Instant::now();
                 let before = r.shared.status_snapshot().logs.len();
@@ -748,7 +779,7 @@ mod tests {
             },
         );
         let field = 0.0;
-        r.prepared_rotation_field = Some(field);
+        r.ee.prepared_rotation_field = Some(field);
         let theta = r
             .machine
             .axis_position("theta", r.telemetry.as_ref())
@@ -763,7 +794,7 @@ mod tests {
 
         assert_eq!(r.ee.rotation_field, field);
         assert_eq!(r.ee.targets["ee_rotation"], f32::from(expected));
-        assert!(r.prepared_rotation_field.is_none());
+        assert!(r.ee.prepared_rotation_field.is_none());
     }
 
     #[test]

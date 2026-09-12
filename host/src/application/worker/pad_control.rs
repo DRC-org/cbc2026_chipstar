@@ -295,7 +295,9 @@ impl Runtime {
     }
 
     pub(super) fn disconnect_pad(&mut self) {
-        if (!self.authority.active() && !self.screen_control && self.drive.running())
+        if (!self.authority.active()
+            && !self.screen_control
+            && (self.drive.running() || self.ee.preparation_hold_since.is_some()))
             || self.homing.is_some()
         {
             self.fault("DualSenseが切断されました".into());
