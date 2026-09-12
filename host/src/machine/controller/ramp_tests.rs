@@ -122,3 +122,70 @@ fn switch_and_stop_reset_override_a_pending_ramp() {
     t.contacts = Some(1);
     assert!(step(&mut m, &retreat, &t, start + Duration::from_millis(1020)) < 0.0);
 }
+
+#[test]
+fn slow_press_release_and_repeated_toggle_keep_all_axis_commands_ramped() {
+    let profile = MachineProfile::embedded().unwrap();
+    for configured_axis in &profile.axes {
+        for direction in [-1.0, 1.0] {
+            let mut axis = configured_axis.clone();
+            axis.input_axis = Some(0);
+            axis.limit = None;
+            axis.jog_ramp_seconds = 0.5;
+            let mut profile = profile.clone();
+            profile.slow_speed_percent = 10.0;
+            profile.axes = vec![axis.clone()];
+            let mut machine = MachineController::new(profile);
+            machine.set_soft_limits(false);
+            let (_, mut input, telemetry) = fixture();
+            input.axes[0] = direction;
+            let start = Instant::now();
+            let mut previous: f32 = 0.0;
+            let max_delta = axis.speed_per_second / axis.jog_ramp_seconds * 0.02;
+            let tolerance = max_delta * 0.0001 + 0.0001;
+            for tick in 0..180 {
+                let slow = (40..80).contains(&tick)
+                    || (85..88).contains(&tick)
+                    || (95..135).contains(&tick);
+                let lines = machine.ramped_jog_lines(
+                    &input,
+                    &telemetry,
+                    slow,
+                    start + Duration::from_millis(tick * 20),
+                );
+                let velocity = if lines[0].starts_with("JOG ") {
+                    lines[0]
+                        .split_whitespace()
+                        .last()
+                        .unwrap()
+                        .parse::<f32>()
+                        .unwrap()
+                        / axis.native_per_unit
+                } else {
+                    0.0
+                };
+                assert!(
+                    (velocity - previous).abs() <= max_delta + tolerance,
+                    "{} tick={tick}: {previous} -> {velocity}",
+                    axis.name
+                );
+                if tick == 40 {
+                    assert!(velocity.abs() < previous.abs());
+                    assert!(velocity.abs() > axis.speed_per_second * 0.1);
+                }
+                if tick == 80 {
+                    assert!(velocity.abs() > previous.abs());
+                    assert!(velocity.abs() < axis.speed_per_second);
+                }
+                if tick == 79 || tick == 134 || tick == 179 {
+                    let expected = direction
+                        * axis.input_sign
+                        * axis.speed_per_second
+                        * if slow { 0.1 } else { 1.0 };
+                    assert!((velocity - expected).abs() < tolerance);
+                }
+                previous = velocity;
+            }
+        }
+    }
+}
