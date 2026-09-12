@@ -785,7 +785,7 @@ fn dc_output_is_bounded_and_communication_loss_does_not_resume_tests() {
 fn sts_individual_test_uses_configured_motion_including_zero_speed() {
     for speed in [1000.0, 0.0] {
         let mut runtime = screen_runtime();
-        runtime.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
+        runtime.cfg.machine.serial_svmd = crate::machine::test_support::with_bonus().serial_svmd;
         let servo = runtime
             .cfg
             .machine

@@ -79,7 +79,7 @@ mod tests {
 
     fn runtime() -> Runtime {
         let mut r = crate::application::worker::tests::screen_runtime();
-        let embedded = MachineProfile::embedded().unwrap();
+        let embedded = crate::machine::test_support::with_bonus();
         r.cfg.machine.dc_motors = embedded.dc_motors;
         r.cfg.machine.serial_svmd = embedded.serial_svmd;
         r.cfg.machine.bonus = embedded.bonus;

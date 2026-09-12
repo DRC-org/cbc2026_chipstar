@@ -603,11 +603,15 @@ mod workflow_tests {
 
     impl Harness {
         fn new() -> Self {
+            Self::with_profile(MachineProfile::embedded().unwrap())
+        }
+
+        fn with_profile(machine: MachineProfile) -> Self {
             let shared = Arc::new(Shared::new(BridgeConfig {
                 serial_device: "unused".into(),
                 baud_rate: 115200,
                 rate_hz: 100.0,
-                machine: MachineProfile::embedded().unwrap(),
+                machine,
                 profile_path: "/dev/null".into(),
                 simulate: true,
             }));
@@ -672,7 +676,7 @@ mod workflow_tests {
 
     #[test]
     fn bonus_tuning_applies_tests_stops_captures_and_saves_while_disabled() {
-        let mut harness = Harness::new();
+        let mut harness = Harness::with_profile(crate::machine::test_support::with_bonus());
         harness.app.switch_screen(Screen::Tune);
         harness.app.edit.bonus.as_mut().unwrap().enabled = false;
         harness.app.edit.bonus.as_mut().unwrap().selector_slow_duty = 40;

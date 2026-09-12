@@ -8,3 +8,6 @@ pub mod bonus;
 pub mod dc_motor;
 pub mod ee;
 pub mod xy;
+
+#[cfg(test)]
+pub(crate) mod test_support;

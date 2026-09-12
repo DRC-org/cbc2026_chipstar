@@ -136,7 +136,7 @@ mod tests {
     #[test]
     fn bonus_drive_duty_is_shared_by_board_and_individual_test_even_before_enable() {
         use crate::diagnostics::individual::{Kind, Target};
-        let mut profile = MachineProfile::embedded().unwrap();
+        let mut profile = crate::machine::test_support::with_bonus();
         profile.bonus.as_mut().unwrap().enabled = false;
         profile.bonus.as_mut().unwrap().selector_duty = 1000;
         profile.dcmd_parameters.insert("max_duty".into(), 100.0);

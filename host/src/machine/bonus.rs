@@ -159,10 +159,7 @@ mod tests {
 
     #[test]
     fn optional_handoff_limit_validates_input_and_direction() {
-        let mut profile = crate::machine::MachineProfile::embedded()
-            .unwrap()
-            .bonus
-            .unwrap();
+        let mut profile = crate::machine::test_support::with_bonus().bonus.unwrap();
         assert!(profile.validate().is_ok());
         profile.handoff_limit = Some(HandoffLimit {
             input: 2,
@@ -196,10 +193,7 @@ mod tests {
 
     #[test]
     fn m1_twenty_tooth_pinion_converts_amt102_counts_to_mm() {
-        let mut profile = crate::machine::MachineProfile::embedded()
-            .unwrap()
-            .bonus
-            .unwrap();
+        let mut profile = crate::machine::test_support::with_bonus().bonus.unwrap();
         assert_eq!(profile.encoder_ppr, 2048);
         assert_eq!(profile.encoder_counts_per_revolution(), 8192);
         assert!((profile.travel_mm_per_revolution() - 20.0 * std::f32::consts::PI).abs() < 1e-5);
