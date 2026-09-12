@@ -1,8 +1,12 @@
 swap_dpad_left_right = false
 slow_speed_percent = 10.0
-homing_theta_deg = 100.0
+homing_theta_deg = 95.0
 dc_motors = []
 protocol_version = 1
+
+[xy]
+speed_mm_per_second = 600.0
+radius_offset_mm = 380.0
 
 [[axes]]
 name = "r"
@@ -13,7 +17,7 @@ input_sign = 1.0
 speed_per_second = 600.0
 jog_ramp_seconds = 0.6
 homing_speed_percent = 10.0
-homing_retreat_mm = 400.0
+homing_retreat_mm = 500.0
 native_per_unit = -0.04
 minimum = 0.0
 maximum = 570.0
