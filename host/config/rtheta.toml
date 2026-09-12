@@ -10,7 +10,7 @@ input_sign = 1.0
 maximum_duty = 100
 
 [bonus]
-enabled = true
+enabled = false
 selector_motor = "bonus_selector"
 lid_servo = "bonus_lid"
 align_servo = "bonus_align"
