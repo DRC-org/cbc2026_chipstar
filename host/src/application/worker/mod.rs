@@ -74,6 +74,8 @@ struct Runtime {
     screen_input_times: [Option<Instant>; crate::input::MACHINE_INPUT_COUNT],
     gamepad_name: String,
     adjustment: bool,
+    debug_limit_origins: bool,
+    debug_limit_captured: u8,
     last_hello: Instant,
     reason: String,
     error: String,
@@ -135,6 +137,8 @@ impl Runtime {
             gamepad_input: None,
             gamepad_name: String::new(),
             adjustment: false,
+            debug_limit_origins: false,
+            debug_limit_captured: 0,
             last_hello: Instant::now() - Duration::from_secs(2),
             reason: "接続待ち".into(),
             error: String::new(),
@@ -154,22 +158,23 @@ impl Runtime {
         Ok(())
     }
 
-    /// 原点調整中に手動操作でリミットへ到達した軸の原点を、その場で採用する。
-    /// 通常運転中や、調整開始時から押されていた接点では座標を書き換えない。
-    fn capture_manual_limit_edges(&mut self, previous: Option<&Telemetry>, current: &Telemetry) {
-        if !self.adjustment
-            || !self.drive.running()
-            || self.authority.active()
-            || self.sequence.is_some()
+    /// デバッグ画面では運転・調整状態によらず、接点が入っている軸の原点を採用する。
+    /// 画面を開く前からの接点も拾い、押され続ける間は座標を繰り返し置き直さない。
+    /// 他の画面では従来どおり、原点調整の手動運転中の到達だけを扱う。
+    fn capture_limit_origins(&mut self, previous: Option<&Telemetry>, current: &Telemetry) {
+        if !self.debug_limit_origins
+            && (!self.adjustment
+                || !self.drive.running()
+                || self.authority.active()
+                || self.sequence.is_some())
         {
             return;
         }
-        let (Some(before), Some(now)) = (
-            previous.and_then(|telemetry| telemetry.contacts),
-            current.contacts,
-        ) else {
+        let Some(now) = current.contacts else {
+            self.debug_limit_captured = 0;
             return;
         };
+        let origins = self.machine.origin_states(Some(current));
         let reached: Vec<_> = self
             .cfg
             .machine
@@ -178,9 +183,22 @@ impl Runtime {
             .enumerate()
             .filter_map(|(index, axis)| {
                 let limit = axis.limit?;
-                (!limit.reached(before) && limit.reached(now)).then(|| {
+                let mask = 1 << axis.slot;
+                if !limit.reached(now) {
+                    self.debug_limit_captured &= !mask;
+                    return None;
+                }
+                let capture = if self.debug_limit_origins {
+                    self.debug_limit_captured & mask == 0 || !origins[index].captured
+                } else {
+                    previous
+                        .and_then(|telemetry| telemetry.contacts)
+                        .is_some_and(|before| !limit.reached(before))
+                };
+                capture.then(|| {
                     (
                         index,
+                        mask,
                         axis.name.clone(),
                         axis.origin_position,
                         axis.unit.clone(),
@@ -188,8 +206,10 @@ impl Runtime {
                 })
             })
             .collect();
-        for (index, name, position, unit) in reached {
+        for (index, mask, name, position, unit) in reached {
             if self.machine.capture_origin(index, Some(current)) {
+                self.debug_limit_captured |= mask;
+                self.front_return_pending = None;
                 self.shared.log(format!(
                     "原点自動採用: {name}のリミット到達位置を{position} {unit}として採用"
                 ));
@@ -742,7 +762,7 @@ impl Runtime {
                 let before = self.machine.origin_states(self.telemetry.as_ref());
                 self.machine.observe(&t);
                 let previous = self.telemetry.clone();
-                self.capture_manual_limit_edges(previous.as_ref(), &t);
+                self.capture_limit_origins(previous.as_ref(), &t);
                 let origin_lost = self
                     .machine
                     .origin_states(Some(&t))
@@ -1404,6 +1424,7 @@ impl Runtime {
             s.ai_active = self.authority.active();
             s.running = self.drive.running();
             s.origin_adjustment = self.adjustment;
+            s.debug_limit_origins = self.debug_limit_origins;
             s.slow = self.adjustment
                 || (!self.authority.active() && self.screen_control)
                 || self.authority.input().unwrap_or(&self.manual_input).buttons[9] != 0;

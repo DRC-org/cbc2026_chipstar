@@ -195,6 +195,10 @@ impl BridgeApp {
         if self.screen != screen {
             self.end_test_on_tab_change();
             self.request(Request {
+                flag: Some(screen == Screen::Debug),
+                ..Request::new("debug_limit_origins")
+            });
+            self.request(Request {
                 flag: Some(screen == Screen::Operate),
                 ..Request::new("preparation_guide")
             });
@@ -941,6 +945,50 @@ mod workflow_tests {
         assert!(!reset.outputs_active && !reset.running);
     }
     #[test]
+    fn debug_screen_adopts_pressed_limits_while_stopped_without_adjustment() {
+        let mut profile = MachineProfile::embedded().unwrap();
+        for axis in &mut profile.axes {
+            axis.limit = if axis.name == "r" {
+                axis.origin_position = 120.0;
+                Some(crate::machine::AxisLimit {
+                    input: 0,
+                    direction: 1.0,
+                    normally_closed: false,
+                })
+            } else {
+                None
+            };
+        }
+        let mut harness = Harness::with_profile(profile);
+        assert!(
+            harness
+                .shared
+                .status_snapshot()
+                .origins
+                .iter()
+                .all(|axis| !axis.captured)
+        );
+        harness.app.switch_screen(Screen::Debug);
+        let captured = harness.wait(|s| s.debug_limit_origins && s.origins[0].captured);
+        assert!(!captured.running && !captured.outputs_active && !captured.origin_adjustment);
+        assert!((captured.origins[0].position - 120.0).abs() < 0.001);
+        assert!(captured.origins[1..].iter().all(|axis| !axis.captured));
+        harness.app.switch_screen(Screen::Tune);
+        harness.wait(|s| !s.debug_limit_origins);
+        harness.app.request(Request {
+            axis: Some("r".into()),
+            value: Some(40.0),
+            ..Request::new("origin")
+        });
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        harness.wait(|s| (s.origins[0].position - 40.0).abs() < 0.001);
+        harness.app.switch_screen(Screen::Debug);
+        let captured = harness
+            .wait(|s| s.debug_limit_origins && (s.origins[0].position - 120.0).abs() < 0.001);
+        assert!(!captured.running && !captured.outputs_active);
+    }
+
+    #[test]
     fn debug_dashboard_preserves_run_and_cannot_bypass_waiting() {
         let mut harness = Harness::new();
         harness.capture_origins();
@@ -949,6 +997,7 @@ mod workflow_tests {
         harness.wait(|s| s.running);
         harness.app.switch_screen(Screen::Operate);
         assert!(harness.shared.status_snapshot().running);
+        harness.wait(|s| !s.debug_limit_origins);
         harness.app.dispatch(Action::Stop);
         harness.wait(|s| !s.running);
         harness.app.operation("preparation_wait");

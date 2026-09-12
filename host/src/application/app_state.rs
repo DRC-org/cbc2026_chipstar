@@ -160,6 +160,7 @@ pub struct Status {
     pub error: String,
     pub slow: bool,
     pub origin_adjustment: bool,
+    pub debug_limit_origins: bool,
     pub gamepad: String,
     pub gamepad_input: Option<crate::input::ControllerState>,
     pub axes: [f32; 6],

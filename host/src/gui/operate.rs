@@ -17,10 +17,13 @@ impl BridgeApp {
             "デバッグ",
             "軸の状態を見ながら、各機構の動作を確認します。",
         );
+        if status.debug_limit_origins {
+            ui.label("リミットに当たった軸は、停止中も設定済みの原点位置を自動採用します。");
+        }
         if status.preparation.locked() {
             ui.colored_label(
                 WARNING,
-                "開始待ち中は表示のみ確認できます。操作する場合は準備画面に戻ってください。",
+                "開始待ち中は操作ボタンを使用できません。リミットでの原点自動採用は有効です。",
             );
         }
         ui.add_enabled_ui(!status.preparation.locked(), |ui| {

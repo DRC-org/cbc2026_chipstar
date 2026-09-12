@@ -248,7 +248,7 @@ fn manual_limit_edge_captures_origin_only_during_adjustment_run() {
     reached.contacts = Some(1);
     reached.slots[0].measured = 42.0;
 
-    runtime.capture_manual_limit_edges(Some(&before), &reached);
+    runtime.capture_limit_origins(Some(&before), &reached);
     let state = &runtime.machine.origin_states(Some(&reached))[0];
     assert!(state.captured);
     assert!((state.position - runtime.cfg.machine.axes[0].origin_position).abs() < 1e-3);
@@ -263,11 +263,11 @@ fn manual_limit_edge_captures_origin_only_during_adjustment_run() {
 
     runtime.machine.invalidate_origins();
     runtime.adjustment = false;
-    runtime.capture_manual_limit_edges(Some(&before), &reached);
+    runtime.capture_limit_origins(Some(&before), &reached);
     assert!(!runtime.machine.origin_states(Some(&reached))[0].captured);
 
     runtime.adjustment = true;
-    runtime.capture_manual_limit_edges(Some(&reached), &reached);
+    runtime.capture_limit_origins(Some(&reached), &reached);
     assert!(!runtime.machine.origin_states(Some(&reached))[0].captured);
 }
 
@@ -1230,4 +1230,205 @@ fn output_stop_and_parameter_apply_keep_z_held_until_explicit_release() {
     r.request(&Request::new("safe"), true).unwrap();
     r.tick().unwrap();
     assert_eq!(r.telemetry.as_ref().unwrap().held_slots, Some(0));
+}
+
+fn debug_limit_runtime() -> (Runtime, Telemetry) {
+    let mut runtime = screen_runtime();
+    for axis in &mut runtime.cfg.machine.axes {
+        axis.origin_position = match axis.name.as_str() {
+            "r" => 120.0,
+            "z" => 30.0,
+            _ => 0.0,
+        };
+        axis.limit = match axis.name.as_str() {
+            "r" => Some(crate::machine::AxisLimit {
+                input: 2,
+                direction: 1.0,
+                normally_closed: false,
+            }),
+            "z" => Some(crate::machine::AxisLimit {
+                input: 0,
+                direction: -1.0,
+                normally_closed: true,
+            }),
+            _ => None,
+        };
+    }
+    runtime.machine.reconfigure(runtime.cfg.machine.clone());
+    runtime.machine.invalidate_origins();
+    let mut reached = runtime.telemetry.clone().unwrap();
+    reached.mode = RunMode::Safe;
+    reached.enabled_slots = 0;
+    reached.contacts = Some(4); // r: NO閉、z: NC開。設定の接点番号・極性を使用する。
+    reached.stale_slots = 0;
+    reached.slots[0].measured = 42.0;
+    reached.slots[2].measured = 84.0;
+    (runtime, reached)
+}
+
+fn set_debug_limits(runtime: &mut Runtime, enabled: bool) {
+    runtime
+        .request(
+            &Request {
+                flag: Some(enabled),
+                ..Request::new("debug_limit_origins")
+            },
+            true,
+        )
+        .unwrap();
+}
+
+#[test]
+fn debug_limit_off_to_on_adopts_origins_without_adjustment_or_run() {
+    let (mut runtime, reached) = debug_limit_runtime();
+    set_debug_limits(&mut runtime, true);
+    let mut before = reached.clone();
+    before.contacts = Some(1); // 両軸とも未到達。
+    runtime.machine.observe(&before);
+    runtime.capture_limit_origins(None, &before);
+    assert!(
+        runtime
+            .machine
+            .origin_states(Some(&before))
+            .iter()
+            .all(|axis| !axis.captured)
+    );
+    runtime.machine.observe(&reached);
+    runtime.capture_limit_origins(Some(&before), &reached);
+    let origins = runtime.machine.origin_states(Some(&reached));
+    assert!(origins[0].captured && origins[2].captured);
+    assert!(!runtime.adjustment && !runtime.drive.running());
+}
+
+#[test]
+fn debug_limit_origins_capture_existing_contacts_in_every_operating_state_without_output() {
+    for state in 0..5 {
+        let (mut runtime, reached) = debug_limit_runtime();
+        match state {
+            0 => {} // 停止・全トルク解除、調整OFF
+            1 => runtime.drive = DriveState::Running,
+            2 => runtime.emergency = true,
+            3 => runtime.preparation = PreparationPhase::Waiting,
+            _ => runtime.authority.claim("debug-test".into(), Instant::now()),
+        }
+        let tx = runtime.shared.status_snapshot().tx_count;
+        set_debug_limits(&mut runtime, true);
+        runtime.capture_limit_origins(None, &reached);
+        let origins = runtime.machine.origin_states(Some(&reached));
+        for i in [0, 2] {
+            assert!(origins[i].captured, "state={state}, axis={i}");
+            assert!(
+                (origins[i].position - runtime.cfg.machine.axes[i].origin_position).abs() < 0.001
+            );
+        }
+        assert!(!origins[1].captured, "接点のないθは採用しない");
+        assert_eq!(runtime.shared.status_snapshot().tx_count, tx);
+        assert_eq!(runtime.drive.running(), state == 1);
+        assert_eq!(runtime.emergency, state == 2);
+        assert_eq!(runtime.authority.active(), state == 4);
+    }
+}
+
+#[test]
+fn debug_limit_origins_capture_once_per_contact_and_again_after_release() {
+    let (mut runtime, mut reached) = debug_limit_runtime();
+    set_debug_limits(&mut runtime, true);
+    runtime.capture_limit_origins(Some(&reached), &reached);
+    for i in [0, 2] {
+        reached.slots[i].measured += 5.0 * runtime.cfg.machine.axes[i].native_per_unit;
+    }
+    runtime.capture_limit_origins(Some(&reached), &reached);
+    let origins = runtime.machine.origin_states(Some(&reached));
+    for i in [0, 2] {
+        assert!(
+            (origins[i].position - runtime.cfg.machine.axes[i].origin_position - 5.0).abs() < 0.001
+        );
+    }
+    reached.contacts = Some(0); // rだけ離す。zは押されたまま。
+    runtime.capture_limit_origins(None, &reached);
+    reached.contacts = Some(4);
+    runtime.capture_limit_origins(None, &reached);
+    let origins = runtime.machine.origin_states(Some(&reached));
+    assert!((origins[0].position - 120.0).abs() < 0.001);
+    assert!((origins[2].position - 35.0).abs() < 0.001);
+    assert_eq!(
+        runtime
+            .shared
+            .status_snapshot()
+            .logs
+            .iter()
+            .filter(|line| line.contains("原点自動採用:"))
+            .count(),
+        3
+    );
+}
+
+#[test]
+fn debug_limit_origins_retry_missing_feedback_without_requiring_another_contact_edge() {
+    let (mut runtime, mut reached) = debug_limit_runtime();
+    set_debug_limits(&mut runtime, true);
+    reached.stale_slots = 1;
+    runtime.capture_limit_origins(None, &reached);
+    let origins = runtime.machine.origin_states(Some(&reached));
+    assert!(!origins[0].captured);
+    assert!(origins[2].captured);
+    reached.stale_slots = 0;
+    reached.slots[0].measured = f32::NAN;
+    runtime.capture_limit_origins(Some(&reached), &reached);
+    assert!(!runtime.machine.origin_states(Some(&reached))[0].captured);
+    reached.slots[0].measured = 43.0;
+    runtime.capture_limit_origins(Some(&reached), &reached);
+    assert!(runtime.machine.origin_states(Some(&reached))[0].captured);
+    reached.stale_slots = 1;
+    runtime.machine.observe(&reached);
+    runtime.capture_limit_origins(Some(&reached), &reached);
+    assert!(!runtime.machine.origin_states(Some(&reached))[0].captured);
+    reached.stale_slots = 0;
+    reached.slots[0].measured = 44.0;
+    runtime.capture_limit_origins(Some(&reached), &reached);
+    let origin = &runtime.machine.origin_states(Some(&reached))[0];
+    assert!(origin.captured && !origin.lost);
+    assert!((origin.position - 120.0).abs() < 0.001);
+    runtime.machine.invalidate_origins();
+    reached.contacts = None;
+    runtime.capture_limit_origins(None, &reached);
+    assert!(
+        runtime
+            .machine
+            .origin_states(Some(&reached))
+            .iter()
+            .all(|axis| !axis.captured)
+    );
+}
+
+#[test]
+fn debug_limit_origins_end_on_screen_exit_and_cannot_be_enabled_over_the_api() {
+    let (mut runtime, mut reached) = debug_limit_runtime();
+    runtime.authority.claim("test-token".into(), Instant::now());
+    assert!(
+        runtime
+            .request(
+                &Request {
+                    flag: Some(true),
+                    token: Some("test-token".into()),
+                    ..Request::new("debug_limit_origins")
+                },
+                false
+            )
+            .is_err()
+    );
+    assert!(!runtime.debug_limit_origins);
+    runtime.authority.release();
+    set_debug_limits(&mut runtime, true);
+    runtime.capture_limit_origins(None, &reached);
+    set_debug_limits(&mut runtime, false);
+    runtime.drive = DriveState::Running;
+    let mut before = reached.clone();
+    before.contacts = Some(1);
+    reached.slots[0].measured += 5.0 * runtime.cfg.machine.axes[0].native_per_unit;
+    runtime.capture_limit_origins(Some(&before), &reached);
+    assert!((runtime.machine.origin_states(Some(&reached))[0].position - 125.0).abs() < 0.001);
+    set_debug_limits(&mut runtime, true);
+    runtime.capture_limit_origins(Some(&reached), &reached);
+    assert!((runtime.machine.origin_states(Some(&reached))[0].position - 120.0).abs() < 0.001);
 }
