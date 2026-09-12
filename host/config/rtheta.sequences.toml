@@ -1,0 +1,156 @@
+travel_z = 0.0
+loaded_travel_z = 0.0
+handoff_descent_step_mm = 5.0
+lift_mm = 10.0
+unfolded = 500.0
+folded = 500.0
+grip_open = [
+    1500.0,
+    1500.0,
+    1500.0,
+]
+grip_closed = [
+    500.0,
+    500.0,
+    500.0,
+]
+grip_handoff_open = [
+    700.0,
+    700.0,
+    700.0,
+]
+speed_percent = 50.0
+tolerance_mm = 1.0
+tolerance_deg = 1.0
+timeout_seconds = 60.0
+
+[[groups]]
+name = "グループ1"
+r = 0.0
+theta = 0.0
+approach_z = 0.0
+grab_z = 0.0
+rotation = 0.0
+
+[[groups]]
+name = "グループ2"
+r = 0.0
+theta = 0.0
+approach_z = 0.0
+grab_z = 0.0
+rotation = 0.0
+
+[[groups]]
+name = "グループ3"
+r = 0.0
+theta = 0.0
+approach_z = 0.0
+grab_z = 0.0
+rotation = 0.0
+
+[[groups]]
+name = "グループ4"
+r = 0.0
+theta = 0.0
+approach_z = 0.0
+grab_z = 0.0
+rotation = 0.0
+
+[[groups]]
+name = "グループ5"
+r = 0.0
+theta = 0.0
+approach_z = 0.0
+grab_z = 0.0
+rotation = 0.0
+
+[[groups]]
+name = "グループ6"
+r = 0.0
+theta = 0.0
+approach_z = 0.0
+grab_z = 0.0
+rotation = 0.0
+
+[[groups]]
+name = "グループ7"
+r = 0.0
+theta = 0.0
+approach_z = 0.0
+grab_z = 0.0
+rotation = 0.0
+
+[[groups]]
+name = "グループ8"
+r = 0.0
+theta = 0.0
+approach_z = 0.0
+grab_z = 0.0
+rotation = 0.0
+
+[left]
+r = 0.0
+theta = 0.0
+z = 0.0
+rotation = 0.0
+
+[right]
+r = 0.0
+theta = 0.0
+z = 0.0
+rotation = 0.0
+
+[[prepare]]
+name = "ワーク上空へ移動"
+actions = ["work_position"]
+wait_seconds = 0.0
+
+[[prepare]]
+name = "EE展開"
+actions = ["unfold"]
+wait_seconds = 0.5
+
+[[prepare]]
+name = "取得向きへEE回転"
+actions = ["work_rotation"]
+wait_seconds = 0.5
+
+[[prepare]]
+name = "把持開"
+actions = ["open"]
+wait_seconds = 0.5
+
+[[prepare]]
+name = "取得高さへ下降"
+actions = ["approach"]
+wait_seconds = 0.0
+
+[[pick]]
+name = "把持閉"
+actions = ["close"]
+wait_seconds = 0.5
+
+[[pick]]
+name = "ワークあり移動高さへ上昇"
+actions = ["travel_height"]
+wait_seconds = 0.0
+
+[[transfer]]
+name = "EEたたみ"
+actions = ["fold"]
+wait_seconds = 2.0
+
+[[transfer]]
+name = "外枠内へ段階下降"
+actions = ["bonus_height"]
+wait_seconds = 0.0
+
+[[transfer]]
+name = "受け渡しレベルまで把持開"
+actions = ["handoff_open"]
+wait_seconds = 0.0
+
+[[transfer]]
+name = "ワークあり移動高さへ垂直退避"
+actions = ["loaded_retreat"]
+wait_seconds = 0.0

@@ -1,5 +1,7 @@
 swap_dpad_left_right = false
 slow_speed_percent = 10.0
+homing_theta_deg = 100.0
+dc_motors = []
 protocol_version = 1
 
 [[axes]]
@@ -77,7 +79,7 @@ input_sign = -1.0
 speed_us_per_second = 5000.0
 acceleration_us_per_second2 = 0.0
 minimum_us = 500
-maximum_us = 1000
+maximum_us = 1500
 initial_us = 500
 enabled = true
 
@@ -88,7 +90,7 @@ input_sign = -1.0
 speed_us_per_second = 5000.0
 acceleration_us_per_second2 = 0.0
 minimum_us = 500
-maximum_us = 1000
+maximum_us = 1500
 initial_us = 500
 enabled = true
 
@@ -99,7 +101,7 @@ input_sign = -1.0
 speed_us_per_second = 5000.0
 acceleration_us_per_second2 = 0.0
 minimum_us = 500
-maximum_us = 1000
+maximum_us = 1500
 initial_us = 500
 enabled = true
 
@@ -146,5 +148,7 @@ telemetry_period_ms = 50.0
 watchdog_ms = 250.0
 
 [svmd_parameters]
+
+[dcmd_parameters]
 
 [serial_svmd_parameters]
