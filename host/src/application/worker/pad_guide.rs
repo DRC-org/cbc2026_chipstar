@@ -228,6 +228,8 @@ mod tests {
     #[test]
     fn controller_walks_from_court_to_waiting_and_explicit_start() {
         let mut r = runtime();
+        // 実機で調整した角度に依存せず、コートごとの符号と操作フローを検証する。
+        r.cfg.machine.homing_theta_deg = 90.0;
         press(&mut r, 14, 1).unwrap();
         assert_eq!(r.court, Some(Court::Blue));
         assert!(r.ee.targets.is_empty());
