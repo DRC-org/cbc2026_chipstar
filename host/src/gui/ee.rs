@@ -33,8 +33,12 @@ impl BridgeApp {
                 && !status.sts.active
                 && !status.sts.busy
                 && !status.ai_active
-                && !status.emergency;
+                && !status.emergency
+                && !status.preparation.locked()
+                && status.homing.is_none()
+                && !status.sequence.active;
             let mut command = std::collections::BTreeMap::new();
+            let mut trim = None;
             egui::Grid::new("operate-ee")
                 .num_columns(5)
                 .spacing([8.0, 6.0])
@@ -44,23 +48,28 @@ impl BridgeApp {
                         ui.label(label);
                         if let Some(axis) = axes.iter().find(|a| a.name == name) {
                             if name == "ee_rotation" {
-                                // 先端回転はフィールド基準0°/180°のトグル。
-                                let field = self.ee_values.entry(name.into()).or_insert(0.0);
                                 if ui
                                     .add_enabled(can && axis.enabled, egui::Button::new("0°へ"))
                                     .clicked()
                                 {
-                                    *field = 0.0;
                                     command.insert(name.to_string(), 0.0);
                                 }
                                 if ui
                                     .add_enabled(can && axis.enabled, egui::Button::new("180°へ"))
                                     .clicked()
                                 {
-                                    *field = 180.0;
                                     command.insert(name.to_string(), 180.0);
                                 }
-                                ui.label("");
+                                ui.horizontal(|ui| {
+                                    for (label, delta) in [("−1°", -1.0), ("＋1°", 1.0)] {
+                                        if ui.add_enabled(
+                                            can && axis.enabled && status.ee_rotation_field.is_some(),
+                                            egui::Button::new(label),
+                                        ).on_hover_text("現在の保持角を1°調整し、その向きを保持します").clicked() {
+                                            trim = Some(delta);
+                                        }
+                                    }
+                                });
                             } else {
                                 let value =
                                     self.ee_values.entry(name.into()).or_insert(axis.initial);
@@ -90,7 +99,9 @@ impl BridgeApp {
                                     self.select_ee_test(axis.target, selected);
                                 }
                             }
-                            if let Some(target) = status.ee_targets.get(name) {
+                            if name == "ee_rotation" && let Some(field) = status.ee_rotation_field {
+                                ui.label(format!("保持角 {field:.1}°"));
+                            } else if let Some(target) = status.ee_targets.get(name) {
                                 ui.label(format!("指令 {target:.0}"));
                             } else if !axis.enabled {
                                 ui.colored_label(WARNING, "出力未許可");
@@ -144,10 +155,14 @@ impl BridgeApp {
                 }
             }
             ui.label(
-                RichText::new("DualSense：← 取得時開、→ 把持閉、○ 受け渡し開。PWMサーボには位置センサがないため、表示値は指令値です。")
+                RichText::new("DualSense：右スティック左右で向きを微調整、離すと保持。L1で低速、△で反転。← 取得時開、→ 把持閉、○ 受け渡し開。")
                     .size(12.0)
                     .color(MUTED),
             );
+            ui.label(RichText::new("保持角とPWMの表示値は指令値です。").size(12.0).color(MUTED));
+            if let Some(delta) = trim {
+                self.request(Request { value: Some(delta), ..Request::new("ee_trim") });
+            }
             if !command.is_empty() {
                 #[derive(serde::Serialize)]
                 struct Input {
@@ -392,8 +407,13 @@ impl BridgeApp {
                                 .suffix(" count/s"),
                         );
                     });
+                    ui.horizontal_wrapped(|ui| {
+                        ui.label("微調整の方向");
+                        ui.selectable_value(&mut s.input_sign, 1.0, "標準");
+                        ui.selectable_value(&mut s.input_sign, -1.0, "反転");
+                    });
                     ui.label(
-                        RichText::new("△ボタンで正面合わせ時の向きから180°反転し、θの回転は回転換算係数で打ち消します。")
+                        RichText::new("右スティック左右で向きを微調整し、△で180°反転します。離した後もθの回転を打ち消して向きを保持します。")
                             .size(12.0)
                             .color(MUTED),
                     );
@@ -414,7 +434,7 @@ impl BridgeApp {
             }
         });
         ui.label(
-            RichText::new("EE全体回転はSTS3215で、正面合わせ時の向きから△で180°反転します。θの回転は回転換算係数で打ち消します。")
+            RichText::new("EE全体回転はSTS3215です。右スティックで保持角を微調整し、△で180°反転します。θが動いてもフィールドに対する向きを保持します。")
                 .size(12.0)
                 .color(MUTED),
         );

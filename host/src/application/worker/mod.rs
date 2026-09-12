@@ -1283,6 +1283,11 @@ impl Runtime {
         self.shared.update_status(|s| {
             s.test_mode = self.test.enabled;
             s.ee_targets = self.ee.targets.clone();
+            s.ee_rotation_field = self
+                .ee
+                .targets
+                .contains_key("ee_rotation")
+                .then_some(self.ee.rotation_field);
             self.publish_bonus(&mut s.bonus);
             s.homing = self.homing.as_ref().map(|h| h.label.clone());
             s.homing_ready = self.court.is_some()

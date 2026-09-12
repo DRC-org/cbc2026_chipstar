@@ -131,6 +131,8 @@ pub struct Status {
     pub homing_ready: bool,
     pub homing_confirmation: Option<f32>,
     pub ee_targets: std::collections::BTreeMap<String, f32>,
+    /// EEが保持しているフィールド基準角[deg]。出力停止中はNone。
+    pub ee_rotation_field: Option<f32>,
     pub bonus: BonusStatus,
     pub sts: crate::application::sts::Status,
     pub test_mode: bool,

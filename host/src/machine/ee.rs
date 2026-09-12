@@ -12,6 +12,8 @@ pub const ROLES: [(&str, &str); 5] = [
     ("ee_grip_2", "把持2"),
     ("ee_grip_3", "把持3"),
 ];
+/// 通常操縦のEE微調整速度。倒し量とL1低速率を掛ける前の上限[deg/s]。
+pub const ROTATION_TRIM_DEG_PER_SECOND: f32 = 15.0;
 #[derive(Clone)]
 pub struct Axis {
     pub name: String,
@@ -31,6 +33,19 @@ pub struct Axis {
     pub counts_per_deg: f32,
 }
 impl Axis {
+    pub fn rotation_trim_velocity(&self, input: &crate::input::ControllerState) -> f32 {
+        let value = self.pad_value(input);
+        if !value.is_finite() || value.abs() <= 0.1 {
+            return 0.0;
+        }
+        let speed = if self.speed > 0.0 {
+            ROTATION_TRIM_DEG_PER_SECOND.min(self.speed / self.counts_per_deg.abs())
+        } else {
+            ROTATION_TRIM_DEG_PER_SECOND
+        };
+        value.signum() * (value.abs().min(1.0) - 0.1) / 0.9 * self.sign * speed
+    }
+
     fn sts_speed(&self) -> u16 {
         if self.speed == 0.0 {
             0

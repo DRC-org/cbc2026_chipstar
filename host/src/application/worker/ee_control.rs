@@ -6,6 +6,10 @@ use std::collections::BTreeMap;
 #[path = "ee_preparation_tests.rs"]
 mod preparation_tests;
 
+#[cfg(test)]
+#[path = "ee_trim_tests.rs"]
+mod trim_tests;
+
 fn pwm_step(
     previous: f32,
     goal: f32,
@@ -47,6 +51,8 @@ pub(super) struct Control {
     pub(super) prepared_rotation_field: Option<f32>,
     /// 先端回転のフィールド基準角[deg]。運転開始時は実測姿勢を採用し、△で180°反転する。
     pub(super) rotation_field: f32,
+    /// 直前の△反転量。次は逆方向へ180°戻し、微調整後も全回転を挟まない。
+    pub(super) rotation_flip_delta: Option<f32>,
 }
 impl Runtime {
     /// θ正面合わせ時のSTS実測から、現在のEEフィールド角を求める。
@@ -327,6 +333,7 @@ impl Runtime {
             .iter()
             .find(|a| a.name == "ee_rotation")
             .context("先端回転のEE割当が未設定です")?;
+        anyhow::ensure!(axis.enabled, "先端回転は出力未許可です");
         anyhow::ensure!(
             self.test
                 .peers
@@ -353,6 +360,7 @@ impl Runtime {
             .unwrap_or(0.0);
         let count = axis.rotation_count(field_deg, theta)?;
         self.ee.rotation_field = field_deg;
+        self.ee.rotation_flip_delta = None;
         let first = !self.ee.targets.contains_key(&axis.name);
         self.ee.targets.insert(axis.name.clone(), f32::from(count));
         self.ee
@@ -512,7 +520,30 @@ impl Runtime {
                 .machine
                 .axis_position("theta", self.telemetry.as_ref())
                 .unwrap_or(0.0);
-            let count = axis.rotation_count(self.ee.rotation_field, theta)?;
+            let trim_velocity = if self.drive.running()
+                && self.pad.ee_armed
+                && !self.screen_control
+                && !self.authority.active()
+                && !self.preparation.locked()
+                && self.homing.is_none()
+                && !self.test.enabled
+                && !self.sts.active
+                && !self.sts.busy()
+                && !self.emergency
+            {
+                axis.rotation_trim_velocity(&input)
+                    * if slow {
+                        self.cfg.machine.slow_speed_percent * 0.01
+                    } else {
+                        1.0
+                    }
+            } else {
+                0.0
+            };
+            // 相対的に保持角を調整する。離した角度を採用し、θ補正と△反転にも引き継ぐ。
+            let field = self.ee.rotation_field + trim_velocity * dt;
+            let count = axis.rotation_count(field, theta)?;
+            self.ee.rotation_field = field;
             if self.ee.sent.get(&axis.name).is_none_or(|(value, sent)| {
                 *value != f32::from(count) && now.duration_since(*sent) >= Duration::from_millis(50)
             }) {
@@ -568,7 +599,7 @@ impl Runtime {
 mod tests {
     use super::*;
 
-    fn rotation_runtime(position: i16) -> Runtime {
+    pub(super) fn rotation_runtime(position: i16) -> Runtime {
         let mut runtime = crate::application::worker::tests::screen_runtime();
         runtime.cfg.machine.serial_svmd = MachineProfile::embedded().unwrap().serial_svmd;
         receive_rotation_position(&mut runtime, position);

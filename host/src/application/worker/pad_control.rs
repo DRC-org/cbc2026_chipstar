@@ -107,6 +107,7 @@ impl Runtime {
                 .is_some_and(|profile| profile.enabled)
         {
             self.manual_input = ControllerState::default();
+            self.pad.ee_armed = false;
             if buttons[6] != 0 && previous[6] == 0 {
                 self.bonus_request(&Request {
                     flag: Some(!self.bonus.semi_auto),
@@ -227,6 +228,7 @@ impl Runtime {
             return Ok(());
         }
         let mut targets = std::collections::BTreeMap::new();
+        let mut rotation_flip_delta = None;
         let fold_pressed = buttons[11] != buttons[12]
             && (buttons[11] != previous[11] || buttons[12] != previous[12]);
         let grip_level = if buttons[13] != 0 && buttons[14] == 0 && previous[13] == 0 {
@@ -262,20 +264,25 @@ impl Runtime {
                 targets.insert(name.into(), values[index]);
             }
         }
-        // 先端回転は△で、正面合わせ時に保存したフィールド基準から180°反転する。
-        // 2回押すと補正差を含めて元の手合わせ角へ戻る。θ補正は専用経路が続ける。
+        // 先端回転は△で、微調整を含めた現在のフィールド基準から180°反転する。
+        // 2回押すと元の向きへ戻る。θ補正は専用経路が続ける。
         if buttons[3] != 0 && previous[3] == 0 {
             let _ = axes
                 .iter()
                 .find(|axis| axis.name == "ee_rotation")
                 .context("先端回転のEE割当を設定してください")?;
-            let current = 180.0 - (180.0 - self.ee.rotation_field).rem_euclid(360.0);
-            let next = if current > 90.0 {
-                current - 180.0
-            } else {
-                current + 180.0
-            };
-            targets.insert("ee_rotation".into(), next);
+            let delta = self.ee.rotation_flip_delta.map_or_else(
+                || {
+                    if self.ee.rotation_field > 90.0 {
+                        -180.0
+                    } else {
+                        180.0
+                    }
+                },
+                |previous| -previous,
+            );
+            targets.insert("ee_rotation".into(), self.ee.rotation_field + delta);
+            rotation_flip_delta = Some(delta);
         }
         if !targets.is_empty() {
             #[derive(serde::Serialize)]
@@ -289,6 +296,9 @@ impl Runtime {
             if let Err(error) = self.ee_request(&req) {
                 self.pad.ee_armed = false;
                 return Err(error);
+            }
+            if rotation_flip_delta.is_some() {
+                self.ee.rotation_flip_delta = rotation_flip_delta;
             }
         }
         Ok(())

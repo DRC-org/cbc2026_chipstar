@@ -183,6 +183,17 @@ impl Runtime {
                 );
             }
             "ee" => return self.ee_request(req),
+            "ee_trim" => {
+                anyhow::ensure!(
+                    self.ee.targets.contains_key("ee_rotation"),
+                    "EEの向きの保持開始を待ってください"
+                );
+                let delta = req.value.context("微調整角度が必要です")?;
+                let flip_delta = self.ee.rotation_flip_delta;
+                self.rotation_request(self.ee.rotation_field + delta)?;
+                self.ee.rotation_flip_delta = flip_delta;
+                return Ok(Reply::accepted());
+            }
             "heartbeat" => {}
             "recover" => {
                 if self.drive.running() || self.drive.awaiting().is_some() || self.test.active {
