@@ -18,27 +18,27 @@ fn xy_mode_requires_fresh_l3_press_and_neutral_axes_for_pad_and_mouse() {
     let mut r = tests::runtime();
     let now = Instant::now();
     r.read_pad(l3(), now).unwrap(); // 接続したときから押していた入力は採用しない。
-    assert_eq!(r.planar_mode, PlanarMode::Rtheta);
+    assert_eq!(r.planar_mode, PlanarMode::Xy);
     r.read_pad(ControllerState::default(), now).unwrap();
     r.read_pad(l3(), now).unwrap();
-    assert_eq!(r.planar_mode, PlanarMode::Xy);
+    assert_eq!(r.planar_mode, PlanarMode::Rtheta);
     r.read_pad(l3(), now).unwrap();
-    assert_eq!(r.planar_mode, PlanarMode::Xy);
+    assert_eq!(r.planar_mode, PlanarMode::Rtheta);
     assert!(!r.drive.running());
     r.read_pad(ControllerState::default(), now).unwrap();
     let mut held = l3();
     held.axes[5] = 0.5;
     assert!(r.read_pad(held, now).is_err());
-    assert!(r.request(&mode_request(PlanarMode::Rtheta), true).is_err());
-    assert_eq!(r.planar_mode, PlanarMode::Xy);
+    assert!(r.request(&mode_request(PlanarMode::Xy), true).is_err());
+    assert_eq!(r.planar_mode, PlanarMode::Rtheta);
     r.read_pad(ControllerState::default(), now).unwrap();
-    r.request(&mode_request(PlanarMode::Rtheta), true).unwrap();
+    r.request(&mode_request(PlanarMode::Xy), true).unwrap();
     r.publish();
-    assert_eq!(r.shared.status_snapshot().planar_mode, PlanarMode::Rtheta);
+    assert_eq!(r.shared.status_snapshot().planar_mode, PlanarMode::Xy);
     assert!(!r.drive.running());
     r.disconnect_pad();
     r.read_pad(l3(), now).unwrap();
-    assert_eq!(r.planar_mode, PlanarMode::Rtheta);
+    assert_eq!(r.planar_mode, PlanarMode::Xy);
 }
 
 #[test]
@@ -49,7 +49,7 @@ fn xy_mode_keeps_bonus_l3_and_ps_priority_and_preparation_feedback() {
     let mut bonus = l3();
     bonus.buttons[10] = 1;
     r.read_pad(bonus, now).unwrap();
-    assert_eq!(r.planar_mode, PlanarMode::Rtheta);
+    assert_eq!(r.planar_mode, PlanarMode::Xy);
     assert_eq!(
         r.bonus.selected_box,
         r.cfg.machine.bonus.as_ref().unwrap().boxes.len() - 1
@@ -58,11 +58,11 @@ fn xy_mode_keeps_bonus_l3_and_ps_priority_and_preparation_feedback() {
     let mut stop = l3();
     stop.buttons[5] = 1;
     r.read_pad(stop, now).unwrap();
-    assert_eq!(r.planar_mode, PlanarMode::Rtheta);
+    assert_eq!(r.planar_mode, PlanarMode::Xy);
     r.guide.enabled = true;
     r.read_pad(ControllerState::default(), now).unwrap();
     r.read_pad(l3(), now).unwrap();
-    assert_eq!(r.planar_mode, PlanarMode::Xy);
+    assert_eq!(r.planar_mode, PlanarMode::Rtheta);
     assert!(
         r.shared
             .status_snapshot()
@@ -76,14 +76,14 @@ fn xy_mode_keeps_bonus_l3_and_ps_priority_and_preparation_feedback() {
 fn xy_mode_cannot_change_during_waiting_tests_or_ai_control() {
     let mut r = tests::runtime();
     r.preparation = PreparationPhase::Waiting;
-    assert!(r.request(&mode_request(PlanarMode::Xy), true).is_err());
+    assert!(r.request(&mode_request(PlanarMode::Rtheta), true).is_err());
     r.preparation = PreparationPhase::Setting;
     r.test.enabled = true;
-    assert!(r.request(&mode_request(PlanarMode::Xy), true).is_err());
+    assert!(r.request(&mode_request(PlanarMode::Rtheta), true).is_err());
     r.test.enabled = false;
     r.authority.claim("xy-test".into(), Instant::now());
-    assert!(r.request(&mode_request(PlanarMode::Xy), true).is_err());
-    assert_eq!(r.planar_mode, PlanarMode::Rtheta);
+    assert!(r.request(&mode_request(PlanarMode::Rtheta), true).is_err());
+    assert_eq!(r.planar_mode, PlanarMode::Xy);
 }
 
 #[test]
@@ -101,7 +101,7 @@ fn xy_mode_is_used_by_the_running_worker_and_screen_jog_keeps_axis_meaning() {
                 .capture_coordinate(i, r.telemetry.as_ref(), position)
         );
     }
-    r.request(&mode_request(PlanarMode::Xy), true).unwrap();
+    assert_eq!(r.planar_mode, PlanarMode::Xy);
     r.start_with_front_return(false).unwrap();
     r.tick().unwrap();
     assert!(r.drive.running());

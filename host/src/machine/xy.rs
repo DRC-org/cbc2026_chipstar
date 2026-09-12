@@ -5,8 +5,8 @@ use serde::{Deserialize, Serialize};
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum PlanarMode {
-    #[default]
     Rtheta,
+    #[default]
     Xy,
 }
 impl PlanarMode {
