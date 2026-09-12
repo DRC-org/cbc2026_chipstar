@@ -105,7 +105,11 @@ impl BridgeApp {
         section(
             ui,
             "競技の準備",
-            "×：主操作　□：配置完了　停止中の○：最初に戻る　PS：停止。操縦中の○は受け渡し開です。",
+            if status.guide_restart_hold {
+                "×：主操作　□：配置完了　停止中の○を1秒長押し：最初に戻る　PS：停止。操縦中の○は受け渡し開です。"
+            } else {
+                "×：主操作　□：配置完了　停止中の○：最初に戻る　PS：停止。操縦中の○は受け渡し開です。"
+            },
         );
         panel().show(ui, |ui| {
             ui.set_width(ui.available_width());
@@ -251,7 +255,12 @@ impl BridgeApp {
                     }
                 }
             }
-            if status.guide_release {
+            if status.guide_restart_holding {
+                ui.colored_label(
+                    ACCENT,
+                    "○を1秒押し続けると最初に戻ります。途中で離すと取り消します。",
+                );
+            } else if status.guide_release {
                 ui.colored_label(ACCENT, "ボタンを離すと実行します。");
             }
             if status.preparation == Waiting && !status.preparation_blocker.is_empty() {
@@ -265,7 +274,15 @@ impl BridgeApp {
                 ui,
                 "停止して最初に戻る",
                 if status.running { "PS → ○" } else { "○" },
-                if status.running { "PSで停止し、離してから○" } else { "押して離す" },
+                if status.running && status.guide_restart_hold {
+                    "PSで停止して離し、○を1秒長押し"
+                } else if status.running {
+                    "PSで停止し、離してから○"
+                } else if status.guide_restart_hold {
+                    "1秒長押し（短押しでは戻りません）"
+                } else {
+                    "押して離す"
+                },
                 !status.ai_active,
                 "preparation_restart",
             );

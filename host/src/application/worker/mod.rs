@@ -1329,6 +1329,8 @@ impl Runtime {
             s.pad_guide = self.guide.enabled;
             s.preparation_step = self.preparation_step();
             s.guide_release = self.guide.confirmed;
+            s.guide_restart_hold = self.guide_restart_hold_required();
+            s.guide_restart_holding = s.guide_restart_hold && self.guide.restart_pending();
             s.operation_sound_available =
                 self.fresh() && self.device.as_ref().is_some_and(|d| d.tone);
             s.preparation_blocker = self

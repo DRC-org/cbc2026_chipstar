@@ -124,6 +124,8 @@ pub struct Status {
     pub pad_guide: bool,
     pub preparation_step: PreparationStep,
     pub guide_release: bool,
+    pub guide_restart_hold: bool,
+    pub guide_restart_holding: bool,
     pub operation_sound_available: bool,
     pub sequence: super::sequence::Status,
     pub sequence_saved: bool,

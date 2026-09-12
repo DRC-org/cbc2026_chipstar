@@ -1,11 +1,11 @@
-//! 準備ガイドの入力は通常操縦より先に処理する。決定は中立へ戻った時だけ実行する。
+//! 準備ガイドの入力は通常操縦より先に処理する。決定は離した時、準備完了後のやり直しは長押しで実行する。
 use super::*;
 
 pub(super) struct Guide {
     pub enabled: bool,
     pub confirmed: bool,
     armed: bool,
-    pending: Option<usize>,
+    pending: Option<(usize, Instant)>,
     context: Option<(PreparationPhase, PreparationStep, bool, bool, bool)>,
 }
 impl Default for Guide {
@@ -20,6 +20,10 @@ impl Default for Guide {
     }
 }
 impl Guide {
+    pub fn restart_pending(&self) -> bool {
+        self.pending.is_some_and(|(button, _)| button == 1)
+    }
+
     pub fn reset_input(&mut self) {
         self.armed = false;
         self.pending = None;
@@ -29,6 +33,14 @@ impl Guide {
 }
 
 impl Runtime {
+    pub(super) fn guide_restart_hold_required(&self) -> bool {
+        !self.emergency
+            && self.homing.is_none()
+            && self.sequence.is_none()
+            && (self.preparation == PreparationPhase::Waiting
+                || self.preparation_step() == PreparationStep::Position)
+    }
+
     pub(super) fn operation_feedback(&mut self, cue: u8) {
         if self.fresh()
             && self.device.as_ref().is_some_and(|d| d.tone)
@@ -39,7 +51,7 @@ impl Runtime {
     }
 
     /// trueなら入力を消費済み。falseのときだけ既存の機体操縦へ渡す。
-    pub(super) fn read_guide(&mut self, input: &ControllerState, _now: Instant) -> Result<bool> {
+    pub(super) fn read_guide(&mut self, input: &ControllerState, now: Instant) -> Result<bool> {
         if !self.guide.enabled {
             self.guide.reset_input();
             return Ok(false);
@@ -73,13 +85,10 @@ impl Runtime {
             return Ok(false);
         }
         // 自動動作中は機構操作へ渡さず、○による中断だけを受け付ける。
-        if automatic
-            && input.buttons[1] == 0
-            && !self.guide.pending.is_some_and(|button| button == 1)
-        {
+        if automatic && input.buttons[1] == 0 && !self.guide.restart_pending() {
             return Ok(true);
         }
-        if let Some(button) = self.guide.pending {
+        if let Some((button, since)) = self.guide.pending {
             let only_button = neutral_axes
                 && input
                     .buttons
@@ -89,6 +98,17 @@ impl Runtime {
             if !only_button {
                 self.operation_feedback(2);
                 self.guide.reset_input();
+                return Ok(true);
+            }
+            if button == 1 && self.guide_restart_hold_required() {
+                if input.buttons[button] == 0 {
+                    // 短押しは取消。ホーミング済みの原点と保持姿勢を変えない。
+                    self.guide.reset_input();
+                } else if now.saturating_duration_since(since) >= Duration::from_secs(1) {
+                    self.guide.reset_input();
+                    self.guide_action(button)?;
+                    self.error.clear();
+                }
                 return Ok(true);
             }
             if input.buttons[button] != 0 {
@@ -108,8 +128,8 @@ impl Runtime {
                 .map(|(i, _)| i)
                 .collect();
             if pressed.len() == 1 && matches!(pressed[0], 0 | 1 | 2 | 13 | 14) {
-                self.guide.pending = Some(pressed[0]);
-                self.guide.confirmed = true;
+                self.guide.pending = Some((pressed[0], now));
+                self.guide.confirmed = !(pressed[0] == 1 && self.guide_restart_hold_required());
             } else if !pressed.is_empty() {
                 self.guide.reset_input();
             }
@@ -323,7 +343,7 @@ mod tests {
         r.read_pad(button(0), now + Duration::from_secs(2)).unwrap();
         r.read_pad(ControllerState::default(), now).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Waiting);
-        press(&mut r, 1, 1).unwrap();
+        press(&mut r, 1, 1000).unwrap();
         assert_eq!(r.preparation, PreparationPhase::Setting);
         assert_eq!(r.preparation_step(), PreparationStep::Court);
         r.engage_emergency().unwrap();
@@ -384,7 +404,7 @@ mod tests {
                 .iter()
                 .all(|o| o.captured)
         );
-        press(&mut r, 1, 1).unwrap();
+        press(&mut r, 1, 1000).unwrap();
         assert!(r.court.is_none());
         assert!(
             r.machine
@@ -505,5 +525,102 @@ mod tests {
         r.device.as_mut().unwrap().tone = false;
         r.operation_feedback(1);
         assert_eq!(cues(&r).len(), count);
+    }
+
+    #[test]
+    fn post_homing_circle_tap_preserves_origins_and_ee_hold() {
+        for phase in [PreparationPhase::Setting, PreparationPhase::Waiting] {
+            let mut r = runtime();
+            r.court = Some(Court::Blue);
+            origins(&mut r);
+            r.preparation = phase;
+            r.ee.targets.insert("ee_rotation".into(), 1500.0);
+            let before = r.shared.status_snapshot().logs.clone();
+            press(&mut r, 1, 999).unwrap();
+            assert_eq!(r.preparation, phase);
+            assert_eq!(r.court, Some(Court::Blue));
+            assert!(
+                r.machine
+                    .origin_states(r.telemetry.as_ref())
+                    .iter()
+                    .all(|origin| origin.captured)
+            );
+            assert_eq!(r.ee.targets["ee_rotation"], 1500.0);
+            assert_eq!(r.shared.status_snapshot().logs, before);
+            r.publish();
+            assert!(r.shared.status_snapshot().guide_restart_hold);
+            assert!(!r.shared.status_snapshot().guide_restart_holding);
+            assert!(!r.shared.status_snapshot().guide_release);
+        }
+    }
+
+    #[test]
+    fn circle_restarts_at_one_second_once_and_reports_the_hold_gesture() {
+        let mut r = runtime();
+        r.court = Some(Court::Red);
+        origins(&mut r);
+        r.preparation = PreparationPhase::Waiting;
+        let now = Instant::now();
+        r.read_pad(ControllerState::default(), now).unwrap();
+        r.read_pad(button(1), now).unwrap();
+        r.publish();
+        assert!(r.shared.status_snapshot().guide_restart_holding);
+        assert!(!r.shared.status_snapshot().guide_release);
+        r.read_pad(button(1), now + Duration::from_millis(999))
+            .unwrap();
+        assert_eq!(r.court, Some(Court::Red));
+        r.read_pad(button(1), now + Duration::from_millis(1000))
+            .unwrap();
+        assert!(r.court.is_none());
+        assert_eq!(r.preparation_step(), PreparationStep::Court);
+        assert!(
+            r.machine
+                .origin_states(r.telemetry.as_ref())
+                .iter()
+                .all(|origin| !origin.captured)
+        );
+        let before = r.shared.status_snapshot().logs.clone();
+        assert_eq!(before.iter().filter(|line| *line == "TX TONE 1").count(), 1);
+        r.read_pad(button(1), now + Duration::from_secs(2)).unwrap();
+        r.read_pad(ControllerState::default(), now + Duration::from_secs(2))
+            .unwrap();
+        assert_eq!(r.shared.status_snapshot().logs, before);
+    }
+
+    #[test]
+    fn circle_hold_is_cancelled_by_deflection_ps_disconnect_or_context_change() {
+        for case in ["stick", "ps", "disconnect", "context"] {
+            let mut r = runtime();
+            r.court = Some(Court::Blue);
+            origins(&mut r);
+            r.preparation = PreparationPhase::Waiting;
+            let now = Instant::now();
+            r.read_pad(ControllerState::default(), now).unwrap();
+            r.read_pad(button(1), now).unwrap();
+            match case {
+                "stick" => {
+                    let mut input = button(1);
+                    input.axes[0] = 0.5;
+                    r.read_pad(input, now + Duration::from_millis(400)).unwrap();
+                }
+                "ps" => {
+                    let mut input = button(1);
+                    input.buttons[5] = 1;
+                    r.read_pad(input, now + Duration::from_millis(400)).unwrap();
+                }
+                "disconnect" => r.disconnect_pad(),
+                _ => r.preparation = PreparationPhase::Recovery,
+            }
+            r.read_pad(button(1), now + Duration::from_secs(2)).unwrap();
+            r.read_pad(ControllerState::default(), now + Duration::from_secs(2))
+                .unwrap();
+            assert_eq!(r.court, Some(Court::Blue), "{case}");
+            assert!(
+                r.machine
+                    .origin_states(r.telemetry.as_ref())
+                    .iter()
+                    .all(|origin| origin.captured)
+            );
+        }
     }
 }
