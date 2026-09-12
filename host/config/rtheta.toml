@@ -2,46 +2,6 @@ swap_dpad_left_right = false
 slow_speed_percent = 10.0
 protocol_version = 1
 
-[[dc_motors]]
-name = "bonus_selector"
-channel = 0
-input_axis = 0
-input_sign = 1.0
-maximum_duty = 100
-
-[bonus]
-enabled = false
-selector_motor = "bonus_selector"
-lid_servo = "bonus_lid"
-align_servo = "bonus_align"
-selector_duty = 600
-selector_slow_duty = 303
-selector_slow_zone_counts = 1000
-selector_tolerance_counts = 50
-encoder_ppr = 2048
-pinion_module_mm = 1.0
-pinion_teeth = 20
-lid_closed_position = 19
-lid_open_position = 4079
-align_home_position = 4084
-align_position = 0
-servo_tolerance_counts = 20
-dwell_ms = 300
-cycle_timeout_ms = 20000
-capacity = 6
-
-[[bonus.boxes]]
-name = "ボックス1"
-offset_counts = 0
-
-[[bonus.boxes]]
-name = "ボックス2"
-offset_counts = 0
-
-[[bonus.boxes]]
-name = "ボックス3"
-offset_counts = 0
-
 [[axes]]
 name = "r"
 unit = "mm"
@@ -153,26 +113,6 @@ zero0_count = 1024.0
 counts_per_deg = 34.133335
 enabled = true
 
-[[serial_svmd.servos]]
-name = "bonus_lid"
-id = 2
-input_sign = 1.0
-speed_position_per_second = 1000.0
-acceleration = 100
-zero0_count = 2048.0
-counts_per_deg = 11.377778
-enabled = true
-
-[[serial_svmd.servos]]
-name = "bonus_align"
-id = 3
-input_sign = 1.0
-speed_position_per_second = 1000.0
-acceleration = 100
-zero0_count = 2048.0
-counts_per_deg = 11.377778
-enabled = true
-
 [parameters]
 c620_esc_id = 1.0
 c620_slot2_esc_id = 2.0
@@ -206,9 +146,5 @@ telemetry_period_ms = 50.0
 watchdog_ms = 250.0
 
 [svmd_parameters]
-
-[dcmd_parameters]
-ramp_step = 130.0
-reverse_brake_ms = 0.0
 
 [serial_svmd_parameters]
