@@ -150,6 +150,7 @@ pub struct Status {
     pub planar_mode: crate::machine::xy::PlanarMode,
     pub planar_mode_blocker: String,
     pub xy_blocker: String,
+    pub xy_position_mm: Option<[f32; 2]>,
     pub connected: bool,
     pub configured: bool,
     pub ai_active: bool,

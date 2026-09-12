@@ -42,6 +42,21 @@ impl BridgeApp {
                 });
                 if status.planar_mode == crate::machine::xy::PlanarMode::Xy {
                     ui.label(RichText::new("上：正面へ　下：手前へ　左右：横移動（θ=0の正面を基準）").size(12.0).color(MUTED));
+                    if let Some([x, y]) = status.xy_position_mm {
+                        let limits = self.shared.config().machine.xy;
+                        ui.label(format!("現在 X {x:.1} / Y {y:.1} mm"));
+                        if limits.y_min_mm.is_some() || limits.y_max_mm.is_some() {
+                            ui.label(format!("Y範囲：{} 〜 {} mm",
+                                limits.y_min_mm.map_or_else(|| "下限なし".into(), |value| format!("{value:.1}")),
+                                limits.y_max_mm.map_or_else(|| "上限なし".into(), |value| format!("{value:.1}"))));
+                            if limits.y_min_mm.is_some_and(|min| y <= min) {
+                                ui.colored_label(WARNING, "Y下限：手前への移動を制限しています。正面側へ戻せます。");
+                            }
+                            if limits.y_max_mm.is_some_and(|max| y >= max) {
+                                ui.colored_label(WARNING, "Y上限：正面への移動を制限しています。手前側へ戻せます。");
+                            }
+                        }
+                    }
                     if !status.xy_blocker.is_empty() { ui.colored_label(WARNING, &status.xy_blocker); }
                 }
                 if !status.planar_mode_blocker.is_empty() {

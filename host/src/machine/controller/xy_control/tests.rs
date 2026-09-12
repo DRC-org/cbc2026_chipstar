@@ -6,6 +6,8 @@ fn fixture(r: f32, theta: f32, offset: f32) -> (MachineController, Telemetry) {
     let mut profile = MachineProfile::embedded().unwrap();
     profile.xy.speed_mm_per_second = 100.0;
     profile.xy.radius_offset_mm = offset;
+    profile.xy.y_min_mm = None;
+    profile.xy.y_max_mm = None;
     profile.slow_speed_percent = 20.0;
     for axis in &mut profile.axes {
         axis.input_sign = 1.0;
@@ -214,6 +216,8 @@ fn xy_settings_round_trip_and_old_profiles_keep_defaults() {
     assert_eq!(MachineProfile::parse(&text).unwrap().xy, p.xy);
     p.xy.radius_offset_mm = 123.4;
     p.xy.speed_mm_per_second = 80.0;
+    p.xy.y_min_mm = Some(-250.0);
+    p.xy.y_max_mm = Some(850.0);
     assert_eq!(
         MachineProfile::parse(&toml::to_string_pretty(&p).unwrap())
             .unwrap()
@@ -270,4 +274,177 @@ fn xy_low_speed_press_ramps_down_instead_of_clipping_the_current_velocity() {
         previous = v[0];
     }
     close(previous, 400.0 * 6.0_f32.to_radians());
+}
+
+#[test]
+fn y_limit_profiles_validate_both_sides_and_optional_bounds() {
+    for (min, max, valid) in [
+        (None, None, true),
+        (Some(-100.0), None, true),
+        (None, Some(800.0), true),
+        (Some(-300.0), Some(800.0), true),
+        (Some(300.0), Some(300.0), false),
+        (Some(301.0), Some(300.0), false),
+        (Some(f32::NAN), None, false),
+        (None, Some(f32::INFINITY), false),
+        (None, Some(10001.0), false),
+    ] {
+        let profile = xy::XyProfile {
+            y_min_mm: min,
+            y_max_mm: max,
+            ..Default::default()
+        };
+        assert_eq!(profile.validate().is_ok(), valid, "{profile:?}");
+        if valid {
+            let restored: xy::XyProfile =
+                toml::from_str(&toml::to_string(&profile).unwrap()).unwrap();
+            assert_eq!(restored, profile);
+        }
+    }
+}
+
+#[test]
+fn xy_position_uses_radius_offset_and_live_measurements_without_fabricated_zeros() {
+    for theta in [0.0, 60.0, -60.0, 90.0, 180.0] {
+        let (mut m, mut t) = fixture(100.0, theta, 300.0);
+        let position = m.xy_position(Some(&t)).unwrap();
+        close(position[0], -400.0 * theta.to_radians().sin());
+        close(position[1], 400.0 * theta.to_radians().cos());
+        t.slots[0].measured += 60.0 * m.profile.axes[0].native_per_unit;
+        close(
+            m.xy_position(Some(&t)).unwrap()[1],
+            460.0 * theta.to_radians().cos(),
+        );
+        t.stale_slots = 2;
+        assert!(m.xy_position(Some(&t)).is_none());
+        t.stale_slots = 0;
+        m.invalidate_origin(0);
+        assert!(m.xy_position(Some(&t)).is_none());
+        assert!(m.xy_position(None).is_none());
+    }
+}
+
+#[test]
+fn y_boundaries_stop_outward_motion_but_allow_return_sideways_and_z() {
+    for theta in [0.0, 60.0, -60.0, 135.0, -135.0, 180.0] {
+        for direction in [-1.0, 1.0] {
+            for outside in [0.0, 5.0] {
+                let (mut m, t) = fixture(300.0, theta, 100.0);
+                // Y境界を単独で検証する。θの可動域による制限は別のテストで確認する。
+                m.profile.axes[1].minimum = -360.0;
+                m.profile.axes[1].maximum = 360.0;
+                let y = m.xy_position(Some(&t)).unwrap()[1];
+                if direction > 0.0 {
+                    m.profile.xy.y_max_mm = Some(y - outside);
+                } else {
+                    m.profile.xy.y_min_mm = Some(y + outside);
+                }
+                let mut outward = input(1.0, direction);
+                outward.axes[5] = 0.4;
+                let v = velocities(&mut m, &t, &outward, false, Instant::now());
+                close(v[0], 0.0);
+                close(v[1], 0.0);
+                close(v[2], 80.0);
+                let back = world(
+                    velocities(&mut m, &t, &input(0.0, -direction), false, Instant::now()),
+                    400.0,
+                    theta,
+                );
+                assert!(
+                    back[1] * direction < 0.0,
+                    "theta={theta}, direction={direction}, outside={outside}, back={back:?}"
+                );
+                let sideways = world(
+                    velocities(&mut m, &t, &input(1.0, 0.0), false, Instant::now()),
+                    400.0,
+                    theta,
+                );
+                assert!(sideways[0] > 0.0);
+                close(sideways[1], 0.0);
+            }
+        }
+    }
+}
+
+#[test]
+fn y_boundary_scales_diagonal_direction_and_cancels_residual_outward_velocity() {
+    let (mut m, t) = fixture(300.0, 45.0, 100.0);
+    let y = m.xy_position(Some(&t)).unwrap()[1];
+    m.profile.xy.y_max_mm = Some(y + 1.0);
+    let v = world(
+        velocities(&mut m, &t, &input(1.0, 1.0), false, Instant::now()),
+        400.0,
+        45.0,
+    );
+    close(v[0], v[1]);
+    assert!(v[1] > 0.0 && v[1] <= 5.002);
+    for axis in &mut m.profile.axes {
+        axis.jog_ramp_seconds = 1.0;
+    }
+    m.xy_velocity = [50.0, 50.0];
+    m.profile.xy.y_max_mm = Some(y);
+    let v = velocities(&mut m, &t, &input(0.0, 0.0), false, Instant::now());
+    close(v[0], 0.0);
+    close(v[1], 0.0);
+    assert_eq!(m.xy_velocity, [0.0, 0.0]);
+}
+
+#[test]
+fn y_motion_brakes_to_each_boundary_without_crossing_and_can_back_away() {
+    for (direction, boundary) in [(1.0, 300.0), (-1.0, 150.0)] {
+        let (mut m, mut t) = fixture(100.0, 0.0, 100.0);
+        for axis in &mut m.profile.axes {
+            axis.jog_ramp_seconds = 0.5;
+        }
+        if direction > 0.0 {
+            m.profile.xy.y_max_mm = Some(boundary);
+        } else {
+            m.profile.xy.y_min_mm = Some(boundary);
+        }
+        let start = Instant::now();
+        let mut peak: f32 = 0.0;
+        let mut last: f32 = 0.0;
+        for n in 0..1000 {
+            let v = velocities(
+                &mut m,
+                &t,
+                &input(0.0, direction),
+                false,
+                start + Duration::from_millis(n * 20),
+            );
+            peak = peak.max(v[0].abs());
+            last = v[0].abs();
+            t.slots[0].measured += v[0] * 0.02 * m.profile.axes[0].native_per_unit;
+            let y = m.xy_position(Some(&t)).unwrap()[1];
+            assert!(
+                (y - boundary) * direction <= 0.001,
+                "y={y}, boundary={boundary}"
+            );
+        }
+        assert!(peak > 20.0 && last < 0.1, "peak={peak}, last={last}");
+        close(m.xy_position(Some(&t)).unwrap()[1], boundary);
+        let v = velocities(
+            &mut m,
+            &t,
+            &input(0.0, -direction),
+            false,
+            start + Duration::from_secs(20),
+        );
+        assert!(v[0] * direction < 0.0);
+    }
+}
+
+#[test]
+fn y_limits_do_not_replace_the_joint_limits_or_axis_based_jog() {
+    let (mut m, t) = fixture(300.0, 0.0, 100.0);
+    m.profile.xy.y_max_mm = Some(400.0);
+    let lines = m.ramped_jog_lines(&input(0.0, 1.0), &t, false, Instant::now());
+    assert!(lines[0].starts_with("JOG 0 "));
+    assert!(!lines[0].ends_with(" 0.00000"));
+    m.reset_jog();
+    m.profile.xy.y_max_mm = Some(900.0);
+    m.profile.axes[0].maximum = 300.0;
+    let v = velocities(&mut m, &t, &input(0.0, 1.0), false, Instant::now());
+    close(v[0], 0.0);
+    close(v[1], 0.0);
 }

@@ -30,12 +30,19 @@ pub struct XyProfile {
     pub speed_mm_per_second: f32,
     /// r=0のときの旋回中心からEEまでの水平距離。
     pub radius_offset_mm: f32,
+    /// フィールド基準のY可動域。未設定の側は制限しない。
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub y_min_mm: Option<f32>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub y_max_mm: Option<f32>,
 }
 impl Default for XyProfile {
     fn default() -> Self {
         Self {
             speed_mm_per_second: 100.0,
             radius_offset_mm: 0.0,
+            y_min_mm: None,
+            y_max_mm: None,
         }
     }
 }
@@ -54,8 +61,52 @@ impl XyProfile {
             self.radius_offset_mm.is_finite() && (0.0..=10000.0).contains(&self.radius_offset_mm),
             "r=0の旋回半径は0〜10000 mmで指定してください"
         );
+        anyhow::ensure!(
+            self.y_min_mm
+                .into_iter()
+                .chain(self.y_max_mm)
+                .all(|value| value.is_finite() && (-10000.0..=10000.0).contains(&value)),
+            "Y下限・上限は−10000〜10000 mmで指定してください"
+        );
+        if let (Some(min), Some(max)) = (self.y_min_mm, self.y_max_mm) {
+            anyhow::ensure!(min < max, "Y下限はY上限より小さくしてください");
+        }
         Ok(())
     }
+
+    /// 遅延0.2秒とXYの加減速度を考慮し、範囲外へ向かう速度だけを抑える。
+    pub(super) fn y_velocity_factor(&self, y: f32, velocity: f32, acceleration: f32) -> f32 {
+        let distance = if velocity > 0.0 {
+            self.y_max_mm.map(|max| max - y)
+        } else if velocity < 0.0 {
+            self.y_min_mm.map(|min| y - min)
+        } else {
+            None
+        };
+        let Some(distance) = distance else {
+            return 1.0;
+        };
+        if !y.is_finite() || !velocity.is_finite() || acceleration <= 0.0 {
+            return 0.0;
+        }
+        let distance = f64::from(distance.max(0.0));
+        let cap = if acceleration.is_finite() {
+            let acceleration = f64::from(acceleration);
+            let delay_velocity = acceleration * 0.2;
+            // 有理化して、境界の近くでも差し引きによる精度低下を避ける。
+            2.0 * acceleration * distance
+                / ((delay_velocity * delay_velocity + 2.0 * acceleration * distance).sqrt()
+                    + delay_velocity)
+        } else {
+            distance / 0.2
+        };
+        (cap / f64::from(velocity.abs())).clamp(0.0, 1.0) as f32
+    }
+}
+
+pub fn position(radius: f32, theta_deg: f32) -> [f32; 2] {
+    let (sin, cos) = theta_deg.to_radians().sin_cos();
+    [-radius * sin, radius * cos]
 }
 
 /// gilrsのスティックは上・右が正。斜めでも最大速度を超えない。

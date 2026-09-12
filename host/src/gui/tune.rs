@@ -182,6 +182,36 @@ impl BridgeApp {
             });
             ui.label(RichText::new("実際の旋回半径 = r座標 + 半径オフセット。r=0のときの旋回中心からEEまでの水平距離を入力してください。")
                 .size(12.0).color(MUTED));
+            ui.separator();
+            ui.label(RichText::new("XY操縦時のY範囲").strong());
+            let current_y = status.xy_position_mm.map(|position| position[1]);
+            ui.label(current_y.map_or_else(
+                || "現在Y：原点・位置応答待ち".into(),
+                |y| format!("現在Y：{y:.1} mm"),
+            ));
+            for (label, limit) in [
+                ("Y下限（手前側）", &mut self.edit.xy.y_min_mm),
+                ("Y上限（正面側）", &mut self.edit.xy.y_max_mm),
+            ] {
+                ui.horizontal_wrapped(|ui| {
+                    let mut enabled = limit.is_some();
+                    if ui.checkbox(&mut enabled, label).changed() {
+                        *limit = enabled.then_some(current_y.unwrap_or(0.0).clamp(-10000.0, 10000.0));
+                        edited = true;
+                    }
+                    if let Some(value) = limit {
+                        edited |= ui.add(egui::DragValue::new(value).range(-10000.0..=10000.0).speed(1.0).suffix(" mm")).changed();
+                        if ui.add_enabled(current_y.is_some_and(|y| (-10000.0..=10000.0).contains(&y)), egui::Button::new("現在Yを使う")).clicked() {
+                            *value = current_y.unwrap();
+                            edited = true;
+                        }
+                    } else {
+                        ui.label(RichText::new("制限なし").color(MUTED));
+                    }
+                });
+            }
+            ui.label(RichText::new("旋回中心をY=0、θ=0の正面を＋Yとします。現在Yは適用中の半径オフセットで計算しています。値を変更後、停止して上部の「適用」、残す場合は「保存」を押してください。")
+                .size(12.0).color(MUTED));
         });
         ui.add_space(8.0);
         let selected = axes

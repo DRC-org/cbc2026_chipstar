@@ -2,6 +2,12 @@ use super::*;
 use crate::machine::xy;
 
 impl MachineController {
+    pub fn xy_position(&self, telemetry: Option<&Telemetry>) -> Option<[f32; 2]> {
+        let radius = self.axis_position("r", telemetry)? + self.profile.xy.radius_offset_mm;
+        let theta = self.axis_position("theta", telemetry)?;
+        (radius.is_finite() && theta.is_finite()).then(|| xy::position(radius, theta))
+    }
+
     pub fn xy_blocker(&self, telemetry: Option<&Telemetry>) -> Option<&'static str> {
         let axes = ["r", "theta"].map(|name| self.profile.axes.iter().find(|a| a.name == name));
         if !matches!(axes, [Some(r), Some(t)] if r.unit == "mm" && t.unit == "deg") {
@@ -92,6 +98,12 @@ impl MachineController {
                 });
             }
         }
+        let y = xy::position(radius, theta)[1];
+        let y_factor = self
+            .profile
+            .xy
+            .y_velocity_factor(y, desired[1], acceleration);
+        let desired = desired.map(|v| v * y_factor);
         let delta = [
             desired[0] - self.xy_velocity[0],
             desired[1] - self.xy_velocity[1],
@@ -107,8 +119,8 @@ impl MachineController {
             self.xy_velocity[1] + delta[1] * fraction,
         ];
         let joints = xy::joint_velocity(world, radius, theta);
-        // 速度上限・接点・可動域は2軸を同じ比率で制限し、XYの移動方向を保つ。
-        let mut factor: f32 = 1.0;
+        // Y境界・速度上限・接点・可動域は2軸を同じ比率で制限し、XYの移動方向を保つ。
+        let mut factor = self.profile.xy.y_velocity_factor(y, world[1], acceleration);
         for (joint, i) in indices.iter().copied().enumerate() {
             let axis = &self.profile.axes[i];
             let requested = joints[joint];

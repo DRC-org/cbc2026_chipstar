@@ -1386,6 +1386,10 @@ impl Runtime {
             s.simulated = self.cfg.simulate;
             s.screen_control = self.screen_control;
             s.planar_mode = self.planar_mode;
+            s.xy_position_mm = self
+                .fresh()
+                .then(|| self.machine.xy_position(self.telemetry.as_ref()))
+                .flatten();
             s.planar_mode_blocker = self.planar_mode_blocker().unwrap_or_default().into();
             s.xy_blocker = if self.adjustment {
                 "原点調整中はr・θ移動を使ってください".into()

@@ -675,6 +675,50 @@ mod workflow_tests {
     }
 
     #[test]
+    fn xy_y_limits_apply_and_save_without_losing_the_live_coordinate() {
+        let mut profile = MachineProfile::embedded().unwrap();
+        profile.xy.radius_offset_mm = 380.0;
+        profile.xy.y_min_mm = None;
+        profile.xy.y_max_mm = None;
+        for axis in &mut profile.axes {
+            axis.origin_position = if axis.name == "r" { 100.0 } else { 0.0 };
+        }
+        let mut harness = Harness::with_profile(profile);
+        assert!(harness.shared.status_snapshot().xy_position_mm.is_none());
+        harness.capture_origins();
+        let status = harness.wait(|s| s.xy_position_mm.is_some());
+        assert!((status.xy_position_mm.unwrap()[1] - 480.0).abs() < 0.01);
+        harness.app.switch_screen(Screen::Tune);
+        harness.app.edit.xy.y_min_mm = Some(150.0);
+        harness.app.edit.xy.y_max_mm = Some(800.0);
+        harness.app.source = toml::to_string_pretty(&harness.app.edit).unwrap();
+        harness.app.dispatch(Action::Apply);
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        let status = harness.wait(|s| s.configured && s.xy_position_mm.is_some());
+        assert!((status.xy_position_mm.unwrap()[1] - 480.0).abs() < 0.01);
+        let applied = harness.shared.config().machine.xy;
+        assert_eq!(applied.y_min_mm, Some(150.0));
+        assert_eq!(applied.y_max_mm, Some(800.0));
+
+        let path = std::env::temp_dir().join(format!(
+            "catchrobo-xy-y-limits-gui-{}.toml",
+            std::process::id()
+        ));
+        harness.app.profile_file = path.display().to_string();
+        harness.app.dispatch(Action::Save);
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        let saved = crate::transport::profile_store::load(&path).unwrap();
+        std::fs::remove_file(&path).unwrap();
+        assert_eq!(saved.xy, applied);
+
+        harness.app.edit.xy.y_min_mm = Some(900.0);
+        harness.app.source = toml::to_string_pretty(&harness.app.edit).unwrap();
+        harness.app.dispatch(Action::Apply);
+        assert!(harness.app.message_error);
+        assert_eq!(harness.shared.config().machine.xy, applied);
+    }
+
+    #[test]
     fn bonus_tuning_applies_tests_stops_captures_and_saves_while_disabled() {
         let mut harness = Harness::with_profile(crate::machine::test_support::with_bonus());
         harness.app.switch_screen(Screen::Tune);
