@@ -110,7 +110,7 @@ impl Runtime {
                 "stop" | "cut" | "safe" | "heartbeat" | "release" | "fault"
             )
         {
-            bail!("ホーミングを停止してから操作してください");
+            bail!("ホーミング・正面復帰を停止してから操作してください");
         }
         if self.sequence.is_some()
             && !matches!(
@@ -236,6 +236,7 @@ impl Runtime {
                 {
                     bail!("原点を採用できません");
                 }
+                self.front_return_pending = None;
                 return Ok(Reply::data(format!(
                     "現在位置を{} {}としてhost座標へ採用しました",
                     position, self.cfg.machine.axes[index].unit

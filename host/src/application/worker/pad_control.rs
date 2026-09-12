@@ -47,6 +47,11 @@ impl Runtime {
             self.pad.home_ready = false;
             return Ok(());
         }
+        if self.homing.is_some() {
+            self.manual_input = ControllerState::default();
+            self.pad.ee_armed = false;
+            return Ok(());
+        }
         // R1を押している間は、通常のアーム・EE入力と重ならないボーナス操作層にする。
         if !self.screen_control
             && !self.preparation.locked()

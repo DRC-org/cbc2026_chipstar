@@ -120,7 +120,7 @@ impl Runtime {
                 self.authority.clear_input();
                 self.pad.ee_armed = false;
                 if !self.drive.running()
-                    && let Err(error) = self.start()
+                    && let Err(error) = self.start_with_front_return(false)
                 {
                     self.screen_control = previous_screen_control;
                     return Err(error);

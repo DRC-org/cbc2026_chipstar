@@ -62,6 +62,8 @@ struct Runtime {
     ee: ee_control::Control,
     bonus: bonus_control::Control,
     homing: Option<homing::Homing>,
+    /// ホーミング後、最初の通常スタートで使う正面復帰の制限時間。
+    front_return_pending: Option<f32>,
     sequence: Option<sequence_control::Execution>,
     pad: pad_control::Control,
     authority: Authority,
@@ -123,6 +125,7 @@ impl Runtime {
             ee: ee_control::Control::default(),
             bonus: bonus_control::Control::default(),
             homing: None,
+            front_return_pending: None,
             sequence: None,
             pad: pad_control::Control::default(),
             authority: Authority::default(),
@@ -228,6 +231,7 @@ impl Runtime {
             "zのフィードバックがありません"
         );
         self.send(&format!("HOLD {mask}"))?;
+        self.front_return_pending = None;
         self.homing = None;
         self.pad.ee_armed = false;
         self.pad.home_since = None;
@@ -267,7 +271,10 @@ impl Runtime {
             // RUN送信後、応答前は保持対象が確定していない。JOG 0ではなくSTOPで競合を閉じる。
             || self.drive.awaiting().is_some()
             || self.test.enabled
-            || self.homing.is_some();
+            || self.homing.as_ref().is_some_and(|home| !home.is_front_return());
+        if cut {
+            self.front_return_pending = None;
+        }
         self.homing = None;
         self.pad.ee_armed = false;
         self.pad.home_since = None;
@@ -460,6 +467,9 @@ impl Runtime {
         Ok(())
     }
     fn start(&mut self) -> Result<()> {
+        self.start_with_front_return(true)
+    }
+    fn start_with_front_return(&mut self, return_to_front: bool) -> Result<()> {
         anyhow::ensure!(
             !self.preparation.locked(),
             "開始待ちです。準備画面で開始または再確認してください"
@@ -494,12 +504,19 @@ impl Runtime {
             .iter()
             .fold(0u8, |m, a| m | 1 << a.slot);
         let excluded = 7 & !mask;
+        // 外部の位置操作やホーミング前の目標へ戻さず、再開時の実測位置を保持する。
+        self.machine.hold_at_measured(self.telemetry.as_ref());
         if excluded != 0 {
             self.send(&format!("ENABLE {excluded} 0"))?;
         }
         self.send(&format!("ENABLE {mask} 1"))?;
         self.send("RUN")?;
         self.drive = DriveState::AwaitingRun(Instant::now());
+        if let Some(timeout) = self.front_return_pending.take()
+            && return_to_front
+        {
+            self.begin_front_return(timeout);
+        }
         self.error.clear();
         self.reason = "基板の運転応答待ち".into();
         Ok(())
@@ -719,6 +736,9 @@ impl Runtime {
                     .iter()
                     .zip(&before)
                     .any(|(now, old)| now.lost && !old.lost);
+                if origin_lost {
+                    self.front_return_pending = None;
+                }
                 let mask = self
                     .cfg
                     .machine
@@ -823,7 +843,7 @@ impl Runtime {
         if self.drive.running() {
             if let Err(error) = self.ready() {
                 self.fault(error.to_string());
-            } else if self.sequence.is_none() {
+            } else if self.sequence.is_none() && self.homing.is_none() {
                 let input = self.authority.input().unwrap_or(&self.manual_input);
                 let slow = self.adjustment
                     || (!self.authority.active() && self.screen_control)
@@ -1301,6 +1321,12 @@ impl Runtime {
                 "ソフト緊停中"
             } else if !self.fresh() {
                 "接続断 / 状態不明"
+            } else if self
+                .homing
+                .as_ref()
+                .is_some_and(|home| home.is_front_return())
+            {
+                "正面へ復帰中"
             } else if self.homing.is_some() {
                 "r・zホーミング中"
             } else if self.sequence.is_some() {

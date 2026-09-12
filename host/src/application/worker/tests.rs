@@ -271,6 +271,53 @@ fn manual_limit_edge_captures_origin_only_during_adjustment_run() {
 }
 
 #[test]
+fn start_holds_measured_theta_instead_of_a_pre_homing_target() {
+    for degrees in [-89.2, 89.2] {
+        let mut runtime = screen_runtime();
+        let theta = runtime
+            .cfg
+            .machine
+            .axes
+            .iter()
+            .find(|axis| axis.name == "theta")
+            .unwrap()
+            .clone();
+        let native = runtime.telemetry.as_ref().unwrap().slots[theta.slot as usize].measured
+            + degrees * theta.native_per_unit;
+        let telemetry = runtime.telemetry.as_mut().unwrap();
+        telemetry.mode = RunMode::Run;
+        telemetry.enabled_slots = 6;
+        telemetry.slots[theta.slot as usize].measured = native;
+        telemetry.slots[theta.slot as usize].target = native;
+        runtime.machine.observe(telemetry);
+        assert_eq!(
+            runtime
+                .machine
+                .origin_states(Some(telemetry))
+                .iter()
+                .find(|axis| axis.name == "theta")
+                .unwrap()
+                .target,
+            0.0
+        );
+
+        runtime.start().unwrap();
+        let states = runtime.machine.origin_states(runtime.telemetry.as_ref());
+        let theta_state = states.iter().find(|axis| axis.name == "theta").unwrap();
+        assert!((theta_state.target - degrees).abs() < 0.001);
+        assert!(theta_state.captured);
+        let lines = runtime.machine.ramped_jog_lines(
+            &ControllerState::default(),
+            runtime.telemetry.as_ref().unwrap(),
+            false,
+            Instant::now(),
+        );
+        assert!(lines.contains(&format!("TARGET {} {native:.5}", theta.slot)));
+        assert!(!lines.iter().any(|line| line.starts_with("JOG 1 ")));
+    }
+}
+
+#[test]
 fn screen_jog_requires_running_and_expires_without_latching_on_restart() {
     let mut runtime = screen_runtime();
     // Exercise the real-mode input gate while retaining the simulated transport.

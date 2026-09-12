@@ -1,4 +1,8 @@
 use super::*;
+use crate::machine::{AxisProfile, motion_profile::PositionProfile};
+#[cfg(test)]
+#[path = "homing_front_tests.rs"]
+mod front_tests;
 const Z_CLEARANCE_TOLERANCE_MM: f32 = 1.0;
 const THETA_TOLERANCE_DEG: f32 = 1.0;
 
@@ -17,6 +21,8 @@ enum Phase {
     AwaitRetreatRun,
     MoveRadialRetreat,
     AwaitHold,
+    AwaitFrontRun,
+    ReturnFront,
 }
 pub(super) struct Homing {
     theta_target: f32,
@@ -27,8 +33,29 @@ pub(super) struct Homing {
     axis_started: Instant,
     pub label: String,
     timeout_seconds: f32,
+    motion: Option<PositionProfile>,
+}
+impl Homing {
+    pub(super) fn is_front_return(&self) -> bool {
+        matches!(self.phase, Phase::AwaitFrontRun | Phase::ReturnFront)
+    }
 }
 impl Runtime {
+    pub(super) fn begin_front_return(&mut self, timeout_seconds: f32) {
+        let now = Instant::now();
+        self.homing = Some(Homing {
+            theta_target: 0.0,
+            rotation_field: None,
+            stage: 0,
+            phase: Phase::AwaitFrontRun,
+            since: now,
+            axis_started: now,
+            label: "正面0°へ復帰・運転応答待ち".into(),
+            timeout_seconds,
+            motion: None,
+        });
+    }
+
     pub(super) fn homing_idle(&self) -> bool {
         !self.emergency
             && !self.drive.running()
@@ -170,9 +197,57 @@ impl Runtime {
             since: now,
             axis_started: now,
             label: "z下端へホーミング".into(),
+            motion: None,
         });
         Ok(Reply::accepted())
     }
+
+    fn begin_homing_move(
+        &mut self,
+        axis: &AxisProfile,
+        target: f32,
+        speed_scale: f32,
+        now: Instant,
+    ) -> Result<()> {
+        let from = self
+            .machine
+            .axis_position(&axis.name, self.telemetry.as_ref())
+            .context("ホーミング移動の開始位置を確認できません")?;
+        let motion = PositionProfile::new(
+            from,
+            target,
+            axis.speed_per_second * speed_scale,
+            axis.jog_ramp_seconds * speed_scale,
+        );
+        let home = self.homing.as_mut().unwrap();
+        home.motion = Some(motion);
+        home.axis_started = now;
+        self.send_homing_position(axis.slot, from)
+    }
+
+    fn send_homing_position(&mut self, slot: u8, position: f32) -> Result<()> {
+        let native = self
+            .machine
+            .set_position_target(slot, position)
+            .context("ホーミング移動中に原点を失いました")?;
+        self.send(&format!("TARGET {slot} {native:.5}"))
+    }
+
+    fn advance_homing_move(&mut self, axis: &AxisProfile, now: Instant) -> Result<bool> {
+        let home = self.homing.as_ref().unwrap();
+        let elapsed = now
+            .saturating_duration_since(home.axis_started)
+            .as_secs_f32();
+        anyhow::ensure!(
+            elapsed < home.timeout_seconds,
+            "{}が設定した位置に到達せず時間超過しました",
+            axis.name
+        );
+        let motion = home.motion.context("ホーミング移動の軌道がありません")?;
+        self.send_homing_position(axis.slot, motion.position(elapsed))?;
+        Ok(elapsed >= motion.duration())
+    }
+
     pub(super) fn tick_homing(&mut self, now: Instant) -> Result<()> {
         let Some(home) = &self.homing else {
             return Ok(());
@@ -203,6 +278,39 @@ impl Runtime {
             .context("z軸の設定が必要です")?
             .clone();
         let holding = (1 << theta.slot) | (1 << z.slot);
+        if home.is_front_return() {
+            if matches!(phase, Phase::AwaitFrontRun) {
+                if self.drive.running() {
+                    self.begin_homing_move(&theta, 0.0, 1.0, now)?;
+                    let home = self.homing.as_mut().unwrap();
+                    home.phase = Phase::ReturnFront;
+                    home.label = "正面0°へ加減速して復帰中（r・z保持）".into();
+                } else {
+                    anyhow::ensure!(
+                        elapsed < Duration::from_millis(500),
+                        "正面復帰の運転応答がありません"
+                    );
+                }
+                return Ok(());
+            }
+            self.ready()?;
+            anyhow::ensure!(self.drive.running(), "正面復帰中に運転状態を失いました");
+            let position = self
+                .machine
+                .axis_position("theta", Some(&t))
+                .context("正面復帰中にθ原点を失いました")?;
+            let finished = self.advance_homing_move(&theta, now)?;
+            if finished && position.abs() <= THETA_TOLERANCE_DEG {
+                self.homing = None;
+                self.machine.reset_jog();
+                self.manual_input = ControllerState::default();
+                self.authority.clear_input();
+                self.guide.reset_input();
+                self.pad.ee_armed = false;
+                self.reason = "正面復帰完了・運転中".into();
+            }
+            return Ok(());
+        }
         if matches!(
             phase,
             Phase::AwaitHold | Phase::AwaitRotationRun | Phase::Rotate
@@ -268,6 +376,7 @@ impl Runtime {
             if matches!(phase, Phase::AwaitHold) {
                 if t.mode == RunMode::Run && t.enabled_slots == holding {
                     self.prepared_rotation_field = home.rotation_field;
+                    self.front_return_pending = Some(home.timeout_seconds);
                     self.homing = None;
                     self.reason = "ホーミング完了。rを後退し、θ・zを保持しています".into();
                 } else {
@@ -281,11 +390,7 @@ impl Runtime {
             let target = radial.origin_position - radial.homing_retreat_mm();
             if matches!(phase, Phase::AwaitRetreatRun) {
                 if t.mode == RunMode::Run && t.enabled_slots == enabled {
-                    let native_target = self
-                        .machine
-                        .set_position_target(radial.slot, target)
-                        .context("r原点が確認されていません")?;
-                    self.send(&format!("TARGET {} {native_target:.5}", radial.slot))?;
+                    self.begin_homing_move(&radial, target, 1.0, now)?;
                     let h = self.homing.as_mut().unwrap();
                     h.phase = Phase::MoveRadialRetreat;
                     h.since = now;
@@ -305,7 +410,8 @@ impl Runtime {
             );
             let origin = &self.machine.origin_states(Some(&t))[index];
             anyhow::ensure!(origin.captured, "r後退中に原点を失いました");
-            if (origin.position - target).abs() <= 1.0 {
+            let finished = self.advance_homing_move(&radial, now)?;
+            if finished && (origin.position - target).abs() <= 1.0 {
                 anyhow::ensure!(
                     !radial.limit.unwrap().reached(contacts),
                     "r後退後もリミットが作動しています"
@@ -315,17 +421,19 @@ impl Runtime {
                 h.phase = Phase::AwaitHold;
                 h.since = now;
                 h.label = "r後退完了。停止を確認しています（θ・z保持中）".into();
-            } else {
-                anyhow::ensure!(
-                    now.duration_since(home.axis_started).as_secs_f32() < home.timeout_seconds,
-                    "rが設定した後退位置に到達せず時間超過しました"
-                );
             }
             return Ok(());
         }
         if matches!(phase, Phase::AwaitRotationRun | Phase::Rotate) {
+            let theta_target = home.theta_target;
             if matches!(phase, Phase::AwaitRotationRun) {
                 if t.mode == RunMode::Run && t.enabled_slots == holding {
+                    self.begin_homing_move(
+                        &theta,
+                        theta_target,
+                        theta.homing_speed_percent * 0.01,
+                        now,
+                    )?;
                     let h = self.homing.as_mut().unwrap();
                     h.phase = Phase::Rotate;
                     h.since = now;
@@ -344,9 +452,9 @@ impl Runtime {
             );
             let origin = &self.machine.origin_states(Some(&t))[theta_index];
             anyhow::ensure!(origin.captured, "θ旋回中に原点を失いました");
-            let error = home.theta_target - origin.position;
-            if error.abs() <= THETA_TOLERANCE_DEG {
-                self.send(&format!("JOG {} 0", theta.slot))?;
+            let error = theta_target - origin.position;
+            let finished = self.advance_homing_move(&theta, now)?;
+            if finished && error.abs() <= THETA_TOLERANCE_DEG {
                 let radial = self
                     .cfg
                     .machine
@@ -361,21 +469,6 @@ impl Runtime {
                 h.since = now;
                 h.axis_started = now;
                 h.label = "rを前端まで伸ばしています（θ・z保持中）".into();
-            } else {
-                anyhow::ensure!(
-                    now.duration_since(home.axis_started).as_secs_f32() < home.timeout_seconds,
-                    "θが旋回先に到達せず時間超過しました"
-                );
-                // 到達手前で減速し、設定したホーミング速度を超えない。
-                let speed = (self.cfg.machine.effective_axis_speed(&theta)
-                    * theta.homing_speed_percent
-                    * 0.01)
-                    .min(error.abs() * 2.0);
-                self.send(&format!(
-                    "JOG {} {:.5}",
-                    theta.slot,
-                    error.signum() * speed * theta.native_per_unit
-                ))?;
             }
             return Ok(());
         }
@@ -409,11 +502,7 @@ impl Runtime {
             }
             if matches!(phase, Phase::AwaitClearanceRun) {
                 if t.mode == RunMode::Run && t.enabled_slots == bit {
-                    let native_target = self
-                        .machine
-                        .set_position_target(axis.slot, target)
-                        .context("z原点が確認されていません")?;
-                    self.send(&format!("TARGET {} {native_target:.5}", axis.slot))?;
+                    self.begin_homing_move(&axis, target, 1.0, now)?;
                     let h = self.homing.as_mut().unwrap();
                     h.phase = Phase::MoveClearance;
                     h.since = now;
@@ -431,18 +520,14 @@ impl Runtime {
                 "z上昇中の出力状態が変化しました"
             );
             let position = self.machine.origin_states(Some(&t))[index].position;
-            if (position - target).abs() <= Z_CLEARANCE_TOLERANCE_MM {
+            let finished = self.advance_homing_move(&axis, now)?;
+            if finished && (position - target).abs() <= Z_CLEARANCE_TOLERANCE_MM {
                 self.send(&format!("ENABLE {} 1", 1 << theta.slot))?;
                 let h = self.homing.as_mut().unwrap();
                 h.phase = Phase::AwaitRotationRun;
                 h.since = now;
                 h.axis_started = now;
                 h.label = format!("θを{:+.1}°へ旋回しています（z保持中）", h.theta_target);
-            } else {
-                anyhow::ensure!(
-                    now.duration_since(home.axis_started).as_secs_f32() < home.timeout_seconds,
-                    "zが設定した上昇位置に到達せず時間超過しました"
-                );
             }
             return Ok(());
         }
@@ -759,12 +844,19 @@ mod tests {
             t.enabled_slots = 4;
         }
         r.tick_homing(now + Duration::from_millis(300)).unwrap();
+        let mut now = now + Duration::from_millis(300);
         {
             let t = r.telemetry.as_mut().unwrap();
             t.slots[2].measured = z_distance * 2.0;
             t.contacts = Some(0);
         }
-        r.tick_homing(now + Duration::from_millis(350)).unwrap();
+        r.tick_homing(now + Duration::from_millis(50)).unwrap();
+        // 実測だけが先に到達しても、減速を終えるまで次の軸へ進まない。
+        assert!(matches!(
+            r.homing.as_ref().unwrap().phase,
+            Phase::MoveClearance
+        ));
+        now = finish_homing_move(&mut r);
         // z到達後もrは有効にせず、θだけを追加する。
         assert!(matches!(
             r.homing.as_ref().unwrap().phase,
@@ -778,8 +870,9 @@ mod tests {
                 .any(|line| line == "TX ENABLE 1 1")
         );
         r.telemetry.as_mut().unwrap().enabled_slots = 6;
-        r.tick_homing(now + Duration::from_millis(400)).unwrap();
-        r.tick_homing(now + Duration::from_millis(450)).unwrap();
+        now += Duration::from_millis(50);
+        r.tick_homing(now).unwrap();
+        r.tick_homing(now + Duration::from_millis(50)).unwrap();
         assert!(
             !r.shared
                 .status_snapshot()
@@ -802,35 +895,36 @@ mod tests {
             .logs
             .iter()
             .find_map(|line| {
-                line.strip_prefix("TX JOG 1 ")
+                line.strip_prefix("TX TARGET 1 ")
                     .and_then(|value| value.parse::<f32>().ok())
+                    .filter(|value| value.abs() > 0.0001)
             })
             .unwrap();
         assert_eq!(turn.signum(), expected_sign);
         r.telemetry.as_mut().unwrap().slots[1].measured = theta_native;
-        r.tick_homing(now + Duration::from_millis(500)).unwrap();
+        now = finish_homing_move(&mut r);
         r.telemetry.as_mut().unwrap().enabled_slots = 7;
-        r.tick_homing(now + Duration::from_millis(550)).unwrap();
-        r.tick_homing(now + Duration::from_millis(600)).unwrap();
+        r.tick_homing(now + Duration::from_millis(50)).unwrap();
+        r.tick_homing(now + Duration::from_millis(100)).unwrap();
         r.telemetry.as_mut().unwrap().contacts = Some(1);
-        r.tick_homing(now + Duration::from_millis(650)).unwrap();
+        r.tick_homing(now + Duration::from_millis(150)).unwrap();
         assert!(!r.machine.origin_states(r.telemetry.as_ref())[0].captured);
         r.telemetry.as_mut().unwrap().enabled_slots = 6;
-        r.tick_homing(now + Duration::from_millis(700)).unwrap();
+        r.tick_homing(now + Duration::from_millis(200)).unwrap();
         assert!(matches!(
             r.homing.as_ref().unwrap().phase,
             Phase::AwaitRetreatRun
         ));
         r.telemetry.as_mut().unwrap().enabled_slots = 7;
-        r.tick_homing(now + Duration::from_millis(750)).unwrap();
-        r.tick_homing(now + Duration::from_millis(800)).unwrap();
+        r.tick_homing(now + Duration::from_millis(250)).unwrap();
+        r.tick_homing(now + Duration::from_millis(300)).unwrap();
         assert!(r.homing.is_some());
         r.telemetry.as_mut().unwrap().slots[0].measured = -r_distance * 0.5;
         r.telemetry.as_mut().unwrap().contacts = Some(0);
-        r.tick_homing(now + Duration::from_millis(850)).unwrap();
+        now = finish_homing_move(&mut r);
         assert!(matches!(r.homing.as_ref().unwrap().phase, Phase::AwaitHold));
         r.telemetry.as_mut().unwrap().enabled_slots = 6;
-        r.tick_homing(now + Duration::from_millis(900)).unwrap();
+        r.tick_homing(now + Duration::from_millis(50)).unwrap();
         assert!(r.homing.is_none());
         let axis = crate::machine::ee::axes(&r.cfg.machine)
             .into_iter()
@@ -839,6 +933,7 @@ mod tests {
         let expected_field = (1500.0 - axis.zero0_count) / axis.counts_per_deg;
         assert!((r.prepared_rotation_field.unwrap() - expected_field).abs() < f32::EPSILON);
         assert!(!r.drive.running());
+        assert_eq!(r.front_return_pending, Some(180.0));
         let logs = r.shared.status_snapshot().logs;
         assert!(logs.iter().any(|l| l.contains("JOG 2 -20.00000")));
         assert!(logs.iter().any(|l| l.contains("TX REINIT 5")));
@@ -852,7 +947,10 @@ mod tests {
                 .any(|l| l == &format!("TX TARGET 0 {:.5}", -r_distance * 0.5))
         );
         assert!(logs.iter().any(|l| l.contains("ENABLE 1 0")));
-        assert!(logs.iter().any(|l| l == "TX JOG 1 0"));
+        assert!(
+            logs.iter()
+                .any(|l| l == &format!("TX TARGET 1 {theta_native:.5}"))
+        );
         let origins = r.machine.origin_states(r.telemetry.as_ref());
         let r_origin = r
             .cfg
@@ -879,6 +977,10 @@ mod tests {
             origins.iter().find(|a| a.name == "theta").unwrap().position,
             expected_theta
         );
+        assert_eq!(
+            origins.iter().find(|a| a.name == "theta").unwrap().target,
+            expected_theta
+        );
         r.publish();
         assert!(r.shared.status_snapshot().homing_ready);
         let before = r.shared.status_snapshot().logs;
@@ -894,6 +996,109 @@ mod tests {
         r.begin_homing(true, true, 180.0).unwrap();
         assert!(r.homing.is_some());
     }
+
+    fn finish_homing_move(runtime: &mut Runtime) -> Instant {
+        let home = runtime.homing.as_ref().unwrap();
+        let at = home.axis_started
+            + Duration::from_secs_f32(home.motion.unwrap().duration())
+            + Duration::from_millis(1);
+        runtime.tick_homing(at).unwrap();
+        at
+    }
+
+    #[test]
+    fn homing_position_commands_ramp_and_wait_for_actual_arrival() {
+        for (name, phase, enabled, stage) in [
+            ("r", Phase::AwaitRetreatRun, 7, 1),
+            ("z", Phase::AwaitClearanceRun, 4, 0),
+            ("theta", Phase::AwaitRotationRun, 6, 0),
+        ] {
+            let mut r = crate::application::worker::tests::screen_runtime();
+            let index = r
+                .cfg
+                .machine
+                .axes
+                .iter()
+                .position(|axis| axis.name == name)
+                .unwrap();
+            let axis = &mut r.cfg.machine.axes[index];
+            axis.speed_per_second = 80.0;
+            axis.jog_ramp_seconds = 0.8;
+            axis.homing_speed_percent = 50.0;
+            axis.native_per_unit = -2.0;
+            if name != "theta" {
+                axis.homing_retreat_mm = Some(100.0);
+            }
+            let axis = axis.clone();
+            r.machine = crate::machine::MachineController::new(r.cfg.machine.clone());
+            r.begin_homing(true, true, 180.0).unwrap();
+            for index in 0..3 {
+                assert!(r.machine.capture_origin(index, r.telemetry.as_ref()));
+            }
+            let now = Instant::now();
+            let home = r.homing.as_mut().unwrap();
+            home.phase = phase;
+            home.stage = stage;
+            home.since = now;
+            let t = r.telemetry.as_mut().unwrap();
+            t.mode = RunMode::Run;
+            t.enabled_slots = enabled;
+            t.contacts = Some(0);
+            let from_native = t.slots[axis.slot as usize].measured;
+            r.tick_homing(now).unwrap();
+            let last_target = |r: &Runtime| -> f32 {
+                let prefix = format!("TX TARGET {} ", axis.slot);
+                r.shared
+                    .status_snapshot()
+                    .logs
+                    .iter()
+                    .rev()
+                    .find_map(|line| {
+                        line.strip_prefix(&prefix)
+                            .and_then(|value| value.parse().ok())
+                    })
+                    .unwrap()
+            };
+            assert_eq!(last_target(&r), from_native);
+            let duration = r.homing.as_ref().unwrap().motion.unwrap().duration();
+            let max_speed = if name == "theta" { 40.0 } else { 80.0 };
+            let mut previous_position = from_native;
+            let mut previous_speed = 0.0_f32;
+            let mut peak_speed = 0.0_f32;
+            // 実測を始点に固定し、送信されるnative指令の速度・加速度を確認する。
+            for step in 1..=(duration / 0.05).ceil() as u64 + 2 {
+                r.tick_homing(now + Duration::from_millis(step * 50))
+                    .unwrap();
+                let position = last_target(&r);
+                let speed = (position - previous_position) / axis.native_per_unit / 0.05;
+                assert!(speed.abs() <= max_speed + 0.01, "{name}: {speed}");
+                assert!(
+                    (speed - previous_speed).abs() / 0.05 <= 100.1,
+                    "{name}: {speed} after {previous_speed}"
+                );
+                peak_speed = peak_speed.max(speed.abs());
+                previous_position = position;
+                previous_speed = speed;
+            }
+            assert!((peak_speed - max_speed).abs() < 0.01);
+            assert!(previous_speed.abs() < 0.001);
+            assert!(matches!(
+                r.homing.as_ref().unwrap().phase,
+                Phase::MoveRadialRetreat | Phase::MoveClearance | Phase::Rotate
+            ));
+            assert!(
+                r.tick_homing(now + Duration::from_secs(181))
+                    .unwrap_err()
+                    .to_string()
+                    .contains("時間超過")
+            );
+            r.stop(false).unwrap();
+            let stopped = r.shared.status_snapshot().logs;
+            r.tick_homing(now + Duration::from_secs(182)).unwrap();
+            assert_eq!(r.shared.status_snapshot().logs, stopped);
+        }
+    }
+
     #[test]
     fn stop_cancels_and_stale_or_timeout_fails() {
         let mut r = crate::application::worker::tests::screen_runtime();
@@ -1016,7 +1221,17 @@ mod tests {
             h.phase = Phase::MoveRadialRetreat;
             h.axis_started = now;
             h.since = now;
-            let radial = &r.cfg.machine.axes[0];
+            let radial = r.cfg.machine.axes[0].clone();
+            r.begin_homing_move(
+                &radial,
+                radial.origin_position - radial.homing_retreat_mm(),
+                1.0,
+                now,
+            )
+            .unwrap();
+            let arrival = now
+                + Duration::from_secs_f32(r.homing.as_ref().unwrap().motion.unwrap().duration())
+                + Duration::from_millis(1);
             let retreat_native = radial.homing_retreat_mm() * radial.native_per_unit;
             let t = r.telemetry.as_mut().unwrap();
             t.mode = RunMode::Run;
@@ -1031,7 +1246,7 @@ mod tests {
                 _ => {
                     t.slots[0].measured -= retreat_native;
                     t.contacts = Some(1);
-                    now
+                    arrival
                 }
             };
             let error = r.tick_homing(check_at).unwrap_err().to_string();
