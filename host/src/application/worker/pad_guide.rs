@@ -179,12 +179,22 @@ impl Runtime {
                     true,
                 )?;
             }
+            (PreparationPhase::Setting, 2) if self.preparation_step() == PreparationStep::Home => {
+                self.request(&Request::new("preparation_manual_begin"), true)?;
+            }
+            (PreparationPhase::Setting, 0)
+                if self.preparation_step() == PreparationStep::ManualHome =>
+            {
+                self.request(&Request::new("preparation_manual_theta"), true)?;
+            }
             (PreparationPhase::Setting, 0)
                 if self.preparation_step() == PreparationStep::Position =>
             {
                 self.request(&Request::new("run"), true)?;
             }
-            (PreparationPhase::Setting, 2) => {
+            (PreparationPhase::Setting, 2)
+                if self.preparation_step() == PreparationStep::Position =>
+            {
                 self.request(&Request::new("preparation_wait"), true)?;
             }
             _ => {}
@@ -201,6 +211,9 @@ impl Runtime {
         }
         if self.axes_ready(false).is_err() {
             return PreparationStep::Connection;
+        }
+        if self.manual_origins {
+            return PreparationStep::ManualHome;
         }
         if self
             .machine
@@ -246,6 +259,54 @@ mod tests {
         }
     }
     #[test]
+    fn controller_can_set_manual_origins_and_start_without_carried_button_presses() {
+        let mut r = runtime();
+        for axis in &mut r.cfg.machine.axes {
+            if let Some(limit) = &mut axis.limit {
+                limit.normally_closed = false;
+            }
+            if axis.name == "theta" {
+                axis.origin_position = 0.0;
+                axis.limit = None;
+            }
+        }
+        r.machine.reconfigure(r.cfg.machine.clone());
+        press(&mut r, 14, 1).unwrap();
+        let now = Instant::now();
+        r.read_pad(ControllerState::default(), now).unwrap();
+        r.read_pad(button(2), now).unwrap();
+        r.read_pad(button(2), now + Duration::from_secs(1)).unwrap();
+        assert!(!r.manual_origins && r.homing.is_none());
+        r.read_pad(ControllerState::default(), now + Duration::from_secs(1))
+            .unwrap();
+        r.tick().unwrap();
+        assert_eq!(r.preparation_step(), PreparationStep::ManualHome);
+        assert!(r.machine.origin_states(r.telemetry.as_ref())[0].captured);
+        assert!(r.machine.origin_states(r.telemetry.as_ref())[2].captured);
+        press(&mut r, 0, 1).unwrap();
+        assert_eq!(r.preparation_step(), PreparationStep::Position);
+        assert!(r.homing.is_none() && r.front_return_pending.is_none());
+        // 次の画面で押しっぱなしの×を操縦開始として使わない。
+        let now = Instant::now();
+        r.read_pad(button(0), now).unwrap();
+        r.read_pad(button(0), now + Duration::from_secs(1)).unwrap();
+        r.read_pad(ControllerState::default(), now + Duration::from_secs(1))
+            .unwrap();
+        assert!(!r.drive.running() && r.drive.awaiting().is_none());
+        press(&mut r, 2, 1).unwrap();
+        assert_eq!(r.preparation, PreparationPhase::Waiting);
+        press(&mut r, 0, 1).unwrap();
+        assert!(r.drive.awaiting().is_some() && r.homing.is_none());
+        assert!(
+            r.shared
+                .status_snapshot()
+                .logs
+                .iter()
+                .any(|line| line == "TX TONE 1")
+        );
+    }
+
+    #[test]
     fn controller_walks_from_court_to_waiting_and_explicit_start() {
         let mut r = runtime();
         // 実機で調整した角度に依存せず、コートごとの符号と操作フローを検証する。
@@ -265,7 +326,7 @@ mod tests {
             -90.0
         );
         assert_eq!(r.preparation_step(), PreparationStep::Home);
-        assert!(press(&mut r, 2, 1).is_err());
+        assert!(r.request(&Request::new("preparation_wait"), true).is_err());
         assert_eq!(r.preparation_step(), PreparationStep::Home);
         // ホーミング完了時と同じ原点状態を与え、後続のガイド遷移を検証する。
         origins(&mut r);

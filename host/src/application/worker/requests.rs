@@ -11,6 +11,8 @@ impl Runtime {
                     | "preparation_return"
                     | "preparation_wait"
                     | "preparation_start"
+                    | "preparation_manual_begin"
+                    | "preparation_manual_theta"
                     | "home"
                     | "run"
                     | "stop"
@@ -34,7 +36,7 @@ impl Runtime {
             anyhow::ensure!(manual, "デバッグ画面の切替はGUIから行ってください");
             let enabled = req.flag.context("デバッグ画面の表示状態が必要です")?;
             if self.debug_limit_origins != enabled {
-                self.debug_limit_captured = 0;
+                self.limit_origin_captured = 0;
             }
             self.debug_limit_origins = enabled;
             return Ok(Reply::accepted());
@@ -410,7 +412,7 @@ impl Runtime {
                 self.cfg.machine = profile;
                 self.shared.set_config(self.cfg.clone());
                 self.machine.reconfigure(self.cfg.machine.clone());
-                self.debug_limit_captured = 0;
+                self.limit_origin_captured = 0;
                 self.machine.set_soft_limits(!self.adjustment);
                 self.settings = Settings::new(&self.cfg.machine);
                 self.setup = self.fresh();

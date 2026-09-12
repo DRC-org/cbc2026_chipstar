@@ -62,6 +62,7 @@ pub enum PreparationStep {
     Court,
     Connection,
     Home,
+    ManualHome,
     Position,
 }
 
@@ -131,6 +132,7 @@ pub struct Status {
     pub sequence_saved: bool,
     pub homing: Option<String>,
     pub homing_ready: bool,
+    pub manual_origin_blocker: String,
     pub homing_confirmation: Option<f32>,
     pub ee_targets: std::collections::BTreeMap<String, f32>,
     /// EEが保持しているフィールド基準角[deg]。出力停止中はNone。

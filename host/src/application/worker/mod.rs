@@ -75,7 +75,8 @@ struct Runtime {
     gamepad_name: String,
     adjustment: bool,
     debug_limit_origins: bool,
-    debug_limit_captured: u8,
+    limit_origin_captured: u8,
+    manual_origins: bool,
     last_hello: Instant,
     reason: String,
     error: String,
@@ -138,7 +139,8 @@ impl Runtime {
             gamepad_name: String::new(),
             adjustment: false,
             debug_limit_origins: false,
-            debug_limit_captured: 0,
+            limit_origin_captured: 0,
+            manual_origins: false,
             last_hello: Instant::now() - Duration::from_secs(2),
             reason: "接続待ち".into(),
             error: String::new(),
@@ -160,9 +162,11 @@ impl Runtime {
 
     /// デバッグ画面では運転・調整状態によらず、接点が入っている軸の原点を採用する。
     /// 画面を開く前からの接点も拾い、押され続ける間は座標を繰り返し置き直さない。
-    /// 他の画面では従来どおり、原点調整の手動運転中の到達だけを扱う。
+    /// 準備画面の手動設定でもr・zを同様に扱う。それ以外は原点調整の手動運転中だけ。
     fn capture_limit_origins(&mut self, previous: Option<&Telemetry>, current: &Telemetry) {
-        if !self.debug_limit_origins
+        let manual = self.manual_origins && self.guide.enabled && self.manual_origins_idle(current);
+        let automatic = self.debug_limit_origins || manual;
+        if !automatic
             && (!self.adjustment
                 || !self.drive.running()
                 || self.authority.active()
@@ -171,7 +175,7 @@ impl Runtime {
             return;
         }
         let Some(now) = current.contacts else {
-            self.debug_limit_captured = 0;
+            self.limit_origin_captured = 0;
             return;
         };
         let origins = self.machine.origin_states(Some(current));
@@ -182,14 +186,17 @@ impl Runtime {
             .iter()
             .enumerate()
             .filter_map(|(index, axis)| {
+                if manual && !self.debug_limit_origins && !matches!(axis.name.as_str(), "r" | "z") {
+                    return None;
+                }
                 let limit = axis.limit?;
                 let mask = 1 << axis.slot;
                 if !limit.reached(now) {
-                    self.debug_limit_captured &= !mask;
+                    self.limit_origin_captured &= !mask;
                     return None;
                 }
-                let capture = if self.debug_limit_origins {
-                    self.debug_limit_captured & mask == 0 || !origins[index].captured
+                let capture = if automatic {
+                    self.limit_origin_captured & mask == 0 || !origins[index].captured
                 } else {
                     previous
                         .and_then(|telemetry| telemetry.contacts)
@@ -208,7 +215,7 @@ impl Runtime {
             .collect();
         for (index, mask, name, position, unit) in reached {
             if self.machine.capture_origin(index, Some(current)) {
-                self.debug_limit_captured |= mask;
+                self.limit_origin_captured |= mask;
                 self.front_return_pending = None;
                 self.shared.log(format!(
                     "原点自動採用: {name}のリミット到達位置を{position} {unit}として採用"
@@ -220,6 +227,7 @@ impl Runtime {
         self.rx.is_some_and(|t| t.elapsed() <= FRESH)
     }
     fn clear_drive(&mut self) {
+        self.manual_origins = false;
         self.cancel_sequence("中断・停止");
         self.machine.reset_jog();
         self.drive = DriveState::Stopped;
@@ -918,6 +926,7 @@ impl Runtime {
         if let Err(error) = self.tick_homing(now) {
             self.fault(error.to_string());
         }
+        self.finish_manual_origins(now);
         if let Err(error) = self.tick_ee(now) {
             self.fault_ee(error.to_string());
         }
@@ -1315,6 +1324,11 @@ impl Runtime {
                 && self.homing_idle()
                 && !self.authority.active()
                 && self.axes_ready(false).is_ok();
+            s.manual_origin_blocker = self
+                .manual_origin_ready()
+                .err()
+                .map(|error| error.to_string())
+                .unwrap_or_default();
             s.homing_confirmation = self.pad.home_since.map(|t| t.elapsed().as_secs_f32());
             s.test_active = self.test.active;
             s.test_ready = !self.emergency
@@ -1551,6 +1565,7 @@ pub fn run_with_gamepad(shared: Arc<Shared>, gamepad: bool) {
 mod bonus_control;
 mod ee_control;
 mod homing;
+mod manual_origins;
 mod pad_control;
 mod preparation;
 mod requests;

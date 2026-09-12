@@ -591,7 +591,10 @@ mod shell;
 mod workflow_tests {
     use super::*;
     use crate::{
-        application::{app_state::BridgeConfig, sts, worker},
+        application::{
+            app_state::{BridgeConfig, PreparationStep},
+            sts, worker,
+        },
         diagnostics::individual::Kind,
     };
     use std::{
@@ -676,6 +679,48 @@ mod workflow_tests {
                 worker.join().unwrap();
             }
         }
+    }
+
+    #[test]
+    fn setting_gui_can_set_manual_origins_and_prepare_ee_before_start() {
+        let mut profile = MachineProfile::embedded().unwrap();
+        for axis in &mut profile.axes {
+            axis.origin_position = if axis.name == "r" { 120.0 } else { 0.0 };
+            axis.limit = match axis.name.as_str() {
+                "r" => Some(crate::machine::AxisLimit {
+                    input: 0,
+                    direction: 1.0,
+                    normally_closed: false,
+                }),
+                "z" => Some(crate::machine::AxisLimit {
+                    input: 1,
+                    direction: -1.0,
+                    normally_closed: false,
+                }),
+                _ => None,
+            };
+        }
+        let mut harness = Harness::with_profile(profile);
+        harness.app.operation("preparation_manual_begin");
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        let status = harness.wait(|s| {
+            s.preparation_step == PreparationStep::ManualHome
+                && s.origins[0].captured
+                && s.origins[2].captured
+        });
+        assert!(!status.running && !status.outputs_active && !status.origins[1].captured);
+        harness.app.operation("preparation_manual_theta");
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        let status = harness.wait(|s| {
+            s.preparation_step == PreparationStep::Position && s.ee_rotation_field.is_some()
+        });
+        assert!(status.homing.is_none() && !status.running);
+        harness.app.operation("preparation_wait");
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        harness.app.operation("preparation_start");
+        assert!(!harness.app.message_error, "{}", harness.app.message);
+        let started = harness.wait(|s| s.running);
+        assert!(started.homing.is_none());
     }
 
     #[test]

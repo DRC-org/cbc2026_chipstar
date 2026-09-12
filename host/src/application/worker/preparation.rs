@@ -79,6 +79,8 @@ impl Runtime {
             "準備の切替は人間が画面またはコントローラから行ってください"
         );
         match req.action.as_str() {
+            "preparation_manual_begin" => self.begin_manual_origins(),
+            "preparation_manual_theta" => self.capture_manual_theta(),
             "preparation_restart" => {
                 self.stop_for_homing_setup()?;
                 self.manual_input = ControllerState::default();

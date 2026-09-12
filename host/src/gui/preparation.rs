@@ -86,15 +86,19 @@ impl BridgeApp {
             match status.preparation_step {
                 Court => (
                     "1. コートを選ぶ",
-                    "使用するコートを選ぶと、接続状態に応じてホーミング操作を表示します。",
+                    "使用するコートを選び、機体の接続を確認して原点設定へ進みます。",
                 ),
                 Connection => (
                     "2. 機体の接続を待っています",
-                    "通信と設定の反映を確認できたら、自動でホーミング操作を表示します。",
+                    "通信と設定の反映を確認できたら、原点設定の操作を表示します。",
                 ),
                 Home => (
                     "3. 原点を設定する",
-                    "θの保持を解除した状態で機体を真正面に向け、移動経路を確認してホーミングを開始してください。",
+                    "自動ホーミングか、手で位置を合わせる原点設定を選んでください。",
+                ),
+                ManualHome => (
+                    "3. 手で原点を設定する",
+                    "r・zをそれぞれ手でリミットに当て、θは真正面に合わせて記録してください。3軸がそろうと次へ進みます。",
                 ),
                 Position => (
                     "4. 開始姿勢に合わせる",
@@ -105,7 +109,19 @@ impl BridgeApp {
         section(
             ui,
             "競技の準備",
-            if status.guide_restart_hold {
+            if status.preparation == Setting
+                && status.preparation_step == ManualHome
+                && !status.emergency
+            {
+                "×：正面のθを記録　○：最初に戻る　PS：手動設定を中断"
+            } else if status.preparation == Setting
+                && status.preparation_step == Home
+                && !status.emergency
+                && status.homing.is_none()
+                && !status.running
+            {
+                "×：自動ホーミング　□：手動で原点設定　○：最初に戻る　PS：停止"
+            } else if status.guide_restart_hold {
                 "×：主操作　□：配置完了　停止中の○を1秒長押し：最初に戻る　PS：停止。操縦中の○は受け渡し開です。"
             } else {
                 "×：主操作　□：配置完了　停止中の○：最初に戻る　PS：停止。操縦中の○は受け渡し開です。"
@@ -205,6 +221,7 @@ impl BridgeApp {
                     }
                     Home => {
                         let config = self.shared.config();
+                        ui.label(RichText::new("自動ホーミングでは、θを真正面に合わせ、z・θ・rの移動経路を確認してから開始してください。").color(MUTED));
                         let distance = |name| {
                             config
                                 .machine
@@ -231,6 +248,45 @@ impl BridgeApp {
                             status.homing_ready,
                             "home",
                         );
+                        self.preparation_action(
+                            ui,
+                            "手動で原点を設定する",
+                            "□",
+                            "押して離す（全トルク解除）",
+                            status.manual_origin_blocker.is_empty(),
+                            "preparation_manual_begin",
+                        );
+                        ui.label(RichText::new("手動設定では全トルクを解除します。機構を支えてから選んでください。").color(MUTED));
+                        if !status.manual_origin_blocker.is_empty() {
+                            ui.colored_label(WARNING, &status.manual_origin_blocker);
+                        }
+                    }
+                    ManualHome => {
+                        let config = self.shared.config();
+                        for name in ["r", "z", "theta"] {
+                            if let (Some(axis), Some(origin)) = (
+                                config.machine.axes.iter().find(|axis| axis.name == name),
+                                status.origins.iter().find(|origin| origin.name == name),
+                            ) {
+                                let label = if name == "theta" { "θ" } else { name };
+                                let detail = if origin.captured {
+                                    format!("原点設定済み ／ 現在 {:.1} {}", origin.position, origin.unit)
+                                } else if name == "theta" {
+                                    "真正面に合わせて下のボタンで記録".into()
+                                } else {
+                                    format!("リミット待ち ／ 到達位置を {:.1} {} として採用", axis.origin_position, axis.unit)
+                                };
+                                ui.label(format!("{label}：{detail}"));
+                            }
+                        }
+                        ui.add_space(8.0);
+                        self.preparation_action(ui, "正面をθ=0°として記録する", "×", "押して離す",
+                            status.manual_origin_blocker.is_empty(), "preparation_manual_theta");
+                        self.preparation_action(ui, "手動設定を中断する", "PS", "押す", true, "stop");
+                        ui.label(RichText::new("r・zは同時に当てる必要はありません。採用後はリミットから離しても原点を維持します。").color(MUTED));
+                        if !status.manual_origin_blocker.is_empty() {
+                            ui.colored_label(WARNING, &status.manual_origin_blocker);
+                        }
                     }
                     Position => {
                         self.preparation_action(
