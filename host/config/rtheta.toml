@@ -1,5 +1,5 @@
+swap_dpad_left_right = false
 slow_speed_percent = 10.0
-swap_dpad_left_right = true
 protocol_version = 1
 
 [[dc_motors]]
@@ -50,6 +50,7 @@ input_axis = 1
 input_sign = 1.0
 speed_per_second = 600.0
 jog_ramp_seconds = 0.6
+homing_speed_percent = 10.0
 homing_retreat_mm = 400.0
 native_per_unit = -0.04
 minimum = 0.0
@@ -83,8 +84,8 @@ unit = "mm"
 slot = 2
 input_axis = 6
 input_sign = 1.0
-speed_per_second = 100.0
-jog_ramp_seconds = 0.4
+speed_per_second = 200.0
+jog_ramp_seconds = 0.6
 homing_speed_percent = 40.0
 homing_retreat_mm = 200.0
 native_per_unit = -96.016
@@ -190,7 +191,7 @@ m3508_pos_kd = 0.0
 m3508_pos_ki = 0.0
 m3508_pos_kp = 10.0
 m3508_slot2_max_current_ma = 10000.0
-m3508_slot2_max_rpm = 1600.2666
+m3508_slot2_max_rpm = 3200.5332
 m3508_slot2_max_temperature_c = 80.0
 m3508_slot2_pos_kd = 0.0
 m3508_slot2_pos_ki = 0.0
